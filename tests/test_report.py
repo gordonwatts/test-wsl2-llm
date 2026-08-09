@@ -21,7 +21,7 @@ from test_wsl2_llm.models import (
     WorkspaceResult,
 )
 from test_wsl2_llm.models import TestResult as WslTestResult
-from test_wsl2_llm.report import write_reports
+from test_wsl2_llm.report import write_markdown, write_reports
 
 
 def sample_result() -> WslTestResult:
@@ -165,3 +165,12 @@ def test_report_overwrite_replaces_both(tmp_path: Path) -> None:
     write_reports(sample_result(), str(tmp_path / "run.md"), overwrite=True)
     assert "schema_version" in (tmp_path / "run.yaml").read_text(encoding="utf-8")
     assert "WSL2 Codex test result" in (tmp_path / "run.md").read_text(encoding="utf-8")
+
+
+def test_write_markdown_can_omit_trailing_details(tmp_path: Path) -> None:
+    destination = write_markdown(sample_result(), tmp_path / "summary.md", include_details=False)
+    markdown = destination.read_text(encoding="utf-8")
+    assert "## Prompt" in markdown
+    assert "## Invocation" in markdown
+    assert "<details>" not in markdown
+    assert "Complete Codex stdout JSONL" not in markdown

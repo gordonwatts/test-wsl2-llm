@@ -8,11 +8,13 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
+import yaml
 from pydantic import ValidationError
 from rich.console import Console
 from rich.logging import RichHandler
 
 from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
+from test_wsl2_llm.models import TestResult
 
 app = typer.Typer(
     name="test-wsl2-llm",
@@ -159,6 +161,40 @@ def run(
         if result.run.exit_code:
             raise typer.Exit(result.run.exit_code)
     except (OSError, ValueError, ValidationError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+
+@app.command("generate")
+@app.command("generate-markdown", hidden=True)
+def generate_markdown(
+    input_yaml: Annotated[Path, typer.Argument(help="YAML result report to render.")],
+    output: Annotated[
+        Path | None,
+        typer.Option("--output", "-o", help="Markdown destination; defaults to the YAML stem."),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing Markdown report.")
+    ] = False,
+    details: Annotated[
+        bool,
+        typer.Option(
+            "--details/--no-details", help="Include the detailed trailing report sections."
+        ),
+    ] = True,
+) -> None:
+    """Generate a Markdown report from a previously collected YAML result."""
+    console = Console(stderr=True)
+    try:
+        result = TestResult.model_validate(yaml.safe_load(input_yaml.read_text(encoding="utf-8")))
+        destination = output or input_yaml.with_suffix(".md")
+        from test_wsl2_llm.report import write_markdown
+
+        written = write_markdown(
+            result, destination, overwrite=force, include_details=details
+        )
+        console.print(f"Markdown result: {written}")
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(2) from exc
 

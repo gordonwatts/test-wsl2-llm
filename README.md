@@ -17,6 +17,17 @@ This writes `results\hello.md` for people and `results\hello.yaml` for code. Bot
 Use `--force` to replace an existing Markdown/YAML result pair. Reports include the exact invocation used to create them, with local wall-clock times in Markdown and UTC timestamps preserved in YAML.
 Pass `--title "# My test result"` (or set `title` in YAML) to customize the Markdown heading.
 
+Regenerate Markdown later from a saved YAML result without rerunning Codex:
+
+```powershell
+test-wsl2-llm generate .\results\hello.yaml `
+  --output .\results\hello-summary.md `
+  --no-details
+```
+
+The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file;
+`--details` (the default) includes the trailing raw logs, traces, and workspace details.
+
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
 ## YAML configuration

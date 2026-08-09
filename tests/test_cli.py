@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import yaml
+from test_report import sample_result
 from typer.testing import CliRunner
 
 from test_wsl2_llm.cli import app
@@ -108,3 +109,19 @@ def test_existing_result_is_rejected_before_wsl(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "already exists" in result.output
+
+
+def test_generate_renders_yaml_to_custom_markdown_without_details(tmp_path: Path) -> None:
+    source = tmp_path / "result.yaml"
+    source.write_text(
+        yaml.safe_dump(sample_result().model_dump(mode="json"), sort_keys=False), encoding="utf-8"
+    )
+    destination = tmp_path / "summary.md"
+    result = runner.invoke(
+        app,
+        ["generate", str(source), "--output", str(destination), "--no-details"],
+    )
+    assert result.exit_code == 0, result.output
+    markdown = destination.read_text(encoding="utf-8")
+    assert "Create hello.txt" in markdown
+    assert "<details>" not in markdown
