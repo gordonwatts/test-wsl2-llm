@@ -46,7 +46,17 @@ def write_reports(result: TestResult, output: str, overwrite: bool = False) -> t
 
 def render_markdown(result: TestResult) -> str:
     """Render every canonical result field into a readable Markdown report."""
-    lines = [result.title.rstrip(), "", "## Prompt", "", _fence(result.prompt)]
+    lines = [
+        result.title.rstrip(),
+        "",
+        "## Prompt",
+        "",
+        _fence(result.prompt),
+        "",
+        "## Final response",
+        "",
+        _fence(result.result.final_message or ""),
+    ]
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
@@ -140,7 +150,6 @@ def render_markdown(result: TestResult) -> str:
     else:
         lines.append("No model usage was reported, so no cost was calculated.")
 
-    lines.extend(["", "## Final response", "", _fence(result.result.final_message or "")])
     lines.extend(["", "## Invocation", "", _fence(result.invocation, "text")])
     lines.extend(
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]

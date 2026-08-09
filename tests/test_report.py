@@ -124,6 +124,9 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     assert "| Run date | " in markdown
     assert re.search(r"\| Started \| \d{2}:\d{2}:\d{2} \|", markdown)
     assert re.search(r"\| Finished \| \d{2}:\d{2}:\d{2} \|", markdown)
+    assert markdown.index("## Prompt") < markdown.index("## Final response") < markdown.index(
+        "## Skills and marketplaces"
+    )
     pricing_section = markdown.split("## Model pricing and calculated cost", 1)[1].split(
         "## Final response", 1
     )[0]
