@@ -101,24 +101,7 @@ def render_markdown(result: TestResult) -> str:
             f"{_local_clock(phase.finished_at)} | {_compact_duration(phase.duration_seconds)} |"
         )
 
-    lines.extend(["", "## Token usage", ""])
-    if result.usage:
-        lines.extend(
-            [
-                "| Model | Attribution | Input | Cached input | Output | Reasoning output |",
-                "| --- | --- | ---: | ---: | ---: | ---: |",
-            ]
-        )
-        for usage in result.usage:
-            lines.append(
-                f"| {usage.model} | {usage.attribution} | {_number(usage.input_tokens)} | "
-                f"{_number(usage.cached_input_tokens)} | {_number(usage.output_tokens)} | "
-                f"{_number(usage.reasoning_output_tokens)} |"
-            )
-    else:
-        lines.append("No token usage event was reported.")
-
-    lines.extend(["", "## Model pricing and calculated cost", ""])
+    lines.extend(["", "## Token usage and cost", ""])
     model_information = result.model_information
     lines.extend(
         [
@@ -127,27 +110,28 @@ def render_markdown(result: TestResult) -> str:
             "",
         ]
     )
-    if model_information.models:
+    if result.usage:
+        costs = {(model.model, model.attribution): model for model in model_information.models}
         lines.extend(
             [
-                "| Model | Input rate / 1M | Cached rate / 1M | Output rate / 1M | "
-                "Input cost | Cached cost | Output cost | Total cost |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                "| Model | Attribution | Input | Cached input | Output | Reasoning output | "
+                "USD total |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
-        for model in model_information.models:
+        for usage in result.usage:
+            model = costs.get((usage.model, usage.attribution))
             lines.append(
-                f"| {model.model} | {_money(model.input_cost_per_million_tokens)} | "
-                f"{_money(model.cached_input_cost_per_million_tokens)} | "
-                f"{_money(model.output_cost_per_million_tokens)} | "
-                f"{_money(model.input_cost)} | {_money(model.cached_input_cost)} | "
-                f"{_money(model.output_cost)} | {_money(model.total_cost)} |"
+                f"| {usage.model} | {usage.attribution} | {_number(usage.input_tokens)} | "
+                f"{_number(usage.cached_input_tokens)} | {_number(usage.output_tokens)} | "
+                f"{_number(usage.reasoning_output_tokens)} | "
+                f"{_money(model.total_cost if model else None)} |"
             )
-            if model.note:
-                lines.extend(["", f"Pricing note for `{model.model}`: {model.note}"])
-        lines.extend(["", f"**Aggregate cost:** {_money(model_information.total_cost)}"])
+        lines.append(
+            f"| **Aggregate** |  |  |  |  |  | **{_money(model_information.total_cost)}** |"
+        )
     else:
-        lines.append("No model usage was reported, so no cost was calculated.")
+        lines.append("No token usage event was reported, so no cost was calculated.")
 
     lines.extend(["", "## Invocation", "", _fence(result.invocation, "text")])
     lines.extend(
