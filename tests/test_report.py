@@ -116,7 +116,7 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         result.skills.plugins[0],
         result.logs.stdout_jsonl.strip(),
         '"nested": {',
-        "2.00 seconds",
+        "0h 0m 2s",
         "$0.00",
     ):
         assert expected in markdown

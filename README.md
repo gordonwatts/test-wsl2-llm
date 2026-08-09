@@ -14,7 +14,8 @@ uvx test-wsl2-llm run `
 
 This writes `results\hello.md` for people and `results\hello.yaml` for code. Both contain the prompt, configuration, skill locations, timing, token usage, workspace inventory, raw Codex JSONL/stderr, and collected Codex session traces.
 
-Use `--force` to replace an existing Markdown/YAML result pair. `--overwrite` remains available as the equivalent configuration-oriented spelling.
+Use `--force` to replace an existing Markdown/YAML result pair. Reports include the exact invocation used to create them, with local wall-clock times in Markdown and UTC timestamps preserved in YAML.
+Pass `--title "# My test result"` (or set `title` in YAML) to customize the Markdown heading.
 
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
@@ -23,6 +24,7 @@ The default Codex policy is `workspace-write` with network access, `on-request` 
 ```yaml
 prompt: |
   Use $analysis-helper to create answer.txt.
+title: "# WSL2 Codex test result"
 model: MODEL:high
 distro: atlas_al9
 wsl_parent: ~/codex-tests

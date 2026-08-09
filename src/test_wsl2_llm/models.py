@@ -15,6 +15,7 @@ class TestConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str
+    title: str = "# WSL2 Codex test result"
     model: str
     reasoning_effort: ReasoningEffort = "medium"
     marketplaces: list[str] = Field(default_factory=list)
@@ -180,6 +181,8 @@ class LogsResult(BaseModel):
 class TestResult(BaseModel):
     schema_version: Literal[2] = 2
     prompt: str
+    title: str = "# WSL2 Codex test result"
+    invocation: str = ""
     skills: SkillsResult
     run: RunResult
     timing: TimingResult
