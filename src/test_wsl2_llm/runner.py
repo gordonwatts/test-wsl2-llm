@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import queue
+import re
 import subprocess
 import threading
 import time
@@ -14,6 +15,7 @@ from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, TextIO
+from urllib.parse import urlparse
 
 import yaml
 from rich.console import Console
@@ -360,9 +362,21 @@ def _transfer_marketplaces(client: WslClient, sources: list[str], run_root: str)
             ).strip()
             client.bash('mkdir -p "$1" && cp -a -- "$2"/. "$1"/', destination, mounted)
             runtime.append(destination)
+        elif _is_git_marketplace_source(source):
+            destination = f"{marketplace_root}/marketplace-{index:03d}"
+            client.login_bash('git clone --depth 1 -- "$1" "$2"', source, destination)
+            runtime.append(destination)
         else:
             runtime.append(source)
     return runtime
+
+
+def _is_git_marketplace_source(source: str) -> bool:
+    """Recognize URL and scp-style Git repository sources."""
+    parsed = urlparse(source)
+    if parsed.scheme in {"http", "https", "ssh", "git"} and bool(parsed.netloc):
+        return True
+    return bool(re.fullmatch(r"[^@\s]+@[^:\s]+:.+", source))
 
 
 def _installed_paths_from_json(output: str) -> list[str]:

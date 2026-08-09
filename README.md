@@ -28,8 +28,10 @@ distro: atlas_al9
 wsl_parent: ~/codex-tests
 marketplaces:
   - C:\Users\me\Code\marketplace
+  - https://github.com/gordonwatts/atlas-analysisbase-marketplace.git
 plugins:
   - analysis-tools@my-marketplace
+  - atlas-analysisbase@atlas-analysisbase-marketplace
 output: C:\Users\me\Results\analysis-run
 progress_lines: 5
 ```
@@ -52,6 +54,18 @@ test-wsl2-llm run `
 ```
 
 Use `-v` to see WSL and Codex commands. Use `-vv` to log every returned line instead of the bounded live display.
+
+Git marketplace URLs supplied with `--marketplace` or YAML are shallow-cloned into the fresh WSL run harness before installation. For example:
+
+```powershell
+test-wsl2-llm run `
+  --distro atlas_al9 `
+  --model MODEL `
+  --prompt "Use `$analysis-base to describe an AnalysisBase work area." `
+  --marketplace https://github.com/gordonwatts/atlas-analysisbase-marketplace.git `
+  --plugin atlas-analysisbase@atlas-analysisbase-marketplace `
+  --output .\results\atlas-analysisbase
+```
 
 ## Tests
 

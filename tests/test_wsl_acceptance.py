@@ -13,6 +13,7 @@ from test_wsl2_llm.cli import app
 
 pytestmark = pytest.mark.wsl_acceptance
 runner = CliRunner()
+ATLAS_ANALYSISBASE_MARKETPLACE = "https://github.com/gordonwatts/atlas-analysisbase-marketplace.git"
 
 
 def _wsl(
@@ -144,6 +145,55 @@ def test_atlas_al9_transfers_and_uses_skill(tmp_path: Path, pytestconfig: pytest
         assert "wsl-transfer-proof" in markdown
         proof = _wsl(distro, ["cat", f"{workspace}/skill-proof.txt"]).stdout
         assert proof.rstrip("\r\n") == sentinel
+    finally:
+        _cleanup_workspace(distro, workspace)
+
+
+@pytest.mark.timeout(900)
+def test_atlas_al9_clones_and_uses_git_marketplace(
+    tmp_path: Path, pytestconfig: pytest.Config
+) -> None:
+    distro = "atlas_al9"
+    model = pytestconfig.getoption("--wsl-model")
+    output = tmp_path / "git-marketplace-run"
+    workspace = None
+    try:
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                "--distro",
+                distro,
+                "--model",
+                model,
+                "--prompt",
+                (
+                    "Use $analysis-base. Create git-marketplace-proof.txt containing "
+                    "exactly: Git marketplace installed"
+                ),
+                "--marketplace",
+                ATLAS_ANALYSISBASE_MARKETPLACE,
+                "--plugin",
+                "atlas-analysisbase@atlas-analysisbase-marketplace",
+                "--output",
+                str(output),
+            ],
+            catch_exceptions=False,
+        )
+        result_yaml = output.with_suffix(".yaml")
+        if result_yaml.exists():
+            data = yaml.safe_load(result_yaml.read_text(encoding="utf-8"))
+            workspace = data["run"]["workspace_path"]
+        assert result.exit_code == 0, result.output
+        assert data["skills"]["marketplaces"] == [ATLAS_ANALYSISBASE_MARKETPLACE]
+        assert data["skills"]["plugins"] == ["atlas-analysisbase@atlas-analysisbase-marketplace"]
+        assert any(path.endswith("/skills/analysis-base") for path in data["skills"]["directories"])
+        assert all(not path.startswith("/mnt/") for path in data["skills"]["directories"])
+        assert any(
+            item["path"] == "git-marketplace-proof.txt" for item in data["workspace"]["files"]
+        )
+        proof = _wsl(distro, ["cat", f"{workspace}/git-marketplace-proof.txt"]).stdout
+        assert proof.rstrip("\r\n") == "Git marketplace installed"
     finally:
         _cleanup_workspace(distro, workspace)
 

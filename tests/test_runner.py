@@ -1,4 +1,5 @@
 import re
+import subprocess
 
 import pytest
 
@@ -8,6 +9,8 @@ from test_wsl2_llm.runner import (
     _codex_config,
     _console_time,
     _installed_paths_from_json,
+    _is_git_marketplace_source,
+    _transfer_marketplaces,
 )
 
 
@@ -66,3 +69,37 @@ def test_progress_receipt_time_is_formatted_without_a_date() -> None:
     displayed = _console_time("2026-08-08T20:15:09.123456+00:00")
     assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", displayed)
     assert "2026" not in displayed
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "https://github.com/example/marketplace.git",
+        "ssh://git@github.com/example/marketplace.git",
+        "git@github.com:example/marketplace.git",
+    ],
+)
+def test_git_marketplace_source_recognition(source: str) -> None:
+    assert _is_git_marketplace_source(source)
+
+
+def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("bash", script, arguments))
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def login_bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("login_bash", script, arguments))
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    client = RecordingClient()
+    source = "https://github.com/example/marketplace.git"
+    runtime = _transfer_marketplaces(client, [source], "/tmp/test-wsl2-llm-run")  # type: ignore[arg-type]
+
+    destination = "/tmp/test-wsl2-llm-run/.harness/inputs/marketplaces/marketplace-001"
+    assert runtime == [destination]
+    assert ("login_bash", 'git clone --depth 1 -- "$1" "$2"', (source, destination)) in client.calls

@@ -35,7 +35,8 @@ def run(
     marketplace: Annotated[
         list[str] | None,
         typer.Option(
-            "--marketplace", help="Windows directory or Git marketplace source; repeatable."
+            "--marketplace",
+            help="Windows directory or Git repository URL; cloned into WSL; repeatable.",
         ),
     ] = None,
     plugin: Annotated[
