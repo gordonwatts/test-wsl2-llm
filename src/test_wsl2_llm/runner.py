@@ -159,7 +159,11 @@ class RunState:
 
 
 def run_test(
-    config: TestConfig, *, verbosity: int = 0, console: Console | None = None
+    config: TestConfig,
+    *,
+    verbosity: int = 0,
+    console: Console | None = None,
+    invocation: list[str] | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     console = console or Console(stderr=True)
@@ -317,6 +321,8 @@ def run_test(
     final_message = final_message_from_events(parsed_events)
     return TestResult(
         prompt=config.prompt,
+        title=config.title,
+        invocation=_display_argv(invocation or []),
         skills=SkillsResult(
             marketplaces=config.marketplaces,
             plugins=config.plugins,
@@ -602,6 +608,10 @@ def _display_command(command: list[str]) -> str:
         f'"{argument}"' if any(character.isspace() for character in argument) else argument
         for argument in command
     )
+
+
+def _display_argv(argv: list[str]) -> str:
+    return _display_command(argv)
 
 
 def _console_time(received_at: str | None) -> str:

@@ -116,15 +116,34 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         result.skills.plugins[0],
         result.logs.stdout_jsonl.strip(),
         '"nested": {',
-        "2.00 seconds",
+        "0h 0m 2s",
         "$0.00",
     ):
         assert expected in markdown
     assert "2.000000 seconds" not in markdown
-    pricing_section = markdown.split("## Model pricing and calculated cost", 1)[1].split(
-        "## Final response", 1
+    assert "| Run date | " in markdown
+    assert re.search(r"\| Started \| \d{2}:\d{2}:\d{2} \|", markdown)
+    assert re.search(r"\| Finished \| \d{2}:\d{2}:\d{2} \|", markdown)
+    phase_section = markdown.split("## Phase timing", 1)[1].split(
+        "## Token usage and cost", 1
     )[0]
-    amounts = re.findall(r"\$\d+\.\d+", pricing_section)
+    assert "| Phase | Started | Finished | Duration |" in phase_section
+    assert re.search(
+        r"\| codex_execution \| \d{2}:\d{2}:\d{2} \| \d{2}:\d{2}:\d{2} \| 1s \|",
+        phase_section,
+    )
+    assert markdown.index("## Prompt") < markdown.index("## Final response") < markdown.index(
+        "## Skills and marketplaces"
+    )
+    token_section = markdown.split("## Token usage and cost", 1)[1].split(
+        "## Invocation", 1
+    )[0]
+    assert (
+        "| Model | Attribution | Input | Cached input | Output | Reasoning output | USD total |"
+        in token_section
+    )
+    assert "Input rate / 1M" not in token_section
+    amounts = re.findall(r"\$\d+\.\d+", token_section)
     assert amounts
     assert all(re.fullmatch(r"\$\d+\.\d{2}", amount) for amount in amounts)
     assert "base64-encoded WSL transport arguments" in markdown

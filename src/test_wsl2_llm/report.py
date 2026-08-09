@@ -6,6 +6,7 @@ import json
 import os
 import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import yaml
@@ -45,7 +46,17 @@ def write_reports(result: TestResult, output: str, overwrite: bool = False) -> t
 
 def render_markdown(result: TestResult) -> str:
     """Render every canonical result field into a readable Markdown report."""
-    lines = ["# WSL2 Codex test result", "", "## Prompt", "", _fence(result.prompt)]
+    lines = [
+        result.title.rstrip(),
+        "",
+        "## Prompt",
+        "",
+        _fence(result.prompt),
+        "",
+        "## Final response",
+        "",
+        _fence(result.result.final_message or ""),
+    ]
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
@@ -59,10 +70,11 @@ def render_markdown(result: TestResult) -> str:
             "",
             "| Field | Value |",
             "| --- | --- |",
-            f"| Started | {run.started_at} |",
-            f"| Finished | {run.finished_at} |",
-            f"| Total duration | {run.total_duration_seconds:.2f} seconds |",
-            f"| Codex execution | {run.codex_execution_seconds:.2f} seconds |",
+            f"| Run date | {_local_date(run.started_at)} |",
+            f"| Started | {_local_clock(run.started_at)} |",
+            f"| Finished | {_local_clock(run.finished_at)} |",
+            f"| Total duration | {_duration(run.total_duration_seconds)} |",
+            f"| Codex execution | {_duration(run.codex_execution_seconds)} |",
             f"| Status | {run.status} |",
             f"| Exit code | {run.exit_code} |",
             f"| Distribution | {run.distro or '(default)'} |",
@@ -79,34 +91,17 @@ def render_markdown(result: TestResult) -> str:
             "",
             "## Phase timing",
             "",
-            "| Phase | Started | Finished | Seconds |",
+            "| Phase | Started | Finished | Duration |",
             "| --- | --- | --- | ---: |",
         ]
     )
     for phase in result.timing.phases:
         lines.append(
-            f"| {phase.name} | {phase.started_at} | {phase.finished_at} | "
-            f"{phase.duration_seconds:.2f} |"
+            f"| {phase.name} | {_local_clock(phase.started_at)} | "
+            f"{_local_clock(phase.finished_at)} | {_compact_duration(phase.duration_seconds)} |"
         )
 
-    lines.extend(["", "## Token usage", ""])
-    if result.usage:
-        lines.extend(
-            [
-                "| Model | Attribution | Input | Cached input | Output | Reasoning output |",
-                "| --- | --- | ---: | ---: | ---: | ---: |",
-            ]
-        )
-        for usage in result.usage:
-            lines.append(
-                f"| {usage.model} | {usage.attribution} | {usage.input_tokens} | "
-                f"{usage.cached_input_tokens} | {usage.output_tokens} | "
-                f"{usage.reasoning_output_tokens} |"
-            )
-    else:
-        lines.append("No token usage event was reported.")
-
-    lines.extend(["", "## Model pricing and calculated cost", ""])
+    lines.extend(["", "## Token usage and cost", ""])
     model_information = result.model_information
     lines.extend(
         [
@@ -115,30 +110,33 @@ def render_markdown(result: TestResult) -> str:
             "",
         ]
     )
-    if model_information.models:
+    if result.usage:
+        costs = {(model.model, model.attribution): model for model in model_information.models}
         lines.extend(
             [
-                "| Model | Input rate / 1M | Cached rate / 1M | Output rate / 1M | "
-                "Input cost | Cached cost | Output cost | Total cost |",
-                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+                "| Model | Attribution | Input | Cached input | Output | Reasoning output | "
+                "USD total |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
-        for model in model_information.models:
+        for usage in result.usage:
+            model = costs.get((usage.model, usage.attribution))
             lines.append(
-                f"| {model.model} | {_money(model.input_cost_per_million_tokens)} | "
-                f"{_money(model.cached_input_cost_per_million_tokens)} | "
-                f"{_money(model.output_cost_per_million_tokens)} | "
-                f"{_money(model.input_cost)} | {_money(model.cached_input_cost)} | "
-                f"{_money(model.output_cost)} | {_money(model.total_cost)} |"
+                f"| {usage.model} | {usage.attribution} | {_number(usage.input_tokens)} | "
+                f"{_number(usage.cached_input_tokens)} | {_number(usage.output_tokens)} | "
+                f"{_number(usage.reasoning_output_tokens)} | "
+                f"{_money(model.total_cost if model else None)} |"
             )
-            if model.note:
-                lines.extend(["", f"Pricing note for `{model.model}`: {model.note}"])
-        lines.extend(["", f"**Aggregate cost:** {_money(model_information.total_cost)}"])
+        lines.append(
+            f"| **Aggregate** |  |  |  |  |  | **{_money(model_information.total_cost)}** |"
+        )
     else:
-        lines.append("No model usage was reported, so no cost was calculated.")
+        lines.append("No token usage event was reported, so no cost was calculated.")
 
-    lines.extend(["", "## Final response", "", _fence(result.result.final_message or "")])
-    lines.extend(["", "## Command", "", _fence(_display_command(result.command.argv), "text")])
+    lines.extend(["", "## Invocation", "", _fence(result.invocation, "text")])
+    lines.extend(
+        ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
+    )
     lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
 
     inventory = "\n".join(
@@ -148,12 +146,21 @@ def render_markdown(result: TestResult) -> str:
     )
     lines.extend(_details("Workspace inventory", inventory, "text"))
 
-    timing_text = _yaml([event.model_dump(mode="json") for event in result.timing.trace_events])
+    timing_values = [event.model_dump(mode="json") for event in result.timing.trace_events]
+    timing_text = _yaml(_localize_value(timing_values))
     lines.extend(_details("Trace timing details", timing_text, "yaml"))
-    lines.extend(_details("Complete Codex stdout JSONL", result.logs.stdout_jsonl, "jsonl"))
+    lines.extend(
+        _details("Complete Codex stdout JSONL", _localize_jsonl(result.logs.stdout_jsonl), "jsonl")
+    )
     lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
     for trace in result.logs.session_traces:
-        lines.extend(_details(f"Session trace: {trace.path}", _pretty_jsonl(trace.content), "json"))
+        lines.extend(
+            _details(
+                f"Session trace: {trace.path}",
+                _pretty_jsonl(trace.content, localize=True),
+                "json",
+            )
+        )
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
 
@@ -201,14 +208,86 @@ def _display_command(argv: list[str]) -> str:
     return command
 
 
-def _pretty_jsonl(content: str) -> str:
+def _pretty_jsonl(content: str, *, localize: bool = False) -> str:
     """Render valid JSONL as an indented JSON array without losing any events."""
     lines = [line for line in content.splitlines() if line.strip()]
     try:
         values = [json.loads(line) for line in lines]
     except json.JSONDecodeError:
         return content
-    return json.dumps(values, indent=2, ensure_ascii=False)
+    return json.dumps(_localize_value(values) if localize else values, indent=2, ensure_ascii=False)
+
+
+def _local_time(value: str) -> str:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().isoformat()
+    except ValueError:
+        return value
+
+
+def _local_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+
+
+def _local_date(value: str) -> str:
+    try:
+        return _local_datetime(value).strftime("%Y-%m-%d")
+    except ValueError:
+        return value
+
+
+def _local_clock(value: str) -> str:
+    try:
+        return _local_datetime(value).strftime("%H:%M:%S")
+    except ValueError:
+        return value
+
+
+def _localize_value(value: object) -> object:
+    if isinstance(value, dict):
+        return {key: _localize_value(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_localize_value(item) for item in value]
+    if isinstance(value, str) and ("T" in value or value.endswith("Z")):
+        return _local_time(value)
+    return value
+
+
+def _localize_jsonl(content: str) -> str:
+    lines = []
+    for line in content.splitlines():
+        try:
+            value = json.loads(line)
+            localized = _localize_value(value)
+            lines.append(line if localized == value else json.dumps(localized, ensure_ascii=False))
+        except json.JSONDecodeError:
+            lines.append(line)
+    return "\n".join(lines)
+
+
+def _duration(seconds: float) -> str:
+    whole = max(0, int(round(seconds)))
+    hours, remainder = divmod(whole, 3600)
+    minutes, secs = divmod(remainder, 60)
+    return f"{hours}h {minutes}m {secs}s"
+
+
+def _compact_duration(seconds: float) -> str:
+    whole = max(0, int(round(seconds)))
+    hours, remainder = divmod(whole, 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
+
+
+def _number(value: int) -> str:
+    return f"{value:,}"
 
 
 def _money(value: float | None) -> str:

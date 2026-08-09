@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 from typing import Annotated
 
@@ -55,14 +56,13 @@ def run(
     output: Annotated[
         Path | None, typer.Option(help="Windows result stem or .md/.yaml path; both are written.")
     ] = None,
-    overwrite: Annotated[
-        bool | None,
-        typer.Option("--overwrite/--no-overwrite", help="Replace existing result pair."),
-    ] = None,
     force: Annotated[
         bool,
         typer.Option("--force", help="Overwrite an existing Markdown/YAML result pair."),
     ] = False,
+    title: Annotated[
+        str | None, typer.Option(help="Title written as the first line of the Markdown report.")
+    ] = None,
     sandbox: Annotated[
         str | None,
         typer.Option(help="Codex sandbox: read-only, workspace-write, or danger-full-access."),
@@ -121,7 +121,8 @@ def run(
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
-            "overwrite": True if force else overwrite,
+            "overwrite": True if force else None,
+            "title": title,
             "sandbox": sandbox,
             "network": network,
             "approval_policy": approval_policy,
@@ -151,7 +152,7 @@ def run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
-        result = run_test(resolved, verbosity=verbose, console=console)
+        result = run_test(resolved, verbosity=verbose, console=console, invocation=sys.argv)
         markdown_path, yaml_path = write_reports(result, resolved.output, resolved.overwrite)
         console.print(f"Markdown result: {markdown_path}")
         console.print(f"YAML result: {yaml_path}")

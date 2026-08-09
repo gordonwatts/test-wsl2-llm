@@ -22,8 +22,10 @@ def test_help_documents_run_and_core_options() -> None:
         "--output",
         "--pricing-file",
         "--save-config",
+        "--title",
     ):
         assert option in run.stdout
+    assert "--overwrite" not in run.stdout
 
 
 def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
@@ -44,7 +46,9 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
         ],
     )
     assert result.exit_code == 0, result.stdout
-    assert yaml.safe_load(destination.read_text(encoding="utf-8"))["prompt"] == "hello"
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["prompt"] == "hello"
+    assert saved["title"] == "# WSL2 Codex test result"
     assert not (tmp_path / "out.yaml").exists()
 
 
