@@ -91,15 +91,14 @@ def render_markdown(result: TestResult) -> str:
             "",
             "## Phase timing",
             "",
-            "| Phase | Started | Finished | Seconds |",
+            "| Phase | Started | Finished | Duration |",
             "| --- | --- | --- | ---: |",
         ]
     )
     for phase in result.timing.phases:
         lines.append(
-            f"| {phase.name} | {_local_time(phase.started_at)} | "
-            f"{_local_time(phase.finished_at)} | "
-            f"{phase.duration_seconds:.2f} |"
+            f"| {phase.name} | {_local_clock(phase.started_at)} | "
+            f"{_local_clock(phase.finished_at)} | {_compact_duration(phase.duration_seconds)} |"
         )
 
     lines.extend(["", "## Token usage", ""])
@@ -287,6 +286,20 @@ def _duration(seconds: float) -> str:
     hours, remainder = divmod(whole, 3600)
     minutes, secs = divmod(remainder, 60)
     return f"{hours}h {minutes}m {secs}s"
+
+
+def _compact_duration(seconds: float) -> str:
+    whole = max(0, int(round(seconds)))
+    hours, remainder = divmod(whole, 3600)
+    minutes, secs = divmod(remainder, 60)
+    parts = []
+    if hours:
+        parts.append(f"{hours}h")
+    if minutes:
+        parts.append(f"{minutes}m")
+    if secs or not parts:
+        parts.append(f"{secs}s")
+    return " ".join(parts)
 
 
 def _number(value: int) -> str:

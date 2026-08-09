@@ -124,6 +124,12 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     assert "| Run date | " in markdown
     assert re.search(r"\| Started \| \d{2}:\d{2}:\d{2} \|", markdown)
     assert re.search(r"\| Finished \| \d{2}:\d{2}:\d{2} \|", markdown)
+    phase_section = markdown.split("## Phase timing", 1)[1].split("## Token usage", 1)[0]
+    assert "| Phase | Started | Finished | Duration |" in phase_section
+    assert re.search(
+        r"\| codex_execution \| \d{2}:\d{2}:\d{2} \| \d{2}:\d{2}:\d{2} \| 1s \|",
+        phase_section,
+    )
     assert markdown.index("## Prompt") < markdown.index("## Final response") < markdown.index(
         "## Skills and marketplaces"
     )
