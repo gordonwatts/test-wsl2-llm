@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import tempfile
@@ -60,8 +61,8 @@ def render_markdown(result: TestResult) -> str:
             "| --- | --- |",
             f"| Started | {run.started_at} |",
             f"| Finished | {run.finished_at} |",
-            f"| Total duration | {run.total_duration_seconds:.6f} seconds |",
-            f"| Codex execution | {run.codex_execution_seconds:.6f} seconds |",
+            f"| Total duration | {run.total_duration_seconds:.2f} seconds |",
+            f"| Codex execution | {run.codex_execution_seconds:.2f} seconds |",
             f"| Status | {run.status} |",
             f"| Exit code | {run.exit_code} |",
             f"| Distribution | {run.distro or '(default)'} |",
@@ -85,7 +86,7 @@ def render_markdown(result: TestResult) -> str:
     for phase in result.timing.phases:
         lines.append(
             f"| {phase.name} | {phase.started_at} | {phase.finished_at} | "
-            f"{phase.duration_seconds:.6f} |"
+            f"{phase.duration_seconds:.2f} |"
         )
 
     lines.extend(["", "## Token usage", ""])
@@ -105,8 +106,39 @@ def render_markdown(result: TestResult) -> str:
     else:
         lines.append("No token usage event was reported.")
 
+    lines.extend(["", "## Model pricing and calculated cost", ""])
+    model_information = result.model_information
+    lines.extend(
+        [
+            f"- Pricing file: `{model_information.pricing_file}`",
+            f"- Currency: `{model_information.currency}`",
+            "",
+        ]
+    )
+    if model_information.models:
+        lines.extend(
+            [
+                "| Model | Input rate / 1M | Cached rate / 1M | Output rate / 1M | "
+                "Input cost | Cached cost | Output cost | Total cost |",
+                "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+            ]
+        )
+        for model in model_information.models:
+            lines.append(
+                f"| {model.model} | {_money(model.input_cost_per_million_tokens)} | "
+                f"{_money(model.cached_input_cost_per_million_tokens)} | "
+                f"{_money(model.output_cost_per_million_tokens)} | "
+                f"{_money(model.input_cost)} | {_money(model.cached_input_cost)} | "
+                f"{_money(model.output_cost)} | {_money(model.total_cost)} |"
+            )
+            if model.note:
+                lines.extend(["", f"Pricing note for `{model.model}`: {model.note}"])
+        lines.extend(["", f"**Aggregate cost:** {_money(model_information.total_cost)}"])
+    else:
+        lines.append("No model usage was reported, so no cost was calculated.")
+
     lines.extend(["", "## Final response", "", _fence(result.result.final_message or "")])
-    lines.extend(["", "## Command", "", _fence(_display_argv(result.command.argv), "text")])
+    lines.extend(["", "## Command", "", _fence(_display_command(result.command.argv), "text")])
     lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
 
     inventory = "\n".join(
@@ -121,7 +153,7 @@ def render_markdown(result: TestResult) -> str:
     lines.extend(_details("Complete Codex stdout JSONL", result.logs.stdout_jsonl, "jsonl"))
     lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
     for trace in result.logs.session_traces:
-        lines.extend(_details(f"Session trace: {trace.path}", trace.content, "jsonl"))
+        lines.extend(_details(f"Session trace: {trace.path}", _pretty_jsonl(trace.content), "json"))
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
 
@@ -156,3 +188,28 @@ def _yaml(value: object) -> str:
 
 def _display_argv(argv: list[str]) -> str:
     return " ".join(f'"{item}"' if any(char.isspace() for char in item) else item for item in argv)
+
+
+def _display_command(argv: list[str]) -> str:
+    command = _display_argv(argv)
+    if any("TEST_WSL2_LLM_ARG_" in item for item in argv):
+        explanation = (
+            "# TEST_WSL2_LLM_ARG_* values are base64-encoded WSL transport arguments "
+            "(such as paths and the model name), not credentials or API tokens."
+        )
+        return f"{explanation}\n{command}"
+    return command
+
+
+def _pretty_jsonl(content: str) -> str:
+    """Render valid JSONL as an indented JSON array without losing any events."""
+    lines = [line for line in content.splitlines() if line.strip()]
+    try:
+        values = [json.loads(line) for line in lines]
+    except json.JSONDecodeError:
+        return content
+    return json.dumps(values, indent=2, ensure_ascii=False)
+
+
+def _money(value: float | None) -> str:
+    return "unavailable" if value is None else f"${value:.2f}"

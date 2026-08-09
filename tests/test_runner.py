@@ -1,5 +1,14 @@
+import re
+
+import pytest
+
 from test_wsl2_llm.models import TestConfig as WslTestConfig
-from test_wsl2_llm.runner import WslClient, _codex_config, _installed_paths_from_json
+from test_wsl2_llm.runner import (
+    WslClient,
+    _codex_config,
+    _console_time,
+    _installed_paths_from_json,
+)
 
 
 def test_wsl_command_keeps_values_as_separate_arguments() -> None:
@@ -41,3 +50,19 @@ def test_shell_command_escapes_wsl_dollar_expansion_and_encodes_values() -> None
 def test_installed_plugin_paths_are_extracted_from_nested_json() -> None:
     output = '{"plugin": {"installedPath": "/tmp/codex/plugins/demo"}}'
     assert _installed_paths_from_json(output) == ["/tmp/codex/plugins/demo"]
+
+
+def test_progress_display_is_limited_to_five_lines(tmp_path) -> None:
+    with pytest.raises(ValueError, match="between 1 and 5"):
+        WslTestConfig(
+            prompt="hello",
+            model="gpt-test",
+            output=str(tmp_path / "out"),
+            progress_lines=6,
+        )
+
+
+def test_progress_receipt_time_is_formatted_without_a_date() -> None:
+    displayed = _console_time("2026-08-08T20:15:09.123456+00:00")
+    assert re.fullmatch(r"\d{2}:\d{2}:\d{2}", displayed)
+    assert "2026" not in displayed

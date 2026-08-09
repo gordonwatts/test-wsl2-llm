@@ -72,6 +72,9 @@ def test_atlas_al9_hello_world(tmp_path: Path, pytestconfig: pytest.Config) -> N
         assert data["timing"]["phases"]
         assert data["timing"]["trace_events"]
         assert data["usage"]
+        assert data["model_information"]["models"][0]["model"] == model
+        assert "Total duration | " in markdown.read_text(encoding="utf-8")
+        assert "\n[\n  {" in markdown.read_text(encoding="utf-8")
         assert data["logs"]["session_traces"]
         assert any(item["path"] == "hello.txt" for item in data["workspace"]["files"])
         assert "hello.txt" in markdown.read_text(encoding="utf-8")
@@ -135,6 +138,8 @@ def test_atlas_al9_transfers_and_uses_skill(tmp_path: Path, pytestconfig: pytest
         assert data["skills"]["plugins"] == ["wsl-transfer-proof@wsl-transfer-test"]
         assert data["timing"]["trace_events"]
         assert data["usage"]
+        assert data["model_information"]["models"][0]["model"] == model
+        assert "\n[\n  {" in markdown
         assert data["logs"]["session_traces"]
         assert "wsl-transfer-proof" in markdown
         proof = _wsl(distro, ["cat", f"{workspace}/skill-proof.txt"]).stdout

@@ -24,6 +24,7 @@ from test_wsl2_llm.models import (
     CommandResult,
     FinalResult,
     LogsResult,
+    ModelInformation,
     PhaseTiming,
     RunResult,
     SessionTrace,
@@ -35,6 +36,7 @@ from test_wsl2_llm.models import (
     WorkspaceFile,
     WorkspaceResult,
 )
+from test_wsl2_llm.pricing import load_and_calculate_costs
 from test_wsl2_llm.traces import (
     final_message_from_events,
     parse_json_line,
@@ -179,8 +181,15 @@ def run_test(
     runtime_marketplaces: list[str] = []
     resolved_parent = config.wsl_parent
     resolved_auth = config.auth_source
+    model_information = ModelInformation(
+        pricing_file=config.pricing_file or "bundled:model-pricing.yaml",
+        currency="USD",
+    )
+    pricing_valid = False
 
     try:
+        model_information = load_and_calculate_costs([], config.pricing_file)
+        pricing_valid = True
         with state.phase("preflight"):
             codex_version = client.text(client.login_bash("codex --version")).strip()
             client.login_bash("codex plugin --help")
@@ -300,6 +309,8 @@ def run_test(
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
+    if pricing_valid:
+        model_information = load_and_calculate_costs(usage, config.pricing_file)
     final_message = final_message_from_events(parsed_events)
     return TestResult(
         prompt=config.prompt,
@@ -324,6 +335,7 @@ def run_test(
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=config.model_dump(mode="json"),
         usage=usage,
+        model_information=model_information,
         result=FinalResult(final_message=final_message),
         workspace=WorkspaceResult(files=files),
         command=CommandResult(argv=command_argv),
@@ -485,7 +497,7 @@ def _stream_codex(
                         elapsed_seconds=elapsed,
                     )
                 )
-            display = f"[{stream}] {event_type or line.rstrip()}"
+            display = f"{_console_time(received_at)} [{stream}] {event_type or line.rstrip()}"
             recent.append(display)
             del recent[:-progress_lines]
             if verbosity >= 2:
@@ -574,3 +586,13 @@ def _display_command(command: list[str]) -> str:
         f'"{argument}"' if any(character.isspace() for character in argument) else argument
         for argument in command
     )
+
+
+def _console_time(received_at: str | None) -> str:
+    """Format a UTC receipt timestamp as local wall-clock time for progress display."""
+    if not received_at:
+        return "--:--:--"
+    try:
+        return datetime.fromisoformat(received_at).astimezone().strftime("%H:%M:%S")
+    except ValueError:
+        return "--:--:--"

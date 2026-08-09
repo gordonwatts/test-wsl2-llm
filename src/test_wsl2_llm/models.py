@@ -25,7 +25,8 @@ class TestConfig(BaseModel):
     approval_policy: Literal["untrusted", "on-request", "never"] = "on-request"
     approvals_reviewer: Literal["auto_review", "user"] = "auto_review"
     auth_source: str = "~/.codex/auth.json"
-    progress_lines: int = 8
+    pricing_file: str | None = None
+    progress_lines: int = 5
     cleanup: bool = False
 
     @field_validator("prompt", "model")
@@ -38,8 +39,8 @@ class TestConfig(BaseModel):
     @field_validator("progress_lines")
     @classmethod
     def positive_progress_lines(cls, value: int) -> int:
-        if value < 1:
-            raise ValueError("must be at least 1")
+        if not 1 <= value <= 5:
+            raise ValueError("must be between 1 and 5")
         return value
 
 
@@ -73,6 +74,33 @@ class UsageRecord(BaseModel):
     cached_input_tokens: int = 0
     output_tokens: int = 0
     reasoning_output_tokens: int = 0
+
+
+class ModelCost(BaseModel):
+    model: str
+    attribution: str
+    pricing_available: bool
+    currency: str
+    rate_unit: str = "per_million_tokens"
+    input_cost_per_million_tokens: float | None = None
+    cached_input_cost_per_million_tokens: float | None = None
+    output_cost_per_million_tokens: float | None = None
+    uncached_input_tokens: int = 0
+    cached_input_tokens: int = 0
+    output_tokens: int = 0
+    input_cost: float | None = None
+    cached_input_cost: float | None = None
+    output_cost: float | None = None
+    total_cost: float | None = None
+    source: str | None = None
+    note: str | None = None
+
+
+class ModelInformation(BaseModel):
+    pricing_file: str
+    currency: str
+    models: list[ModelCost] = Field(default_factory=list)
+    total_cost: float | None = None
 
 
 class WorkspaceFile(BaseModel):
@@ -131,13 +159,14 @@ class LogsResult(BaseModel):
 
 
 class TestResult(BaseModel):
-    schema_version: Literal[1] = 1
+    schema_version: Literal[2] = 2
     prompt: str
     skills: SkillsResult
     run: RunResult
     timing: TimingResult
     configuration: dict[str, Any]
     usage: list[UsageRecord]
+    model_information: ModelInformation
     result: FinalResult
     workspace: WorkspaceResult
     command: CommandResult

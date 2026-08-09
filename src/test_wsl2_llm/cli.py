@@ -55,6 +55,10 @@ def run(
         bool | None,
         typer.Option("--overwrite/--no-overwrite", help="Replace existing result pair."),
     ] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Overwrite an existing Markdown/YAML result pair."),
+    ] = False,
     sandbox: Annotated[
         str | None,
         typer.Option(help="Codex sandbox: read-only, workspace-write, or danger-full-access."),
@@ -72,6 +76,10 @@ def run(
     auth_source: Annotated[
         str | None,
         typer.Option(help="Readable WSL Codex auth file copied into isolated CODEX_HOME."),
+    ] = None,
+    pricing_file: Annotated[
+        Path | None,
+        typer.Option(help="Model token pricing YAML; defaults to the bundled model-pricing.yaml."),
     ] = None,
     progress_lines: Annotated[
         int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
@@ -109,12 +117,13 @@ def run(
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
-            "overwrite": overwrite,
+            "overwrite": True if force else overwrite,
             "sandbox": sandbox,
             "network": network,
             "approval_policy": approval_policy,
             "approvals_reviewer": approvals_reviewer,
             "auth_source": auth_source,
+            "pricing_file": str(pricing_file) if pricing_file else None,
             "progress_lines": progress_lines,
             "cleanup": cleanup,
         }

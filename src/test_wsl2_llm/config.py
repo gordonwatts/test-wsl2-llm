@@ -28,6 +28,8 @@ def load_config_file(path: Path) -> dict[str, Any]:
     ]
     if raw.get("output"):
         raw["output"] = str(_resolve_windows_path(str(raw["output"]), base))
+    if raw.get("pricing_file"):
+        raw["pricing_file"] = str(_resolve_windows_path(str(raw["pricing_file"]), base))
     return raw
 
 
@@ -42,6 +44,8 @@ def build_config(
         merged["marketplaces"] = [
             _normalize_marketplace(str(source), cwd) for source in cli_values["marketplaces"]
         ]
+    if cli_values.get("pricing_file") is not None:
+        merged["pricing_file"] = str(_resolve_windows_path(str(cli_values["pricing_file"]), cwd))
     if merged.get("prompt_file") is not None:
         if merged.get("prompt") is not None:
             raise ValueError("use either --prompt or --prompt-file, not both")

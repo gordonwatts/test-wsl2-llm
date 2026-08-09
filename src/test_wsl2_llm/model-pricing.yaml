@@ -1,0 +1,19 @@
+schema_version: 1
+currency: USD
+rate_unit: per_million_tokens
+models:
+  gpt-5.6-luna:
+    input_cost_per_million_tokens: 0.20
+    cached_input_cost_per_million_tokens: 0.02
+    output_cost_per_million_tokens: 1.20
+    source: https://developers.openai.com/api/docs/pricing
+  gpt-5.6-sol:
+    input_cost_per_million_tokens: 5.00
+    cached_input_cost_per_million_tokens: 0.50
+    output_cost_per_million_tokens: 6.25
+    source: https://developers.openai.com/api/docs/pricing
+  gpt-5.6-terra:
+    input_cost_per_million_tokens: 2.00
+    cached_input_cost_per_million_tokens: 0.20
+    output_cost_per_million_tokens: 2.50
+    source: https://developers.openai.com/api/docs/pricing

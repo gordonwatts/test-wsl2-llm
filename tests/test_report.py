@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,8 @@ from test_wsl2_llm.models import (
     CommandResult,
     FinalResult,
     LogsResult,
+    ModelCost,
+    ModelInformation,
     PhaseTiming,
     RunResult,
     SessionTrace,
@@ -61,13 +64,42 @@ def sample_result() -> WslTestResult:
                 output_tokens=2,
             )
         ],
+        model_information=ModelInformation(
+            pricing_file="test-pricing.yaml",
+            currency="USD",
+            models=[
+                ModelCost(
+                    model="gpt-test",
+                    attribution="inferred - model not directly reported",
+                    pricing_available=True,
+                    currency="USD",
+                    input_cost_per_million_tokens=2,
+                    cached_input_cost_per_million_tokens=1,
+                    output_cost_per_million_tokens=4,
+                    uncached_input_tokens=10,
+                    output_tokens=2,
+                    input_cost=0.00002,
+                    cached_input_cost=0,
+                    output_cost=0.000008,
+                    total_cost=0.000028,
+                )
+            ],
+            total_cost=0.000028,
+        ),
         result=FinalResult(final_message="done"),
         workspace=WorkspaceResult(files=[WorkspaceFile(type="file", path="hello.txt", size=6)]),
-        command=CommandResult(argv=["wsl.exe", "codex", "exec"]),
+        command=CommandResult(
+            argv=["wsl.exe", "env", "TEST_WSL2_LLM_ARG_0=L3RtcA==", "bash", "-lic"]
+        ),
         logs=LogsResult(
             stdout_jsonl='{"type":"turn.completed"}\n',
             stderr="progress\n",
-            session_traces=[SessionTrace(path="sessions/run.jsonl", content="trace\n")],
+            session_traces=[
+                SessionTrace(
+                    path="sessions/run.jsonl",
+                    content='{"type":"event","nested":{"value":1}}\n',
+                )
+            ],
         ),
     )
 
@@ -83,10 +115,23 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         result.prompt,
         result.skills.plugins[0],
         result.logs.stdout_jsonl.strip(),
-        result.logs.session_traces[0].content.strip(),
-        "2.000000 seconds",
+        '"nested": {',
+        "2.00 seconds",
+        "$0.00",
     ):
         assert expected in markdown
+    assert "2.000000 seconds" not in markdown
+    pricing_section = markdown.split("## Model pricing and calculated cost", 1)[1].split(
+        "## Final response", 1
+    )[0]
+    amounts = re.findall(r"\$\d+\.\d+", pricing_section)
+    assert amounts
+    assert all(re.fullmatch(r"\$\d+\.\d{2}", amount) for amount in amounts)
+    assert "base64-encoded WSL transport arguments" in markdown
+    assert "not credentials or API tokens" in markdown
+    assert markdown.index("not credentials or API tokens") < markdown.index(
+        "TEST_WSL2_LLM_ARG_0=L3RtcA=="
+    )
 
 
 def test_report_refuses_either_existing_output(tmp_path: Path) -> None:

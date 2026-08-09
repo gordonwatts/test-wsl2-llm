@@ -66,3 +66,15 @@ def test_prompt_and_prompt_file_are_mutually_exclusive(tmp_path: Path) -> None:
             },
             cwd=tmp_path,
         )
+
+
+def test_pricing_file_from_yaml_resolves_relative_to_yaml(tmp_path: Path) -> None:
+    pricing = tmp_path / "pricing.yaml"
+    pricing.write_text("models: {}\n", encoding="utf-8")
+    config_file = tmp_path / "input.yaml"
+    config_file.write_text(
+        "prompt: hello\nmodel: model\noutput: out\npricing_file: pricing.yaml\n",
+        encoding="utf-8",
+    )
+    resolved = build_config(load_config_file(config_file), {}, cwd=tmp_path)
+    assert resolved.pricing_file == str(pricing.resolve())

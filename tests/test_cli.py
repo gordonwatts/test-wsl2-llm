@@ -14,7 +14,15 @@ def test_help_documents_run_and_core_options() -> None:
     assert top.exit_code == 0
     assert "run" in top.stdout
     assert run.exit_code == 0
-    for option in ("--prompt", "--config", "--marketplace", "--output", "--save-config"):
+    for option in (
+        "--prompt",
+        "--config",
+        "--force",
+        "--marketplace",
+        "--output",
+        "--pricing-file",
+        "--save-config",
+    ):
         assert option in run.stdout
 
 
@@ -38,6 +46,28 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.stdout
     assert yaml.safe_load(destination.read_text(encoding="utf-8"))["prompt"] == "hello"
     assert not (tmp_path / "out.yaml").exists()
+
+
+def test_force_maps_to_overwrite_in_saved_configuration(tmp_path: Path) -> None:
+    destination = tmp_path / "saved.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--force",
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+    assert result.exit_code == 0, result.stdout
+    assert yaml.safe_load(destination.read_text(encoding="utf-8"))["overwrite"] is True
 
 
 def test_config_only_requires_save_config(tmp_path: Path) -> None:
