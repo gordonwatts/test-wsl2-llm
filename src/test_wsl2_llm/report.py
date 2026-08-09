@@ -60,8 +60,9 @@ def render_markdown(result: TestResult) -> str:
             "",
             "| Field | Value |",
             "| --- | --- |",
-            f"| Started | {_local_time(run.started_at)} |",
-            f"| Finished | {_local_time(run.finished_at)} |",
+            f"| Run date | {_local_date(run.started_at)} |",
+            f"| Started | {_local_clock(run.started_at)} |",
+            f"| Finished | {_local_clock(run.finished_at)} |",
             f"| Total duration | {_duration(run.total_duration_seconds)} |",
             f"| Codex execution | {_duration(run.codex_execution_seconds)} |",
             f"| Status | {run.status} |",
@@ -228,6 +229,24 @@ def _pretty_jsonl(content: str, *, localize: bool = False) -> str:
 def _local_time(value: str) -> str:
     try:
         return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone().isoformat()
+    except ValueError:
+        return value
+
+
+def _local_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+
+
+def _local_date(value: str) -> str:
+    try:
+        return _local_datetime(value).strftime("%Y-%m-%d")
+    except ValueError:
+        return value
+
+
+def _local_clock(value: str) -> str:
+    try:
+        return _local_datetime(value).strftime("%H:%M:%S")
     except ValueError:
         return value
 
