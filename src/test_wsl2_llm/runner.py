@@ -250,9 +250,10 @@ def run_test(
             command_argv = client.command(
                 client.shell_command(
                     'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
-                    '--model "$2" --cd "$3" -',
+                    '--model "$2" --config "$3" --cd "$4" -',
                     codex_home,
                     config.model,
+                    f'model_reasoning_effort="{config.reasoning_effort}"',
                     workspace_path,
                     interactive_login=True,
                 )
@@ -408,6 +409,7 @@ def _codex_config(config: TestConfig) -> str:
     return "\n".join(
         [
             f"model = {json.dumps(config.model)}",
+            f"model_reasoning_effort = {json.dumps(config.reasoning_effort)}",
             f"approval_policy = {json.dumps(config.approval_policy)}",
             f"approvals_reviewer = {json.dumps(config.approvals_reviewer)}",
             f"sandbox_mode = {json.dumps(config.sandbox)}",

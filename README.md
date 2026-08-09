@@ -7,7 +7,7 @@
 ```powershell
 uvx test-wsl2-llm run `
   --distro atlas_al9 `
-  --model MODEL `
+  --model MODEL[:EFFORT] `
   --prompt "Create hello.txt containing Hello from WSL" `
   --output .\results\hello
 ```
@@ -23,7 +23,7 @@ The default Codex policy is `workspace-write` with network access, `on-request` 
 ```yaml
 prompt: |
   Use $analysis-helper to create answer.txt.
-model: MODEL
+model: MODEL:high
 distro: atlas_al9
 wsl_parent: ~/codex-tests
 marketplaces:
@@ -39,7 +39,7 @@ progress_lines: 5
 Run it and override individual fields on the command line:
 
 ```powershell
-test-wsl2-llm run --config .\test.yaml --model MODEL
+test-wsl2-llm run --config .\test.yaml --model MODEL:high
 ```
 
 Create a reusable configuration from CLI inputs without invoking WSL:
@@ -47,7 +47,7 @@ Create a reusable configuration from CLI inputs without invoking WSL:
 ```powershell
 test-wsl2-llm run `
   --prompt-file .\prompt.md `
-  --model MODEL `
+  --model MODEL:medium `
   --output .\results\trial `
   --save-config .\trial.yaml `
   --config-only
@@ -60,7 +60,7 @@ Git marketplace URLs supplied with `--marketplace` or YAML are shallow-cloned in
 ```powershell
 test-wsl2-llm run `
   --distro atlas_al9 `
-  --model MODEL `
+  --model MODEL:high `
   --prompt "Use `$analysis-base to describe an AnalysisBase work area." `
   --marketplace https://github.com/gordonwatts/atlas-analysisbase-marketplace.git `
   --plugin atlas-analysisbase@atlas-analysisbase-marketplace `
@@ -89,3 +89,5 @@ Override the acceptance model with `--wsl-model MODEL` or `TEST_WSL2_LLM_MODEL`.
 The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown cost table rounds USD amounts to the nearest cent.
 
 The normal progress display retains only the five most recent lines and prefixes each with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
+
+Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.

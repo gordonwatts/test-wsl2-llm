@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 
 
 class TestConfig(BaseModel):
@@ -14,6 +16,7 @@ class TestConfig(BaseModel):
 
     prompt: str
     model: str
+    reasoning_effort: ReasoningEffort = "medium"
     marketplaces: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
     distro: str | None = None
@@ -28,6 +31,22 @@ class TestConfig(BaseModel):
     pricing_file: str | None = None
     progress_lines: int = 5
     cleanup: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def split_model_and_effort(cls, value: Any) -> Any:
+        if not isinstance(value, dict) or not isinstance(value.get("model"), str):
+            return value
+        model = value["model"]
+        if ":" not in model:
+            return value
+        base_model, separator, effort = model.rpartition(":")
+        if not separator or not base_model or not effort:
+            raise ValueError("model must use MODEL[:EFFORT]")
+        normalized = dict(value)
+        normalized["model"] = base_model
+        normalized["reasoning_effort"] = effort
+        return normalized
 
     @field_validator("prompt", "model")
     @classmethod

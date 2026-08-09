@@ -31,7 +31,10 @@ def run(
     prompt_file: Annotated[
         Path | None, typer.Option(help="Windows UTF-8 file containing the prompt.")
     ] = None,
-    model: Annotated[str | None, typer.Option(help="Codex model to use.")] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(help="Codex model as MODEL[:EFFORT]; effort defaults to medium."),
+    ] = None,
     marketplace: Annotated[
         list[str] | None,
         typer.Option(

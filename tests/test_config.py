@@ -78,3 +78,34 @@ def test_pricing_file_from_yaml_resolves_relative_to_yaml(tmp_path: Path) -> Non
     )
     resolved = build_config(load_config_file(config_file), {}, cwd=tmp_path)
     assert resolved.pricing_file == str(pricing.resolve())
+
+
+@pytest.mark.parametrize(
+    ("model_argument", "expected_model", "expected_effort"),
+    [
+        ("gpt-test", "gpt-test", "medium"),
+        ("gpt-test:minimal", "gpt-test", "minimal"),
+        ("gpt-test:low", "gpt-test", "low"),
+        ("gpt-test:high", "gpt-test", "high"),
+        ("gpt-test:xhigh", "gpt-test", "xhigh"),
+    ],
+)
+def test_model_argument_splits_optional_reasoning_effort(
+    tmp_path: Path, model_argument: str, expected_model: str, expected_effort: str
+) -> None:
+    resolved = build_config(
+        {},
+        {"prompt": "hello", "model": model_argument, "output": str(tmp_path / "out")},
+        cwd=tmp_path,
+    )
+    assert resolved.model == expected_model
+    assert resolved.reasoning_effort == expected_effort
+
+
+def test_model_argument_rejects_unknown_reasoning_effort(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="reasoning_effort"):
+        build_config(
+            {},
+            {"prompt": "hello", "model": "gpt-test:extreme", "output": str(tmp_path / "out")},
+            cwd=tmp_path,
+        )
