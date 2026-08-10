@@ -171,6 +171,10 @@ def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_
     assert "### Prompt 1" in markdown
     assert "### Final response 1" in markdown
     assert "```text\nCreate hello.txt\n```" in markdown
+    history = markdown.split("<summary>Conversation history</summary>", 1)[1].split(
+        "</details>", 1
+    )[0]
+    assert "Inspect the existing file." not in history
 
 
 def test_report_refuses_either_existing_output(tmp_path: Path) -> None:

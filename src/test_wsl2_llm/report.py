@@ -158,8 +158,9 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
     if include_details:
-        if result.conversation:
-            lines.extend(_conversation_details(result.conversation))
+        prior_conversation = result.conversation[:-1]
+        if prior_conversation:
+            lines.extend(_conversation_details(prior_conversation))
         lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
 
         inventory = "\n".join(
