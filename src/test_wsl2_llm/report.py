@@ -44,7 +44,27 @@ def write_reports(result: TestResult, output: str, overwrite: bool = False) -> t
     return markdown_path, yaml_path
 
 
-def render_markdown(result: TestResult) -> str:
+def write_markdown(
+    result: TestResult,
+    output: str | Path,
+    *,
+    overwrite: bool = False,
+    include_details: bool = True,
+) -> Path:
+    """Render a result to one Markdown file without rewriting its YAML source."""
+    destination = Path(output)
+    if destination.suffix.lower() in {".yaml", ".yml", ".md"}:
+        destination = destination.with_suffix(".md")
+    if destination.exists() and not overwrite:
+        raise FileExistsError(f"result file already exists: {destination}")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(
+        render_markdown(result, include_details=include_details), encoding="utf-8", newline=""
+    )
+    return destination
+
+
+def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
     """Render every canonical result field into a readable Markdown report."""
     lines = [
         result.title.rstrip(),
@@ -137,30 +157,33 @@ def render_markdown(result: TestResult) -> str:
     lines.extend(
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
-    lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
+    if include_details:
+        lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
 
-    inventory = "\n".join(
-        f"{entry.type}\t{entry.size}\t{entry.path}"
-        + (f" -> {entry.symlink_target}" if entry.symlink_target else "")
-        for entry in result.workspace.files
-    )
-    lines.extend(_details("Workspace inventory", inventory, "text"))
+        inventory = "\n".join(
+            f"{entry.type}\t{entry.size}\t{entry.path}"
+            + (f" -> {entry.symlink_target}" if entry.symlink_target else "")
+            for entry in result.workspace.files
+        )
+        lines.extend(_details("Workspace inventory", inventory, "text"))
 
-    timing_values = [event.model_dump(mode="json") for event in result.timing.trace_events]
-    timing_text = _yaml(_localize_value(timing_values))
-    lines.extend(_details("Trace timing details", timing_text, "yaml"))
-    lines.extend(
-        _details("Complete Codex stdout JSONL", _localize_jsonl(result.logs.stdout_jsonl), "jsonl")
-    )
-    lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
-    for trace in result.logs.session_traces:
+        timing_values = [event.model_dump(mode="json") for event in result.timing.trace_events]
+        timing_text = _yaml(_localize_value(timing_values))
+        lines.extend(_details("Trace timing details", timing_text, "yaml"))
         lines.extend(
             _details(
-                f"Session trace: {trace.path}",
-                _pretty_jsonl(trace.content, localize=True),
-                "json",
+                "Complete Codex stdout JSONL", _localize_jsonl(result.logs.stdout_jsonl), "jsonl"
             )
         )
+        lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
+        for trace in result.logs.session_traces:
+            lines.extend(
+                _details(
+                    f"Session trace: {trace.path}",
+                    _pretty_jsonl(trace.content, localize=True),
+                    "json",
+                )
+            )
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
 
