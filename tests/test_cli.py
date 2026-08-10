@@ -4,7 +4,7 @@ import yaml
 from test_report import sample_result
 from typer.testing import CliRunner
 
-from test_wsl2_llm.cli import app
+from test_wsl2_llm.cli import _connect_command, app
 
 runner = CliRunner()
 
@@ -27,6 +27,26 @@ def test_help_documents_run_and_core_options() -> None:
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
+    assert "connect" in top.stdout
+
+
+def test_connect_command_targets_retained_workspace_and_resume() -> None:
+    result = sample_result()
+    command = _connect_command(result, resume=True)
+    assert "wsl.exe" in command[0]
+    script = command[-1]
+    assert "codex resume --last --cd" in script
+    assert "workspace" in script and "\\$workspace" in script
+
+
+def test_connect_rejects_cleaned_up_result(tmp_path: Path) -> None:
+    source = tmp_path / "result.yaml"
+    result = sample_result()
+    result.run.workspace_retained = False
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    invoked = runner.invoke(app, ["connect", str(source)])
+    assert invoked.exit_code == 2
+    assert "not retained" in invoked.output
 
 
 def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
