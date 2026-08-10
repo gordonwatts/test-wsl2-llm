@@ -28,6 +28,33 @@ def test_help_documents_run_and_core_options() -> None:
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
     assert "connect" in top.stdout
+    assert "continue" in top.stdout
+
+
+def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -> None:
+    source = tmp_path / "previous.yaml"
+    destination = tmp_path / "continued.yaml"
+    result = sample_result()
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    invoked = runner.invoke(
+        app,
+        [
+            "continue",
+            str(source),
+            "--prompt",
+            "Inspect the existing file.",
+            "--output",
+            str(tmp_path / "next"),
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+    assert invoked.exit_code == 0, invoked.output
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["prompt"] == "Inspect the existing file."
+    assert saved["output"] == str((tmp_path / "next").resolve())
+    assert saved["cleanup"] is False
 
 
 def test_connect_command_targets_retained_workspace_and_resume() -> None:

@@ -69,7 +69,7 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
     lines = [
         result.title.rstrip(),
         "",
-        "## Prompt",
+        "## Prompt" + (" (continuing retained workspace)" if result.continued_from else ""),
         "",
         _fence(result.prompt),
         "",
@@ -158,6 +158,14 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
     if include_details:
+        if result.conversation:
+            lines.extend(
+                _details(
+                    "Conversation history",
+                    _yaml([turn.model_dump(mode="json") for turn in result.conversation]),
+                    "yaml",
+                )
+            )
         lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
 
         inventory = "\n".join(

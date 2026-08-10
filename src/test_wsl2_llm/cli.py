@@ -230,6 +230,162 @@ def connect(
         raise typer.Exit(2) from exc
 
 
+@app.command("continue")
+def continue_work(
+    input_yaml: Annotated[Path, typer.Argument(help="YAML result report from the previous step.")],
+    prompt: Annotated[str | None, typer.Option(help="New prompt text sent to Codex.")] = None,
+    prompt_file: Annotated[
+        Path | None, typer.Option(help="Windows UTF-8 file containing the new prompt.")
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(help="Codex model as MODEL[:EFFORT]; defaults to the previous run."),
+    ] = None,
+    marketplace: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--marketplace",
+            help="New Windows marketplace directory or Git URL; repeatable.",
+        ),
+    ] = None,
+    plugin: Annotated[
+        list[str] | None,
+        typer.Option("--plugin", help="New plugin selector; repeatable."),
+    ] = None,
+    distro: Annotated[
+        str | None, typer.Option(help="WSL distribution; defaults to the previous run.")
+    ] = None,
+    output: Annotated[
+        Path | None, typer.Option(help="Output result stem; defaults to <input>-continue.")
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing Markdown/YAML result pair.")
+    ] = False,
+    title: Annotated[
+        str | None, typer.Option(help="Title written as the first line of the Markdown report.")
+    ] = None,
+    sandbox: Annotated[
+        str | None,
+        typer.Option(help="Codex sandbox: read-only, workspace-write, or danger-full-access."),
+    ] = None,
+    network: Annotated[
+        bool | None,
+        typer.Option("--network/--no-network", help="Allow network in workspace sandbox."),
+    ] = None,
+    approval_policy: Annotated[
+        str | None, typer.Option(help="Codex approval policy: untrusted, on-request, or never.")
+    ] = None,
+    approvals_reviewer: Annotated[
+        str | None, typer.Option(help="Approval reviewer: auto_review or user.")
+    ] = None,
+    auth_source: Annotated[
+        str | None,
+        typer.Option(help="Readable WSL Codex auth file copied into isolated CODEX_HOME."),
+    ] = None,
+    pricing_file: Annotated[
+        Path | None,
+        typer.Option(help="Model token pricing YAML; defaults to the previous run."),
+    ] = None,
+    progress_lines: Annotated[
+        int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
+    ] = None,
+    config: Annotated[
+        Path | None, typer.Option(help="Input YAML overrides for this continuation.")
+    ] = None,
+    save_config_path: Annotated[
+        Path | None,
+        typer.Option("--save-config", help="Write the fully resolved continuation YAML."),
+    ] = None,
+    config_only: Annotated[
+        bool, typer.Option(help="Save configuration without invoking WSL; requires --save-config.")
+    ] = False,
+    verbose: Annotated[
+        int,
+        typer.Option(
+            "-v", "--verbose", count=True, help="-v shows commands; -vv streams all output."
+        ),
+    ] = 0,
+) -> None:
+    """Start a new Codex conversation in the previous run's retained workspace."""
+    console = Console(stderr=True)
+    _configure_logging(verbose)
+    try:
+        previous = TestResult.model_validate(
+            yaml.safe_load(input_yaml.read_text(encoding="utf-8"))
+        )
+        if not previous.run.workspace_path or not previous.run.workspace_retained:
+            raise ValueError("the result workspace was not retained; rerun without --cleanup")
+        file_values = load_config_file(config) if config else {}
+        has_new_prompt = prompt is not None or prompt_file is not None or "prompt" in file_values
+        defaults = dict(previous.configuration)
+        defaults.update(file_values)
+        defaults["prompt"] = prompt or defaults.get("prompt")
+        defaults["model"] = defaults.get("model") or "gpt-5.6-luna"
+        defaults["title"] = defaults.get("title") or previous.title
+        defaults["distro"] = defaults.get("distro") or previous.run.distro
+        defaults["marketplaces"] = file_values.get("marketplaces", [])
+        defaults["plugins"] = file_values.get("plugins", [])
+        defaults["output"] = str(output or input_yaml.with_name(f"{input_yaml.stem}-continue"))
+        defaults["cleanup"] = False
+        cli_values = {
+            "prompt": prompt,
+            "prompt_file": str(prompt_file) if prompt_file else None,
+            "model": model,
+            "marketplaces": marketplace,
+            "plugins": plugin,
+            "distro": distro,
+            "output": str(output) if output else None,
+            "overwrite": True if force else None,
+            "title": title,
+            "sandbox": sandbox,
+            "network": network,
+            "approval_policy": approval_policy,
+            "approvals_reviewer": approvals_reviewer,
+            "auth_source": auth_source,
+            "pricing_file": str(pricing_file) if pricing_file else None,
+            "progress_lines": progress_lines,
+            "cleanup": False,
+        }
+        resolved = build_config(defaults, cli_values, cwd=input_yaml.parent)
+        if not has_new_prompt or not resolved.prompt.strip():
+            raise ValueError("continue requires a new --prompt or --prompt-file")
+        if config_only and not save_config_path:
+            raise ValueError("--config-only requires --save-config")
+        if save_config_path:
+            save_config(resolved, save_config_path)
+            console.print(f"Saved configuration: {save_config_path.resolve()}")
+        if config_only:
+            return
+
+        markdown_path, yaml_path = output_paths(resolved.output)
+        if not resolved.overwrite:
+            existing = [path for path in (markdown_path, yaml_path) if path.exists()]
+            if existing:
+                raise FileExistsError(
+                    f"result file already exists: {', '.join(map(str, existing))}"
+                )
+
+        from test_wsl2_llm.report import write_reports
+        from test_wsl2_llm.runner import continue_test
+
+        result = continue_test(
+            previous,
+            resolved,
+            resolved.prompt,
+            verbosity=verbose,
+            console=console,
+            invocation=sys.argv,
+        )
+        markdown_path, yaml_path = write_reports(result, resolved.output, resolved.overwrite)
+        console.print(f"Markdown result: {markdown_path}")
+        console.print(f"YAML result: {yaml_path}")
+        if result.run.exit_code:
+            raise typer.Exit(result.run.exit_code)
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+
 def _connect_command(result: TestResult, *, resume: bool) -> list[str]:
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path

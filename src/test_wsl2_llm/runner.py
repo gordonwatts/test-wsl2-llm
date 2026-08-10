@@ -24,6 +24,7 @@ from rich.panel import Panel
 
 from test_wsl2_llm.models import (
     CommandResult,
+    ConversationTurn,
     FinalResult,
     LogsResult,
     ModelInformation,
@@ -346,6 +347,7 @@ def run_test(
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message),
+        conversation=[ConversationTurn(prompt=config.prompt, final_response=final_message)],
         workspace=WorkspaceResult(files=files),
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
@@ -356,11 +358,257 @@ def run_test(
     )
 
 
-def _transfer_marketplaces(client: WslClient, sources: list[str], run_root: str) -> list[str]:
+def continue_test(
+    previous: TestResult,
+    config: TestConfig,
+    prompt: str,
+    *,
+    verbosity: int = 0,
+    console: Console | None = None,
+    invocation: list[str] | None = None,
+) -> TestResult:
+    """Run a fresh Codex conversation in a retained result workspace."""
+    workspace_path = previous.run.workspace_path
+    if not workspace_path:
+        raise ValueError("the result does not contain a retained workspace path")
+    if not previous.run.workspace_retained:
+        raise ValueError("the result workspace was not retained; rerun without --cleanup")
+
+    console = console or Console(stderr=True)
+    client = WslClient(config.distro or previous.run.distro)
+    run_root = workspace_path.rsplit("/", 1)[0]
+    codex_home = f"{run_root}/.harness/codex-home"
+    state = RunState()
+    history = list(previous.conversation) or [
+        ConversationTurn(prompt=previous.prompt, final_response=previous.result.final_message)
+    ]
+    effective_prompt = continuation_prompt(history, prompt)
+    codex_version: str | None = None
+    resolved_auth = config.auth_source
+    command_argv: list[str] = []
+    stdout = ""
+    stderr = ""
+    trace_events: list[TraceEvent] = []
+    parsed_events: list[dict[str, Any]] = []
+    session_traces: list[SessionTrace] = []
+    runtime_marketplaces: list[str] = []
+    skill_directories: list[str] = list(previous.skills.directories)
+    codex_seconds = 0.0
+    exit_code = 1
+    error: str | None = None
+    model_information = ModelInformation(
+        pricing_file=config.pricing_file or "bundled:model-pricing.yaml", currency="USD"
+    )
+    pricing_valid = False
+
+    try:
+        model_information = load_and_calculate_costs([], config.pricing_file)
+        pricing_valid = True
+        with state.phase("preflight"):
+            codex_version = client.text(client.login_bash("codex --version")).strip()
+            client.login_bash("codex plugin --help")
+            resolved_auth = _resolve_wsl_path(client, config.auth_source)
+
+        with state.phase("input_transfer"):
+            continuation_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+            _write_wsl_file(
+                client,
+                f"{run_root}/.harness/inputs/continuations/{continuation_id}-prompt.md",
+                prompt,
+            )
+            runtime_marketplaces = _transfer_marketplaces(
+                client, config.marketplaces, run_root, append=True
+            )
+
+        with state.phase("codex_home_setup"):
+            client.bash(
+                'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
+                codex_home,
+                resolved_auth,
+            )
+            _write_wsl_file(client, f"{codex_home}/config.toml", _codex_config(config))
+
+        with state.phase("plugin_installation"):
+            installed_plugin_roots: list[str] = []
+            for source in runtime_marketplaces:
+                client.login_bash(
+                    'env CODEX_HOME="$1" codex plugin marketplace add "$2" --json',
+                    codex_home,
+                    source,
+                )
+            for plugin in config.plugins:
+                installed = client.login_bash(
+                    'env CODEX_HOME="$1" codex plugin add "$2" --json',
+                    codex_home,
+                    plugin,
+                )
+                installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
+            skill_directories.extend(
+                _skill_directories(client, codex_home, installed_plugin_roots)
+            )
+
+        with state.phase("codex_execution"):
+            codex_started = time.perf_counter()
+            command_argv = client.command(
+                client.shell_command(
+                    'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
+                    '--model "$2" --config "$3" --cd "$4" -',
+                    codex_home,
+                    config.model,
+                    f'model_reasoning_effort="{config.reasoning_effort}"',
+                    workspace_path,
+                    interactive_login=True,
+                )
+            )
+            LOGGER.info("Codex command: %s", _display_command(command_argv))
+            (
+                exit_code,
+                stdout,
+                stderr,
+                trace_events,
+                parsed_events,
+            ) = _stream_codex(
+                command_argv,
+                effective_prompt,
+                progress_lines=config.progress_lines,
+                verbosity=verbosity,
+                console=console,
+            )
+            codex_seconds = time.perf_counter() - codex_started
+            if exit_code:
+                error = f"Codex exited with status {exit_code}"
+
+        with state.phase("workspace_inventory"):
+            files = _inventory(client, workspace_path)
+
+        with state.phase("session_trace_collection"):
+            session_traces, session_events = _session_traces(client, codex_home)
+            trace_events.extend(session_events)
+    except Exception as exc:  # A continuation should still produce a report.
+        error = str(exc)
+        LOGGER.exception("WSL Codex continuation failed")
+        files = []
+        exit_code = exit_code or 1
+        try:
+            with state.phase("workspace_inventory"):
+                files = _inventory(client, workspace_path)
+            with state.phase("session_trace_collection"):
+                session_traces, session_events = _session_traces(client, codex_home)
+                trace_events.extend(session_events)
+        except Exception as collection_error:
+            error = f"{error}; result collection failed: {collection_error}"
+    finally:
+        client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
+
+    finished_at = utc_now()
+    usage = usage_from_events(parsed_events, config.model)
+    if pricing_valid:
+        model_information = load_and_calculate_costs(usage, config.pricing_file)
+    final_message = final_message_from_events(parsed_events)
+    all_marketplaces = _unique([*previous.skills.marketplaces, *config.marketplaces])
+    all_plugins = _unique([*previous.skills.plugins, *config.plugins])
+    conversation = [*history, ConversationTurn(prompt=prompt, final_response=final_message)]
+    continuation_config = config.model_dump(mode="json")
+    continuation_config["continuation_of"] = workspace_path
+    return TestResult(
+        prompt=prompt,
+        title=config.title,
+        invocation=_display_argv(invocation or []),
+        continued_from=workspace_path,
+        skills=SkillsResult(
+            marketplaces=all_marketplaces,
+            plugins=all_plugins,
+            directories=_unique(skill_directories),
+        ),
+        run=RunResult(
+            started_at=state.started_at,
+            finished_at=finished_at,
+            total_duration_seconds=time.perf_counter() - state.started_monotonic,
+            codex_execution_seconds=codex_seconds,
+            status="succeeded" if exit_code == 0 and error is None else "failed",
+            exit_code=exit_code,
+            distro=config.distro or previous.run.distro,
+            workspace_path=workspace_path,
+            workspace_retained=True,
+            codex_version=codex_version or previous.run.codex_version,
+            error=error,
+        ),
+        timing=TimingResult(phases=state.phases, trace_events=trace_events),
+        configuration=continuation_config,
+        usage=usage,
+        model_information=model_information,
+        result=FinalResult(final_message=final_message),
+        conversation=conversation,
+        workspace=WorkspaceResult(files=files),
+        command=CommandResult(argv=command_argv),
+        logs=LogsResult(
+            stdout_jsonl=stdout,
+            stderr=stderr,
+            session_traces=session_traces,
+        ),
+    )
+
+
+def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
+    """Prefix a new prompt with the self-contained prompt/response chain."""
+    chain = [
+        "This working directory was created with the following list of prompts and responses.",
+        "Use this history as context for the new prompt below.",
+        "",
+    ]
+    for index, turn in enumerate(history, start=1):
+        chain.extend(
+            [
+                f"Prompt {index}:",
+                turn.prompt,
+                "",
+                "Final Response:",
+                turn.final_response or "(no final response was recorded)",
+                "",
+            ]
+        )
+    chain.extend(["New prompt:", prompt])
+    return "\n".join(chain)
+
+
+def _skill_directories(
+    client: WslClient, codex_home: str, installed_plugin_roots: list[str]
+) -> list[str]:
+    roots = _unique([codex_home, *installed_plugin_roots])
+    found: list[str] = []
+    for root in roots:
+        result = client.bash(
+            'if test -d "$1"; then find "$1" -type f -name SKILL.md -printf "%h\\n"; fi',
+            root,
+        )
+        found.extend(line for line in client.text(result).splitlines() if line)
+    return _unique(found)
+
+
+def _unique(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(values))
+
+
+def _transfer_marketplaces(
+    client: WslClient, sources: list[str], run_root: str, *, append: bool = False
+) -> list[str]:
     runtime: list[str] = []
     marketplace_root = f"{run_root}/.harness/inputs/marketplaces"
     client.bash('mkdir -p "$1"', marketplace_root)
-    for index, source in enumerate(sources, start=1):
+    start_index = 1
+    if append:
+        existing = client.bash(
+            'if test -d "$1"; then find "$1" -mindepth 1 -maxdepth 1 -type d '
+            '-name "marketplace-*" -printf "%f\\n"; fi',
+            marketplace_root,
+        )
+        indices = [
+            int(name.removeprefix("marketplace-"))
+            for name in client.text(existing).splitlines()
+            if name.removeprefix("marketplace-").isdigit()
+        ]
+        start_index = max(indices, default=0) + 1
+    for index, source in enumerate(sources, start=start_index):
         windows_path = Path(source)
         if windows_path.exists():
             destination = f"{marketplace_root}/marketplace-{index:03d}"
