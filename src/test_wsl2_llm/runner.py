@@ -416,8 +416,12 @@ def continue_test(
                 f"{run_root}/.harness/inputs/continuations/{continuation_id}-prompt.md",
                 prompt,
             )
+            prior_marketplaces = set(previous.skills.marketplaces)
+            new_marketplaces = [
+                source for source in config.marketplaces if source not in prior_marketplaces
+            ]
             runtime_marketplaces = _transfer_marketplaces(
-                client, config.marketplaces, run_root, append=True
+                client, new_marketplaces, run_root, append=True
             )
 
         with state.phase("codex_home_setup"):
@@ -436,7 +440,9 @@ def continue_test(
                     codex_home,
                     source,
                 )
-            for plugin in config.plugins:
+            prior_plugins = set(previous.skills.plugins)
+            new_plugins = [plugin for plugin in config.plugins if plugin not in prior_plugins]
+            for plugin in new_plugins:
                 installed = client.login_bash(
                     'env CODEX_HOME="$1" codex plugin add "$2" --json',
                     codex_home,

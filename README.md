@@ -51,9 +51,10 @@ test-wsl2-llm continue .\results\hello.yaml `
 ```
 
 `continue` carries the prior prompt/final-response chain into the new Codex prompt, keeps the
-previous skills and plugins, and appends any marketplaces or plugins supplied on the command
-line. The new report's top-level prompt is only the new prompt; the complete chain is preserved
-in YAML and in a Markdown details section. The previous result must retain its workspace.
+previous configuration (model, sandbox, approvals, authentication, and reporting settings),
+skills, and plugins, and appends any marketplaces or plugins supplied on the command line. The
+new report's top-level prompt is only the new prompt; the complete chain is preserved in YAML and
+in a Markdown details section. The previous result must retain its workspace.
 
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 

@@ -320,19 +320,28 @@ def continue_work(
         defaults = dict(previous.configuration)
         defaults.update(file_values)
         defaults["prompt"] = prompt or defaults.get("prompt")
-        defaults["model"] = defaults.get("model") or "gpt-5.6-luna"
+        if not defaults.get("model"):
+            raise ValueError("the previous result configuration does not contain a model")
         defaults["title"] = defaults.get("title") or previous.title
         defaults["distro"] = defaults.get("distro") or previous.run.distro
-        defaults["marketplaces"] = file_values.get("marketplaces", [])
-        defaults["plugins"] = file_values.get("plugins", [])
+        defaults["marketplaces"] = _merge_strings(
+            previous.configuration.get("marketplaces") or previous.skills.marketplaces,
+            file_values.get("marketplaces", []),
+            marketplace or [],
+        )
+        defaults["plugins"] = _merge_strings(
+            previous.configuration.get("plugins") or previous.skills.plugins,
+            file_values.get("plugins", []),
+            plugin or [],
+        )
         defaults["output"] = str(output or input_yaml.with_name(f"{input_yaml.stem}-continue"))
         defaults["cleanup"] = False
         cli_values = {
             "prompt": prompt,
             "prompt_file": str(prompt_file) if prompt_file else None,
             "model": model,
-            "marketplaces": marketplace,
-            "plugins": plugin,
+            "marketplaces": defaults["marketplaces"],
+            "plugins": defaults["plugins"],
             "distro": distro,
             "output": str(output) if output else None,
             "overwrite": True if force else None,
@@ -431,6 +440,11 @@ def _configure_logging(verbosity: int) -> None:
         handlers=[RichHandler(show_time=True, show_path=False, markup=False)],
         force=True,
     )
+
+
+def _merge_strings(*groups: list[str]) -> list[str]:
+    """Combine inherited and newly requested repeatable options in order."""
+    return list(dict.fromkeys(value for group in groups for value in group))
 
 
 def main() -> None:

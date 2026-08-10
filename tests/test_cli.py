@@ -35,6 +35,18 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
     source = tmp_path / "previous.yaml"
     destination = tmp_path / "continued.yaml"
     result = sample_result()
+    result.configuration = {
+        "model": "gpt-previous",
+        "reasoning_effort": "high",
+        "sandbox": "read-only",
+        "network": False,
+        "approval_policy": "never",
+        "approvals_reviewer": "user",
+        "auth_source": "~/.codex/previous-auth.json",
+        "progress_lines": 3,
+        "marketplaces": ["https://example.com/previous-marketplace.git"],
+        "plugins": ["previous-plugin@previous-marketplace"],
+    }
     source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
     invoked = runner.invoke(
         app,
@@ -55,6 +67,16 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
     assert saved["prompt"] == "Inspect the existing file."
     assert saved["output"] == str((tmp_path / "next").resolve())
     assert saved["cleanup"] is False
+    assert saved["model"] == "gpt-previous"
+    assert saved["reasoning_effort"] == "high"
+    assert saved["sandbox"] == "read-only"
+    assert saved["network"] is False
+    assert saved["approval_policy"] == "never"
+    assert saved["approvals_reviewer"] == "user"
+    assert saved["auth_source"] == "~/.codex/previous-auth.json"
+    assert saved["progress_lines"] == 3
+    assert saved["marketplaces"] == ["https://example.com/previous-marketplace.git"]
+    assert saved["plugins"] == ["previous-plugin@previous-marketplace"]
 
 
 def test_connect_command_targets_retained_workspace_and_resume() -> None:
