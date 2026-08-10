@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import posixpath
+import subprocess
 import sys
 from pathlib import Path
 from typing import Annotated
@@ -15,6 +17,7 @@ from rich.logging import RichHandler
 
 from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
 from test_wsl2_llm.models import TestResult
+from test_wsl2_llm.runner import WslClient
 
 app = typer.Typer(
     name="test-wsl2-llm",
@@ -197,6 +200,71 @@ def generate_markdown(
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(2) from exc
+
+
+@app.command()
+def connect(
+    input_yaml: Annotated[Path, typer.Argument(help="YAML result report from a completed run.")],
+    resume: Annotated[
+        bool,
+        typer.Option("--resume", "-r", help="Resume the most recent conversation in this run."),
+    ] = False,
+) -> None:
+    """Open an interactive Codex session in the retained run workspace."""
+    console = Console(stderr=True)
+    try:
+        result = TestResult.model_validate(yaml.safe_load(input_yaml.read_text(encoding="utf-8")))
+        workspace = result.run.workspace_path
+        if not workspace:
+            raise ValueError("the result does not contain a retained workspace path")
+        if not result.run.workspace_retained:
+            raise ValueError("the result workspace was not retained; rerun without --cleanup")
+
+        command = _connect_command(result, resume=resume)
+        console.print(f"Connecting to {workspace} (interactive Codex; press Ctrl-D to exit)")
+        completed = subprocess.run(command, check=False)
+        if completed.returncode:
+            raise typer.Exit(completed.returncode)
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+
+def _connect_command(result: TestResult, *, resume: bool) -> list[str]:
+    """Build the interactive WSL command without interpolating report values into a shell."""
+    workspace = result.run.workspace_path
+    if not workspace:
+        raise ValueError("the result does not contain a retained workspace path")
+    run_root = posixpath.dirname(workspace)
+    codex_home = posixpath.join(run_root, ".harness", "codex-home")
+    auth_source = str(result.configuration.get("auth_source") or "~/.codex/auth.json")
+    mode = "resume" if resume else "new"
+    script = """
+set -e
+home="$1"
+workspace="$2"
+auth_source="$3"
+mode="$4"
+auth_source="${auth_source/#\\~/$HOME}"
+mkdir -p -- "$home"
+if [ ! -f "$auth_source" ]; then
+  printf 'Codex auth file not found: %s\\n' "$auth_source" >&2
+  exit 2
+fi
+cp -- "$auth_source" "$home/auth.json"
+chmod 600 "$home/auth.json"
+trap 'rm -f -- "$home/auth.json"' EXIT
+if [ "$mode" = resume ]; then
+  exec env CODEX_HOME="$home" codex resume --last --cd "$workspace"
+fi
+exec env CODEX_HOME="$home" codex --cd "$workspace"
+""".strip()
+    client = WslClient(result.run.distro)
+    return client.command(
+        client.shell_command(
+            script, codex_home, workspace, auth_source, mode, interactive_login=True
+        )
+    )
 
 
 def _configure_logging(verbosity: int) -> None:

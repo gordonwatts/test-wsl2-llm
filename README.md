@@ -28,6 +28,20 @@ test-wsl2-llm generate .\results\hello.yaml `
 The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file;
 `--details` (the default) includes the trailing raw logs, traces, and workspace details.
 
+Connect to a retained run workspace for interactive exploration:
+
+```powershell
+# Start a new interactive conversation in the saved workspace.
+test-wsl2-llm connect .\results\hello.yaml
+
+# Resume the latest conversation retained by that run.
+test-wsl2-llm connect .\results\hello.yaml --resume
+```
+
+The first form launches Codex with `codex --cd <workspace>`. The `--resume` form launches
+`codex resume --last --cd <workspace>`, selecting the newest session in that run's retained
+isolated Codex home. The run must have been created without `--cleanup`.
+
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
 ## YAML configuration
