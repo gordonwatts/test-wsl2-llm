@@ -3,6 +3,7 @@ import subprocess
 
 import pytest
 
+from test_wsl2_llm.models import ConversationTurn
 from test_wsl2_llm.models import TestConfig as WslTestConfig
 from test_wsl2_llm.runner import (
     WslClient,
@@ -11,6 +12,7 @@ from test_wsl2_llm.runner import (
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _transfer_marketplaces,
+    continuation_prompt,
 )
 
 
@@ -104,3 +106,17 @@ def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
     destination = "/tmp/test-wsl2-llm-run/.harness/inputs/marketplaces/marketplace-001"
     assert runtime == [destination]
     assert ("login_bash", 'git clone --depth 1 -- "$1" "$2"', (source, destination)) in client.calls
+
+
+def test_continuation_prompt_contains_prior_chain_and_new_prompt() -> None:
+    prompt = continuation_prompt(
+        [ConversationTurn(prompt="Create a file", final_response="Created it.")],
+        "Now inspect the file.",
+    )
+    assert (
+        "This working directory was created with the following list of prompts and responses."
+        in prompt
+    )
+    assert "Prompt 1:\nCreate a file" in prompt
+    assert "Final Response:\nCreated it." in prompt
+    assert prompt.endswith("New prompt:\nNow inspect the file.")

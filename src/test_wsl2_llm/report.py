@@ -69,7 +69,7 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
     lines = [
         result.title.rstrip(),
         "",
-        "## Prompt",
+        "## Prompt" + (" (continuing retained workspace)" if result.continued_from else ""),
         "",
         _fence(result.prompt),
         "",
@@ -158,6 +158,9 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
     if include_details:
+        prior_conversation = result.conversation[:-1]
+        if prior_conversation:
+            lines.extend(_conversation_details(prior_conversation))
         lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
 
         inventory = "\n".join(
@@ -198,6 +201,28 @@ def _details(summary: str, content: str, language: str) -> list[str]:
         "",
         "</details>",
     ]
+
+
+def _conversation_details(conversation: list[object]) -> list[str]:
+    """Render each prior prompt and response as readable Markdown blocks."""
+    lines = ["", "<details>", "<summary>Conversation history</summary>", ""]
+    for index, turn in enumerate(conversation, start=1):
+        prompt = getattr(turn, "prompt", "")
+        final_response = getattr(turn, "final_response", None) or "(no final response was recorded)"
+        lines.extend(
+            [
+                f"### Prompt {index}",
+                "",
+                _fence(prompt),
+                "",
+                f"### Final response {index}",
+                "",
+                _fence(final_response),
+                "",
+            ]
+        )
+    lines.append("</details>")
+    return lines
 
 
 def _fence(content: str, language: str = "text") -> str:

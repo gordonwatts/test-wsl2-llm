@@ -164,6 +164,13 @@ class FinalResult(BaseModel):
     final_message: str | None = None
 
 
+class ConversationTurn(BaseModel):
+    """One prompt and the response produced while working in a workspace."""
+
+    prompt: str
+    final_response: str | None = None
+
+
 class WorkspaceResult(BaseModel):
     files: list[WorkspaceFile] = Field(default_factory=list)
 
@@ -183,6 +190,7 @@ class TestResult(BaseModel):
     prompt: str
     title: str = "# WSL2 Codex test result"
     invocation: str = ""
+    continued_from: str | None = None
     skills: SkillsResult
     run: RunResult
     timing: TimingResult
@@ -190,6 +198,7 @@ class TestResult(BaseModel):
     usage: list[UsageRecord]
     model_information: ModelInformation
     result: FinalResult
+    conversation: list[ConversationTurn] = Field(default_factory=list)
     workspace: WorkspaceResult
     command: CommandResult
     logs: LogsResult

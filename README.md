@@ -42,6 +42,20 @@ The first form launches Codex with `codex --cd <workspace>`. The `--resume` form
 `codex resume --last --cd <workspace>`, selecting the newest session in that run's retained
 isolated Codex home. The run must have been created without `--cleanup`.
 
+Start a fresh, non-resumed conversation in the same retained workspace with a new prompt:
+
+```powershell
+test-wsl2-llm continue .\results\hello.yaml `
+  --prompt "Review the file and suggest a next step." `
+  --output .\results\hello-review
+```
+
+`continue` carries the prior prompt/final-response chain into the new Codex prompt, keeps the
+previous configuration (model, sandbox, approvals, authentication, and reporting settings),
+skills, and plugins, and appends any marketplaces or plugins supplied on the command line. The
+new report's top-level prompt is only the new prompt; the complete chain is preserved in YAML and
+in a Markdown details section. The previous result must retain its workspace.
+
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
 ## YAML configuration

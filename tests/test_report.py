@@ -6,6 +6,7 @@ import yaml
 
 from test_wsl2_llm.models import (
     CommandResult,
+    ConversationTurn,
     FinalResult,
     LogsResult,
     ModelCost,
@@ -151,6 +152,29 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     assert markdown.index("not credentials or API tokens") < markdown.index(
         "TEST_WSL2_LLM_ARG_0=L3RtcA=="
     )
+
+
+def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_path: Path) -> None:
+    result = sample_result()
+    result.prompt = "Inspect the existing file."
+    result.continued_from = "/tmp/run/workspace"
+    result.conversation = [
+        ConversationTurn(prompt="Create hello.txt", final_response="done"),
+        ConversationTurn(prompt=result.prompt, final_response="inspected"),
+    ]
+    markdown = write_markdown(
+        result, tmp_path / "summary.md", overwrite=True
+    ).read_text(encoding="utf-8")
+    assert "## Prompt (continuing retained workspace)" in markdown
+    assert markdown.index("Inspect the existing file.") < markdown.index("Conversation history")
+    assert "Create hello.txt" in markdown
+    assert "### Prompt 1" in markdown
+    assert "### Final response 1" in markdown
+    assert "```text\nCreate hello.txt\n```" in markdown
+    history = markdown.split("<summary>Conversation history</summary>", 1)[1].split(
+        "</details>", 1
+    )[0]
+    assert "Inspect the existing file." not in history
 
 
 def test_report_refuses_either_existing_output(tmp_path: Path) -> None:
