@@ -12,7 +12,7 @@ uvx test-wsl2-llm run `
   --output .\results\hello
 ```
 
-This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, concise model-activity updates, configuration, timing, token usage, and workspace inventory. The YAML report retains the raw Codex JSONL/stderr and collected session traces for debugging.
+This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
 
 Use `--force` to replace an existing Markdown/YAML result pair. Reports include the exact invocation used to create them, with local wall-clock times in Markdown and UTC timestamps preserved in YAML.
 Pass `--title "# My test result"` (or set `title` in YAML) to customize the Markdown heading.
@@ -25,8 +25,10 @@ test-wsl2-llm generate .\results\hello.yaml `
   --no-details
 ```
 
-The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file;
-`--details` includes the trailing raw logs, traces, and workspace details when you need to investigate a run; the default Markdown output stays concise.
+The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file.
+Workspace inventory, Codex stderr, and model activity are included by default. `--details` also
+includes resolved configuration, raw stdout JSONL, trace timing, session traces, and conversation
+history when available.
 
 Connect to a retained run workspace for interactive exploration:
 

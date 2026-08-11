@@ -180,7 +180,7 @@ def test_existing_result_is_rejected_before_wsl(tmp_path: Path) -> None:
     assert "already exists" in result.output
 
 
-def test_generate_renders_yaml_to_custom_markdown_without_details(tmp_path: Path) -> None:
+def test_generate_renders_yaml_to_custom_markdown_without_raw_details(tmp_path: Path) -> None:
     source = tmp_path / "result.yaml"
     source.write_text(
         yaml.safe_dump(sample_result().model_dump(mode="json"), sort_keys=False), encoding="utf-8"
@@ -193,11 +193,13 @@ def test_generate_renders_yaml_to_custom_markdown_without_details(tmp_path: Path
     assert result.exit_code == 0, result.output
     markdown = destination.read_text(encoding="utf-8")
     assert "Create hello.txt" in markdown
+    assert "<summary>Workspace inventory</summary>" in markdown
+    assert "<summary>Complete Codex stderr</summary>" in markdown
     assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
 
 
-def test_generate_defaults_to_concise_markdown(tmp_path: Path) -> None:
+def test_generate_defaults_to_standard_diagnostics_without_raw_details(tmp_path: Path) -> None:
     source = tmp_path / "result.yaml"
     source.write_text(
         yaml.safe_dump(sample_result().model_dump(mode="json"), sort_keys=False), encoding="utf-8"
@@ -206,5 +208,7 @@ def test_generate_defaults_to_concise_markdown(tmp_path: Path) -> None:
     result = runner.invoke(app, ["generate", str(source), "--output", str(destination)])
     assert result.exit_code == 0, result.output
     markdown = destination.read_text(encoding="utf-8")
+    assert "<summary>Workspace inventory</summary>" in markdown
+    assert "<summary>Complete Codex stderr</summary>" in markdown
     assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown

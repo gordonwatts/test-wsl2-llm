@@ -120,6 +120,10 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         result.prompt,
         result.skills.plugins[0],
         "Inspecting the saved workspace.",
+        "<summary>Workspace inventory</summary>",
+        "file\t6\thello.txt",
+        "<summary>Complete Codex stderr</summary>",
+        "progress",
         "0h 0m 2s",
         "$0.00",
     ):
@@ -206,11 +210,15 @@ def test_report_overwrite_replaces_both(tmp_path: Path) -> None:
     assert "WSL2 Codex test result" in (tmp_path / "run.md").read_text(encoding="utf-8")
 
 
-def test_write_markdown_keeps_activity_but_omits_trailing_details(tmp_path: Path) -> None:
+def test_write_markdown_keeps_default_diagnostics_but_omits_raw_details(tmp_path: Path) -> None:
     destination = write_markdown(sample_result(), tmp_path / "summary.md", include_details=False)
     markdown = destination.read_text(encoding="utf-8")
     assert "## Prompt" in markdown
     assert "## Invocation" in markdown
+    assert "<summary>Workspace inventory</summary>" in markdown
+    assert "file\t6\thello.txt" in markdown
+    assert "<summary>Complete Codex stderr</summary>" in markdown
+    assert "progress" in markdown
     assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
 

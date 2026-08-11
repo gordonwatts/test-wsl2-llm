@@ -182,7 +182,8 @@ def generate_markdown(
     details: Annotated[
         bool,
         typer.Option(
-            "--details/--no-details", help="Include the detailed trailing report sections."
+            "--details/--no-details",
+            help="Include additional raw logs, traces, configuration, and conversation history.",
         ),
     ] = False,
 ) -> None:
