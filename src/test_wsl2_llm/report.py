@@ -127,6 +127,16 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
         [
             f"- Pricing file: `{model_information.pricing_file}`",
             f"- Currency: `{model_information.currency}`",
+            "- Token counts come from the `usage` object on each captured `turn.completed` "
+            "event in Codex stdout JSONL; the configured model is used because those events "
+            "do not report a model name.",
+            "- `input_tokens` is the total input-token count, including the "
+            "`cached_input_tokens` subset. Uncached input is calculated as "
+            "`input_tokens - cached_input_tokens`; cached input was served from the prompt "
+            "cache and is priced at its separate cached-input rate.",
+            "- Output tokens are reported separately. Costs use the uncached-input rate for "
+            "uncached input, the cached-input rate for cached input, and the output rate for "
+            "output tokens.",
             "",
         ]
     )
