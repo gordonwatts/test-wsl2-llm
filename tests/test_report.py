@@ -98,7 +98,11 @@ def sample_result() -> WslTestResult:
             session_traces=[
                 SessionTrace(
                     path="sessions/run.jsonl",
-                    content='{"type":"event","nested":{"value":1}}\n',
+                    content=(
+                        '{"type":"event_msg","payload":{"type":"agent_message",'
+                        '"message":"Inspecting the saved workspace."}}\n'
+                        '{"type":"event","nested":{"value":1}}\n'
+                    ),
                 )
             ],
         ),
@@ -115,12 +119,18 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     for expected in (
         result.prompt,
         result.skills.plugins[0],
-        result.logs.stdout_jsonl.strip(),
-        '"nested": {',
+        "Inspecting the saved workspace.",
         "0h 0m 2s",
         "$0.00",
     ):
         assert expected in markdown
+    assert "Complete Codex stdout JSONL" not in markdown
+    assert '"nested": {' not in markdown
+    assert "<summary>Model activity</summary>" in markdown
+    assert "raw session trace remains in YAML" in markdown
+    assert yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["logs"]["stdout_jsonl"]
+    assert markdown.index("<summary>Model activity</summary>") > markdown.index("## Codex command")
+    assert markdown.index("<summary>Model activity</summary>") < markdown.index("Schema version")
     assert "2.000000 seconds" not in markdown
     assert "| Run date | " in markdown
     assert re.search(r"\| Started \| \d{2}:\d{2}:\d{2} \|", markdown)
@@ -168,7 +178,7 @@ def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_
         ConversationTurn(prompt=result.prompt, final_response="inspected"),
     ]
     markdown = write_markdown(
-        result, tmp_path / "summary.md", overwrite=True
+        result, tmp_path / "summary.md", overwrite=True, include_details=True
     ).read_text(encoding="utf-8")
     assert "## Prompt (continuing retained workspace)" in markdown
     assert markdown.index("Inspect the existing file.") < markdown.index("Conversation history")
@@ -196,10 +206,23 @@ def test_report_overwrite_replaces_both(tmp_path: Path) -> None:
     assert "WSL2 Codex test result" in (tmp_path / "run.md").read_text(encoding="utf-8")
 
 
-def test_write_markdown_can_omit_trailing_details(tmp_path: Path) -> None:
+def test_write_markdown_keeps_activity_but_omits_trailing_details(tmp_path: Path) -> None:
     destination = write_markdown(sample_result(), tmp_path / "summary.md", include_details=False)
     markdown = destination.read_text(encoding="utf-8")
     assert "## Prompt" in markdown
     assert "## Invocation" in markdown
-    assert "<details>" not in markdown
+    assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
+
+
+def test_activity_summary_omits_auto_reviewer_messages(tmp_path: Path) -> None:
+    result = sample_result()
+    result.logs.session_traces[0].content = (
+        '{"type":"event_msg","payload":{"type":"agent_message",'
+        '"message":"{\\"risk_level\\":\\"low\\",\\"outcome\\":\\"allow\\"}"}}\n'
+        '{"type":"event_msg","payload":{"type":"agent_message",'
+        '"message":"Created the requested file."}}\n'
+    )
+    markdown = write_markdown(result, tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert "Created the requested file." in markdown
+    assert '"risk_level"' not in markdown

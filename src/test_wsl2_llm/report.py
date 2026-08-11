@@ -49,7 +49,7 @@ def write_markdown(
     output: str | Path,
     *,
     overwrite: bool = False,
-    include_details: bool = True,
+    include_details: bool = False,
 ) -> Path:
     """Render a result to one Markdown file without rewriting its YAML source."""
     destination = Path(output)
@@ -64,7 +64,7 @@ def write_markdown(
     return destination
 
 
-def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
+def render_markdown(result: TestResult, *, include_details: bool = False) -> str:
     """Render every canonical result field into a readable Markdown report."""
     lines = [
         result.title.rstrip(),
@@ -197,8 +197,62 @@ def render_markdown(result: TestResult, *, include_details: bool = True) -> str:
                     "json",
                 )
             )
+    lines.extend(_activity_section(result))
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
+
+
+def _activity_section(result: TestResult) -> list[str]:
+    """Show concise progress updates without exposing the raw session trace."""
+    updates: list[str] = []
+    seen: set[str] = set()
+    final_message = re.sub(r"\s+", " ", result.result.final_message or "").strip()
+    for trace in result.logs.session_traces:
+        for line in trace.content.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            payload = event.get("payload") if isinstance(event, dict) else None
+            if event.get("type") != "event_msg" or not isinstance(payload, dict):
+                continue
+            if payload.get("type") != "agent_message":
+                continue
+            message = payload.get("message")
+            if not isinstance(message, str):
+                continue
+            message = re.sub(r"\s+", " ", message).strip()
+            if not message or message == final_message or _is_review_decision(message):
+                continue
+            if len(message) > 500:
+                message = message[:497].rstrip() + "..."
+            if message not in seen:
+                seen.add(message)
+                updates.append(message)
+
+    lines = [
+        "",
+        "<details>",
+        "<summary>Model activity</summary>",
+        "",
+        "_Progress updates emitted during the run; the raw session trace remains in YAML._",
+        "",
+    ]
+    if updates:
+        lines.extend(f"- {update}" for update in updates)
+    else:
+        lines.append("No readable progress updates were recorded.")
+    lines.extend(["", "</details>"])
+    return lines
+
+
+def _is_review_decision(message: str) -> bool:
+    """Exclude auto-reviewer JSON from the human-facing activity summary."""
+    try:
+        value = json.loads(message)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(value, dict) and {"risk_level", "outcome"}.issubset(value)
 
 
 def _details(summary: str, content: str, language: str) -> list[str]:
