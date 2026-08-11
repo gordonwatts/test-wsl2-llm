@@ -79,6 +79,39 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
     assert saved["plugins"] == ["previous-plugin@previous-marketplace"]
 
 
+def test_continue_can_inherit_a_previous_continuation(tmp_path: Path) -> None:
+    source = tmp_path / "previous.yaml"
+    destination = tmp_path / "continued.yaml"
+    result = sample_result()
+    result.configuration = {
+        "prompt": result.prompt,
+        "title": result.title,
+        "model": "gpt-previous",
+        "output": str(tmp_path / "previous"),
+        "continuation_of": "/tmp/retained-workspace",
+    }
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    invoked = runner.invoke(
+        app,
+        [
+            "continue",
+            str(source),
+            "--prompt",
+            "Continue the continued run.",
+            "--output",
+            str(tmp_path / "next"),
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+    assert invoked.exit_code == 0, invoked.output
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["prompt"] == "Continue the continued run."
+    assert saved["model"] == "gpt-previous"
+    assert "continuation_of" not in saved
+
+
 def test_connect_command_targets_retained_workspace_and_resume() -> None:
     result = sample_result()
     command = _connect_command(result, resume=True)

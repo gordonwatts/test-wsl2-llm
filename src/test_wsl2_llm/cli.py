@@ -316,7 +316,12 @@ def continue_work(
             raise ValueError("the result workspace was not retained; rerun without --cleanup")
         file_values = load_config_file(config) if config else {}
         has_new_prompt = prompt is not None or prompt_file is not None or "prompt" in file_values
-        defaults = dict(previous.configuration)
+        # ``continuation_of`` is report metadata added to continuation results,
+        # not an input accepted by ``TestConfig``. Keep it out of the inherited
+        # settings so a continuation can itself be continued.
+        defaults = {
+            key: value for key, value in previous.configuration.items() if key != "continuation_of"
+        }
         defaults.update(file_values)
         defaults["prompt"] = prompt or defaults.get("prompt")
         if not defaults.get("model"):
