@@ -143,6 +143,11 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         "| Model | Attribution | Input | Cached input | Output | Reasoning output | USD total |"
         in token_section
     )
+    assert "usage` object on each captured `turn.completed` event" in token_section
+    assert "`input_tokens` is the total input-token count" in token_section
+    assert "`input_tokens - cached_input_tokens`" in token_section
+    assert "cached input was served from the prompt cache" in token_section
+    assert "uncached-input rate for uncached input" in token_section
     assert "Input rate / 1M" not in token_section
     amounts = re.findall(r"\$\d+\.\d+", token_section)
     assert amounts
