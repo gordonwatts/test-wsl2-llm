@@ -184,7 +184,7 @@ def generate_markdown(
         typer.Option(
             "--details/--no-details", help="Include the detailed trailing report sections."
         ),
-    ] = True,
+    ] = False,
 ) -> None:
     """Generate a Markdown report from a previously collected YAML result."""
     console = Console(stderr=True)
