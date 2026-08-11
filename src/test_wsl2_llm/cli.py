@@ -190,7 +190,7 @@ def generate_markdown(
     """Generate a Markdown report from a previously collected YAML result."""
     console = Console(stderr=True)
     try:
-        result = TestResult.model_validate(yaml.safe_load(input_yaml.read_text(encoding="utf-8")))
+        result = _load_result_yaml(input_yaml)
         destination = output or input_yaml.with_suffix(".md")
         from test_wsl2_llm.report import write_markdown
 
@@ -214,7 +214,7 @@ def connect(
     """Open an interactive Codex session in the retained run workspace."""
     console = Console(stderr=True)
     try:
-        result = TestResult.model_validate(yaml.safe_load(input_yaml.read_text(encoding="utf-8")))
+        result = _load_result_yaml(input_yaml)
         workspace = result.run.workspace_path
         if not workspace:
             raise ValueError("the result does not contain a retained workspace path")
@@ -311,9 +311,7 @@ def continue_work(
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
-        previous = TestResult.model_validate(
-            yaml.safe_load(input_yaml.read_text(encoding="utf-8"))
-        )
+        previous = _load_result_yaml(input_yaml)
         if not previous.run.workspace_path or not previous.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun without --cleanup")
         file_values = load_config_file(config) if config else {}
@@ -441,6 +439,14 @@ def _configure_logging(verbosity: int) -> None:
         handlers=[RichHandler(show_time=True, show_path=False, markup=False)],
         force=True,
     )
+
+
+def _load_result_yaml(path: Path) -> TestResult:
+    """Load a result YAML file with an actionable error for the wrong file type."""
+    try:
+        return TestResult.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"while trying to parse file '{path}' as YAML: {exc}") from exc
 
 
 def _merge_strings(*groups: list[str]) -> list[str]:

@@ -98,6 +98,28 @@ def test_connect_rejects_cleaned_up_result(tmp_path: Path) -> None:
     assert "not retained" in invoked.output
 
 
+def test_result_commands_explain_yaml_parse_failures(tmp_path: Path) -> None:
+    source = tmp_path / "result.md"
+    source.write_text("## Final response\n\n```text\nnot YAML\n```\n", encoding="utf-8")
+    invoked = runner.invoke(
+        app,
+        [
+            "continue",
+            str(source),
+            "--prompt",
+            "Inspect the existing file.",
+            "--config-only",
+            "--save-config",
+            str(tmp_path / "saved.yaml"),
+        ],
+    )
+    assert invoked.exit_code == 2
+    assert "while trying to parse file" in invoked.output
+    assert "result.md" in invoked.output
+    assert "as YAML" in invoked.output
+    assert "found character '`'" in invoked.output
+
+
 def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
     destination = tmp_path / "saved.yaml"
     result = runner.invoke(
