@@ -77,7 +77,6 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
         "",
         _fence(result.result.final_message or ""),
     ]
-    lines.extend(_activity_section(result))
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
@@ -198,6 +197,7 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
                     "json",
                 )
             )
+    lines.extend(_activity_section(result))
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
 
@@ -232,7 +232,8 @@ def _activity_section(result: TestResult) -> list[str]:
 
     lines = [
         "",
-        "## Model activity",
+        "<details>",
+        "<summary>Model activity</summary>",
         "",
         "_Progress updates emitted during the run; the raw session trace remains in YAML._",
         "",
@@ -241,6 +242,7 @@ def _activity_section(result: TestResult) -> list[str]:
         lines.extend(f"- {update}" for update in updates)
     else:
         lines.append("No readable progress updates were recorded.")
+    lines.extend(["", "</details>"])
     return lines
 
 

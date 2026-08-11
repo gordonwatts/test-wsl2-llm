@@ -193,7 +193,8 @@ def test_generate_renders_yaml_to_custom_markdown_without_details(tmp_path: Path
     assert result.exit_code == 0, result.output
     markdown = destination.read_text(encoding="utf-8")
     assert "Create hello.txt" in markdown
-    assert "<details>" not in markdown
+    assert "<summary>Model activity</summary>" in markdown
+    assert "Complete Codex stdout JSONL" not in markdown
 
 
 def test_generate_defaults_to_concise_markdown(tmp_path: Path) -> None:
@@ -205,6 +206,5 @@ def test_generate_defaults_to_concise_markdown(tmp_path: Path) -> None:
     result = runner.invoke(app, ["generate", str(source), "--output", str(destination)])
     assert result.exit_code == 0, result.output
     markdown = destination.read_text(encoding="utf-8")
-    assert "## Model activity" in markdown
+    assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
-    assert "<details>" not in markdown

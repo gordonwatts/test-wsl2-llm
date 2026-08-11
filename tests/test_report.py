@@ -126,9 +126,11 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         assert expected in markdown
     assert "Complete Codex stdout JSONL" not in markdown
     assert '"nested": {' not in markdown
-    assert "## Model activity" in markdown
+    assert "<summary>Model activity</summary>" in markdown
     assert "raw session trace remains in YAML" in markdown
     assert yaml.safe_load(yaml_path.read_text(encoding="utf-8"))["logs"]["stdout_jsonl"]
+    assert markdown.index("<summary>Model activity</summary>") > markdown.index("## Codex command")
+    assert markdown.index("<summary>Model activity</summary>") < markdown.index("Schema version")
     assert "2.000000 seconds" not in markdown
     assert "| Run date | " in markdown
     assert re.search(r"\| Started \| \d{2}:\d{2}:\d{2} \|", markdown)
@@ -204,12 +206,12 @@ def test_report_overwrite_replaces_both(tmp_path: Path) -> None:
     assert "WSL2 Codex test result" in (tmp_path / "run.md").read_text(encoding="utf-8")
 
 
-def test_write_markdown_can_omit_trailing_details(tmp_path: Path) -> None:
+def test_write_markdown_keeps_activity_but_omits_trailing_details(tmp_path: Path) -> None:
     destination = write_markdown(sample_result(), tmp_path / "summary.md", include_details=False)
     markdown = destination.read_text(encoding="utf-8")
     assert "## Prompt" in markdown
     assert "## Invocation" in markdown
-    assert "<details>" not in markdown
+    assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
 
 
