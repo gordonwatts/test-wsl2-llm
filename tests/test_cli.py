@@ -79,6 +79,39 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
     assert saved["plugins"] == ["previous-plugin@previous-marketplace"]
 
 
+def test_continue_can_inherit_a_previous_continuation(tmp_path: Path) -> None:
+    source = tmp_path / "previous.yaml"
+    destination = tmp_path / "continued.yaml"
+    result = sample_result()
+    result.configuration = {
+        "prompt": result.prompt,
+        "title": result.title,
+        "model": "gpt-previous",
+        "output": str(tmp_path / "previous"),
+        "continuation_of": "/tmp/retained-workspace",
+    }
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    invoked = runner.invoke(
+        app,
+        [
+            "continue",
+            str(source),
+            "--prompt",
+            "Continue the continued run.",
+            "--output",
+            str(tmp_path / "next"),
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+    assert invoked.exit_code == 0, invoked.output
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["prompt"] == "Continue the continued run."
+    assert saved["model"] == "gpt-previous"
+    assert "continuation_of" not in saved
+
+
 def test_connect_command_targets_retained_workspace_and_resume() -> None:
     result = sample_result()
     command = _connect_command(result, resume=True)
@@ -96,6 +129,28 @@ def test_connect_rejects_cleaned_up_result(tmp_path: Path) -> None:
     invoked = runner.invoke(app, ["connect", str(source)])
     assert invoked.exit_code == 2
     assert "not retained" in invoked.output
+
+
+def test_result_commands_explain_yaml_parse_failures(tmp_path: Path) -> None:
+    source = tmp_path / "result.md"
+    source.write_text("## Final response\n\n```text\nnot YAML\n```\n", encoding="utf-8")
+    invoked = runner.invoke(
+        app,
+        [
+            "continue",
+            str(source),
+            "--prompt",
+            "Inspect the existing file.",
+            "--config-only",
+            "--save-config",
+            str(tmp_path / "saved.yaml"),
+        ],
+    )
+    assert invoked.exit_code == 2
+    assert "while trying to parse file" in invoked.output
+    assert "result.md" in invoked.output
+    assert "as YAML" in invoked.output
+    assert "found character '`'" in invoked.output
 
 
 def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
@@ -180,7 +235,7 @@ def test_existing_result_is_rejected_before_wsl(tmp_path: Path) -> None:
     assert "already exists" in result.output
 
 
-def test_generate_renders_yaml_to_custom_markdown_without_details(tmp_path: Path) -> None:
+def test_generate_renders_yaml_to_custom_markdown_without_raw_details(tmp_path: Path) -> None:
     source = tmp_path / "result.yaml"
     source.write_text(
         yaml.safe_dump(sample_result().model_dump(mode="json"), sort_keys=False), encoding="utf-8"
@@ -193,11 +248,13 @@ def test_generate_renders_yaml_to_custom_markdown_without_details(tmp_path: Path
     assert result.exit_code == 0, result.output
     markdown = destination.read_text(encoding="utf-8")
     assert "Create hello.txt" in markdown
+    assert "<summary>Workspace inventory</summary>" in markdown
+    assert "<summary>Complete Codex stderr</summary>" in markdown
     assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
 
 
-def test_generate_defaults_to_concise_markdown(tmp_path: Path) -> None:
+def test_generate_defaults_to_standard_diagnostics_without_raw_details(tmp_path: Path) -> None:
     source = tmp_path / "result.yaml"
     source.write_text(
         yaml.safe_dump(sample_result().model_dump(mode="json"), sort_keys=False), encoding="utf-8"
@@ -206,5 +263,7 @@ def test_generate_defaults_to_concise_markdown(tmp_path: Path) -> None:
     result = runner.invoke(app, ["generate", str(source), "--output", str(destination)])
     assert result.exit_code == 0, result.output
     markdown = destination.read_text(encoding="utf-8")
+    assert "<summary>Workspace inventory</summary>" in markdown
+    assert "<summary>Complete Codex stderr</summary>" in markdown
     assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown

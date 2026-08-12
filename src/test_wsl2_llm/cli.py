@@ -182,14 +182,15 @@ def generate_markdown(
     details: Annotated[
         bool,
         typer.Option(
-            "--details/--no-details", help="Include the detailed trailing report sections."
+            "--details/--no-details",
+            help="Include additional raw logs, traces, configuration, and conversation history.",
         ),
     ] = False,
 ) -> None:
     """Generate a Markdown report from a previously collected YAML result."""
     console = Console(stderr=True)
     try:
-        result = TestResult.model_validate(yaml.safe_load(input_yaml.read_text(encoding="utf-8")))
+        result = _load_result_yaml(input_yaml)
         destination = output or input_yaml.with_suffix(".md")
         from test_wsl2_llm.report import write_markdown
 
@@ -213,7 +214,7 @@ def connect(
     """Open an interactive Codex session in the retained run workspace."""
     console = Console(stderr=True)
     try:
-        result = TestResult.model_validate(yaml.safe_load(input_yaml.read_text(encoding="utf-8")))
+        result = _load_result_yaml(input_yaml)
         workspace = result.run.workspace_path
         if not workspace:
             raise ValueError("the result does not contain a retained workspace path")
@@ -310,14 +311,17 @@ def continue_work(
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
-        previous = TestResult.model_validate(
-            yaml.safe_load(input_yaml.read_text(encoding="utf-8"))
-        )
+        previous = _load_result_yaml(input_yaml)
         if not previous.run.workspace_path or not previous.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun without --cleanup")
         file_values = load_config_file(config) if config else {}
         has_new_prompt = prompt is not None or prompt_file is not None or "prompt" in file_values
-        defaults = dict(previous.configuration)
+        # ``continuation_of`` is report metadata added to continuation results,
+        # not an input accepted by ``TestConfig``. Keep it out of the inherited
+        # settings so a continuation can itself be continued.
+        defaults = {
+            key: value for key, value in previous.configuration.items() if key != "continuation_of"
+        }
         defaults.update(file_values)
         defaults["prompt"] = prompt or defaults.get("prompt")
         if not defaults.get("model"):
@@ -440,6 +444,14 @@ def _configure_logging(verbosity: int) -> None:
         handlers=[RichHandler(show_time=True, show_path=False, markup=False)],
         force=True,
     )
+
+
+def _load_result_yaml(path: Path) -> TestResult:
+    """Load a result YAML file with an actionable error for the wrong file type."""
+    try:
+        return TestResult.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
+    except yaml.YAMLError as exc:
+        raise ValueError(f"while trying to parse file '{path}' as YAML: {exc}") from exc
 
 
 def _merge_strings(*groups: list[str]) -> list[str]:

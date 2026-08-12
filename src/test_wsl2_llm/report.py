@@ -167,18 +167,20 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
     lines.extend(
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
+
+    inventory = "\n".join(
+        f"{entry.type}\t{entry.size}\t{entry.path}"
+        + (f" -> {entry.symlink_target}" if entry.symlink_target else "")
+        for entry in result.workspace.files
+    )
+    lines.extend(_details("Workspace inventory", inventory, "text"))
+    lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
+
     if include_details:
         prior_conversation = result.conversation[:-1]
         if prior_conversation:
             lines.extend(_conversation_details(prior_conversation))
         lines.extend(_details("Resolved configuration", _yaml(result.configuration), "yaml"))
-
-        inventory = "\n".join(
-            f"{entry.type}\t{entry.size}\t{entry.path}"
-            + (f" -> {entry.symlink_target}" if entry.symlink_target else "")
-            for entry in result.workspace.files
-        )
-        lines.extend(_details("Workspace inventory", inventory, "text"))
 
         timing_values = [event.model_dump(mode="json") for event in result.timing.trace_events]
         timing_text = _yaml(_localize_value(timing_values))
@@ -188,7 +190,6 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
                 "Complete Codex stdout JSONL", _localize_jsonl(result.logs.stdout_jsonl), "jsonl"
             )
         )
-        lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
         for trace in result.logs.session_traces:
             lines.extend(
                 _details(
