@@ -80,6 +80,20 @@ def test_pricing_file_from_yaml_resolves_relative_to_yaml(tmp_path: Path) -> Non
     assert resolved.pricing_file == str(pricing.resolve())
 
 
+def test_copy_files_from_yaml_resolve_relative_to_yaml(tmp_path: Path) -> None:
+    secret = tmp_path / "servicex.yaml"
+    secret.write_text("token: secret\n", encoding="utf-8")
+    config_file = tmp_path / "input.yaml"
+    config_file.write_text(
+        "prompt: hello\nmodel: model\noutput: out\ncopy_files: [servicex.yaml]\n",
+        encoding="utf-8",
+    )
+
+    resolved = build_config(load_config_file(config_file), {}, cwd=tmp_path)
+
+    assert resolved.copy_files == [str(secret.resolve())]
+
+
 @pytest.mark.parametrize(
     ("model_argument", "expected_model", "expected_effort"),
     [

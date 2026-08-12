@@ -20,6 +20,7 @@ class TestConfig(BaseModel):
     reasoning_effort: ReasoningEffort = "medium"
     marketplaces: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
+    copy_files: list[str] = Field(default_factory=list)
     distro: str | None = None
     wsl_parent: str = "/tmp"
     output: str

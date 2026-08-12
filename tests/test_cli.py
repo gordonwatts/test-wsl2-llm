@@ -24,6 +24,7 @@ def test_help_documents_run_and_core_options() -> None:
         "--pricing-file",
         "--save-config",
         "--title",
+        "--copy-file",
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
@@ -44,6 +45,7 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
         "approvals_reviewer": "user",
         "auth_source": "~/.codex/previous-auth.json",
         "progress_lines": 3,
+        "copy_files": ["C:/secrets/servicex.yaml"],
         "marketplaces": ["https://example.com/previous-marketplace.git"],
         "plugins": ["previous-plugin@previous-marketplace"],
     }
@@ -75,6 +77,7 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
     assert saved["approvals_reviewer"] == "user"
     assert saved["auth_source"] == "~/.codex/previous-auth.json"
     assert saved["progress_lines"] == 3
+    assert saved["copy_files"] == [str(Path("C:/secrets/servicex.yaml"))]
     assert saved["marketplaces"] == ["https://example.com/previous-marketplace.git"]
     assert saved["plugins"] == ["previous-plugin@previous-marketplace"]
 
@@ -175,6 +178,34 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
     assert saved["prompt"] == "hello"
     assert saved["title"] == "# WSL2 Codex test result"
     assert not (tmp_path / "out.yaml").exists()
+
+
+def test_config_only_saves_copy_file_paths(tmp_path: Path) -> None:
+    secret = tmp_path / "servicex.yaml"
+    secret.write_text("token: secret\n", encoding="utf-8")
+    destination = tmp_path / "saved.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--copy-file",
+            str(secret),
+            "--output",
+            str(tmp_path / "out"),
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(destination.read_text(encoding="utf-8"))["copy_files"] == [
+        str(secret.resolve())
+    ]
 
 
 def test_force_maps_to_overwrite_in_saved_configuration(tmp_path: Path) -> None:

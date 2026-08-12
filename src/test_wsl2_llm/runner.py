@@ -218,6 +218,7 @@ def run_test(
             )
             _write_wsl_file(client, f"{run_root}/.harness/inputs/config.yaml", resolved_yaml)
             runtime_marketplaces = _transfer_marketplaces(client, config.marketplaces, run_root)
+            _transfer_files(client, config.copy_files, workspace_path)
 
         with state.phase("codex_home_setup"):
             client.bash(
@@ -423,6 +424,11 @@ def continue_test(
             runtime_marketplaces = _transfer_marketplaces(
                 client, new_marketplaces, run_root, append=True
             )
+            prior_copy_files = set(previous.configuration.get("copy_files", []))
+            new_copy_files = [
+                source for source in config.copy_files if source not in prior_copy_files
+            ]
+            _transfer_files(client, new_copy_files, workspace_path)
 
         with state.phase("codex_home_setup"):
             client.bash(
@@ -630,6 +636,16 @@ def _transfer_marketplaces(
         else:
             runtime.append(source)
     return runtime
+
+
+def _transfer_files(client: WslClient, sources: list[str], workspace: str) -> None:
+    """Copy Windows files into the root of the WSL workspace before execution."""
+    for source in sources:
+        windows_path = Path(source)
+        if not windows_path.is_file():
+            raise FileNotFoundError(f"copy file does not exist: {source}")
+        mounted = client.text(client.bash("wslpath -a \"$1\"", str(windows_path.resolve()))).strip()
+        client.bash('cp -- "$2" "$1/"', workspace, mounted)
 
 
 def _is_git_marketplace_source(source: str) -> bool:
