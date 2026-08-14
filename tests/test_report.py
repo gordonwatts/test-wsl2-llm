@@ -7,6 +7,7 @@ import yaml
 from test_wsl2_llm.models import (
     CommandResult,
     ConversationTurn,
+    CopiedBackFile,
     FinalResult,
     LogsResult,
     ModelCost,
@@ -207,6 +208,60 @@ def test_report_details_include_copied_files_in_configuration(tmp_path: Path) ->
     assert "<summary>Resolved configuration</summary>" in markdown
     assert "copy_files:" in markdown
     assert "C:/secrets/servicex.yaml" in markdown
+
+
+def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.notes.txt"
+    copied.write_text("line 1\nline 2", encoding="utf-8")
+    result.copied_back = [
+        CopiedBackFile(
+            source="notes.txt",
+            destination=str(copied),
+            type="text",
+            size=copied.stat().st_size,
+            text_preview="line 1\nline 2",
+        )
+    ]
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "## Copied-back files" in markdown
+    assert "[run.notes.txt](file:///" in markdown
+    assert "First 10 lines:" in markdown
+    assert "line 1\nline 2" in markdown
+
+
+def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> None:
+    result = sample_result()
+    image = tmp_path / "run.plot.png"
+    image.write_bytes(b"png")
+    root = tmp_path / "run.events.root"
+    root.write_bytes(b"root")
+    result.copied_back = [
+        CopiedBackFile(
+            source="plot.png", destination=str(image), type="image", size=3
+        ),
+        CopiedBackFile(
+            source="events.root",
+            destination=str(root),
+            type="root",
+            size=4,
+            root_contents=[
+                {
+                    "path": "events;1",
+                    "type": "TTree",
+                    "events": 12,
+                    "branches": ["pt", "eta"],
+                }
+            ],
+        ),
+    ]
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "[![run.plot.png](file:///" in markdown
+    assert "| `events;1` | TTree | 12 | pt, eta |" in markdown
 
 
 def test_report_refuses_either_existing_output(tmp_path: Path) -> None:

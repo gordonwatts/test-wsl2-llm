@@ -1,16 +1,21 @@
 import re
 import subprocess
 
+import numpy as np
 import pytest
+import uproot
 
-from test_wsl2_llm.models import ConversationTurn
+from test_wsl2_llm.models import ConversationTurn, CopiedBackFile
 from test_wsl2_llm.models import TestConfig as WslTestConfig
 from test_wsl2_llm.runner import (
     WslClient,
     _codex_config,
     _console_time,
+    _copy_back_files,
+    _describe_copied_back,
     _installed_paths_from_json,
     _is_git_marketplace_source,
+    _root_contents,
     _transfer_files,
     _transfer_marketplaces,
     continuation_prompt,
@@ -135,6 +140,57 @@ def test_copy_files_are_transferred_to_workspace_root(tmp_path) -> None:
         'cp -- "$2" "$1/"',
         ("/tmp/run/workspace", "/mnt/c/servicex.yaml"),
     ) in client.calls
+
+
+def test_copy_back_uses_output_stub_and_workspace_relative_source(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "run.plot.txt"
+    destination.write_text("one\ntwo\n", encoding="utf-8")
+    described = _describe_copied_back("plot.txt", destination)
+    assert described.type == "text"
+    assert described.text_preview == "one\ntwo"
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("bash", script, arguments))
+            if script == 'wslpath -a "$1"':
+                return subprocess.CompletedProcess([], 0, b"/mnt/c/results/run.plot.txt\n", b"")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner._describe_copied_back",
+        lambda source, path: CopiedBackFile(
+            source=source, destination=str(path), type="file", size=1
+        ),
+    )
+    client = RecordingClient()
+    copied = _copy_back_files(client, ["plot.txt"], "/tmp/run/workspace", str(tmp_path / "run"))
+    assert copied[0].destination.endswith("run.plot.txt")
+    assert ("bash", 'test -f "$1"', ("/tmp/run/workspace/plot.txt",)) in client.calls
+    assert any(
+        script == 'cp -- "$1" "$2"'
+        and arguments[0] == "/tmp/run/workspace/plot.txt"
+        and arguments[1] == "/mnt/c/results/run.plot.txt"
+        for _, script, arguments in client.calls
+    )
+
+
+def test_root_contents_lists_ttree_branches_and_events(tmp_path) -> None:
+    path = tmp_path / "events.root"
+    with uproot.recreate(path) as root_file:
+        root_file.mktree("events", {"pt": "float64", "run": "int32"})
+        root_file["events"].extend({"pt": np.array([1.0, 2.0]), "run": np.array([10, 11])})
+
+    contents = _root_contents(path)
+    tree = next(item for item in contents if item["path"].startswith("events"))
+    assert tree["type"] == "TTree"
+    assert tree["events"] == 2
+    assert tree["branches"] == ["pt", "run"]
 
 
 def test_continuation_prompt_contains_prior_chain_and_new_prompt() -> None:

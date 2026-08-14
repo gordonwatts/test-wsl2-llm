@@ -174,6 +174,7 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
         for entry in result.workspace.files
     )
     lines.extend(_details("Workspace inventory", inventory, "text"))
+    lines.extend(_copied_back_section(result))
     lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
 
     if include_details:
@@ -201,6 +202,53 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
     lines.extend(_activity_section(result))
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
+
+
+def _copied_back_section(result: TestResult) -> list[str]:
+    """Render copied-back artifacts with links and type-specific previews."""
+    if not result.copied_back:
+        return []
+    lines = ["", "## Copied-back files", ""]
+    for file in result.copied_back:
+        link = _file_link(file.destination)
+        name = Path(file.destination).name
+        if file.type == "image":
+            lines.extend([f"[![{name}]({link})]({link})", ""])
+        else:
+            lines.extend([f"### [{name}]({link})", ""])
+        lines.append(f"- Source: `{file.source}`")
+        lines.append(f"- Size: {_number(file.size)} bytes")
+        if file.type == "root":
+            if file.error:
+                lines.extend(["", "**ROOT inspection error:**", "", _fence(file.error)])
+            elif file.root_contents:
+                lines.extend(
+                    [
+                        "",
+                        "| Object | Type | Events | Branches |",
+                        "| --- | --- | ---: | --- |",
+                    ]
+                )
+                for item in file.root_contents:
+                    branches = ", ".join(item.get("branches", []))
+                    events = item.get("events", "")
+                    lines.append(
+                        f"| `{item.get('path', '')}` | {item.get('type', '')} | {events} | "
+                        f"{branches} |"
+                    )
+            else:
+                lines.extend(["", "ROOT file contains no listed objects."])
+        elif file.type == "text" and file.text_preview is not None:
+            lines.extend(["", "First 10 lines:", "", _fence(file.text_preview)])
+        elif file.type not in {"image", "file"}:
+            lines.extend(["", f"Type: `{file.type}`"])
+        lines.append("")
+    return lines
+
+
+def _file_link(destination: str) -> str:
+    """Return a Markdown-safe local file URI for a copied artifact."""
+    return Path(destination).resolve().as_uri()
 
 
 def _activity_section(result: TestResult) -> list[str]:

@@ -21,6 +21,7 @@ class TestConfig(BaseModel):
     marketplaces: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
     copy_files: list[str] = Field(default_factory=list)
+    copy_back: list[str] = Field(default_factory=list)
     distro: str | None = None
     wsl_parent: str = "/tmp"
     output: str
@@ -176,6 +177,18 @@ class WorkspaceResult(BaseModel):
     files: list[WorkspaceFile] = Field(default_factory=list)
 
 
+class CopiedBackFile(BaseModel):
+    """A file copied from the WSL workspace into the Windows result directory."""
+
+    source: str
+    destination: str
+    type: str
+    size: int
+    text_preview: str | None = None
+    root_contents: list[dict[str, Any]] = Field(default_factory=list)
+    error: str | None = None
+
+
 class CommandResult(BaseModel):
     argv: list[str] = Field(default_factory=list)
 
@@ -201,5 +214,6 @@ class TestResult(BaseModel):
     result: FinalResult
     conversation: list[ConversationTurn] = Field(default_factory=list)
     workspace: WorkspaceResult
+    copied_back: list[CopiedBackFile] = Field(default_factory=list)
     command: CommandResult
     logs: LogsResult

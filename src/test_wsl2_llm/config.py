@@ -29,6 +29,7 @@ def load_config_file(path: Path) -> dict[str, Any]:
     raw["copy_files"] = [
         str(_resolve_windows_path(str(source), base)) for source in raw.get("copy_files", [])
     ]
+    raw["copy_back"] = [str(source) for source in raw.get("copy_back", [])]
     if raw.get("output"):
         raw["output"] = str(_resolve_windows_path(str(raw["output"]), base))
     if raw.get("pricing_file"):
