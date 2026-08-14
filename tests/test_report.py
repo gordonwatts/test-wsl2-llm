@@ -227,7 +227,7 @@ def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> No
         encoding="utf-8"
     )
     assert "## Copied-back files" in markdown
-    assert "[run.notes.txt](file:///" in markdown
+    assert "[run.notes.txt](run.notes.txt)" in markdown
     assert "First 10 lines:" in markdown
     assert "line 1\nline 2" in markdown
 
@@ -260,7 +260,7 @@ def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> No
     markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
         encoding="utf-8"
     )
-    assert "[![run.plot.png](file:///" in markdown
+    assert "[![run.plot.png](run.plot.png)" in markdown
     assert "| `events;1` | TTree | 12 | pt, eta |" in markdown
 
 
