@@ -79,11 +79,11 @@ def render_markdown(
         "",
         "## Prompt" + (" (continuing retained workspace)" if result.continued_from else ""),
         "",
-        _fence(result.prompt),
+        _blockquote(result.prompt),
         "",
         "## Final response",
         "",
-        _fence(result.result.final_message or ""),
+        _blockquote(result.result.final_message or ""),
     ]
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
@@ -355,6 +355,14 @@ def _fence(content: str, language: str = "text") -> str:
     longest = max((len(match.group(0)) for match in re.finditer(r"`+", content)), default=0)
     fence = "`" * max(3, longest + 1)
     return f"{fence}{language}\n{content}\n{fence}"
+
+
+def _blockquote(content: str) -> str:
+    """Render prose as a Markdown blockquote so viewers can wrap it naturally."""
+    lines = content.splitlines()
+    if not lines:
+        return ">"
+    return "\n".join(f"> {line}" if line else ">" for line in lines)
 
 
 def _bullets(label: str, values: list[str]) -> list[str]:

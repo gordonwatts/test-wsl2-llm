@@ -197,6 +197,20 @@ def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_
     assert "Inspect the existing file." not in history
 
 
+def test_prompt_and_final_response_render_as_wrapping_blockquotes(tmp_path: Path) -> None:
+    result = sample_result()
+    result.prompt = "First prompt line.\nSecond prompt line."
+    result.result.final_message = "First response line.\nSecond response line."
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "> First prompt line.\n> Second prompt line." in markdown
+    assert "> First response line.\n> Second response line." in markdown
+    assert "```text\nFirst prompt line." not in markdown
+    assert "```text\nFirst response line." not in markdown
+
+
 def test_report_details_include_copied_files_in_configuration(tmp_path: Path) -> None:
     result = sample_result()
     result.configuration["copy_files"] = ["C:/secrets/servicex.yaml"]
