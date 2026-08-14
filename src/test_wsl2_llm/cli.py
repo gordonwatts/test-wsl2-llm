@@ -52,6 +52,13 @@ def run(
         list[str] | None,
         typer.Option("--plugin", help="Plugin selector such as NAME@MARKETPLACE; repeatable."),
     ] = None,
+    copy_file: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--copy-file",
+            help="Windows file copied into the WSL workspace root; repeatable.",
+        ),
+    ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to WSL default.")
     ] = None,
@@ -123,6 +130,7 @@ def run(
             "model": model,
             "marketplaces": marketplace,
             "plugins": plugin,
+            "copy_files": copy_file,
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -253,6 +261,13 @@ def continue_work(
         list[str] | None,
         typer.Option("--plugin", help="New plugin selector; repeatable."),
     ] = None,
+    copy_file: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--copy-file",
+            help="New Windows file copied into the retained WSL workspace root; repeatable.",
+        ),
+    ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the previous run.")
     ] = None,
@@ -338,6 +353,11 @@ def continue_work(
             file_values.get("plugins", []),
             plugin or [],
         )
+        defaults["copy_files"] = _merge_strings(
+            previous.configuration.get("copy_files", []),
+            file_values.get("copy_files", []),
+            copy_file or [],
+        )
         defaults["output"] = str(output or input_yaml.with_name(f"{input_yaml.stem}-continue"))
         defaults["cleanup"] = False
         cli_values = {
@@ -346,6 +366,7 @@ def continue_work(
             "model": model,
             "marketplaces": defaults["marketplaces"],
             "plugins": defaults["plugins"],
+            "copy_files": defaults["copy_files"],
             "distro": distro,
             "output": str(output) if output else None,
             "overwrite": True if force else None,

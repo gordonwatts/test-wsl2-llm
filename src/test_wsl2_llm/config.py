@@ -26,6 +26,9 @@ def load_config_file(path: Path) -> dict[str, Any]:
     raw["marketplaces"] = [
         _normalize_marketplace(str(source), base) for source in raw.get("marketplaces", [])
     ]
+    raw["copy_files"] = [
+        str(_resolve_windows_path(str(source), base)) for source in raw.get("copy_files", [])
+    ]
     if raw.get("output"):
         raw["output"] = str(_resolve_windows_path(str(raw["output"]), base))
     if raw.get("pricing_file"):
@@ -43,6 +46,10 @@ def build_config(
     if "marketplaces" in cli_values and cli_values["marketplaces"] is not None:
         merged["marketplaces"] = [
             _normalize_marketplace(str(source), cwd) for source in cli_values["marketplaces"]
+        ]
+    if "copy_files" in cli_values and cli_values["copy_files"] is not None:
+        merged["copy_files"] = [
+            str(_resolve_windows_path(str(source), cwd)) for source in cli_values["copy_files"]
         ]
     if cli_values.get("pricing_file") is not None:
         merged["pricing_file"] = str(_resolve_windows_path(str(cli_values["pricing_file"]), cwd))

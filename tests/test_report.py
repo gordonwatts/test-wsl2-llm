@@ -196,6 +196,19 @@ def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_
     assert "Inspect the existing file." not in history
 
 
+def test_report_details_include_copied_files_in_configuration(tmp_path: Path) -> None:
+    result = sample_result()
+    result.configuration["copy_files"] = ["C:/secrets/servicex.yaml"]
+
+    markdown = write_markdown(
+        result, tmp_path / "summary.md", overwrite=True, include_details=True
+    ).read_text(encoding="utf-8")
+
+    assert "<summary>Resolved configuration</summary>" in markdown
+    assert "copy_files:" in markdown
+    assert "C:/secrets/servicex.yaml" in markdown
+
+
 def test_report_refuses_either_existing_output(tmp_path: Path) -> None:
     (tmp_path / "run.yaml").write_text("existing", encoding="utf-8")
     with pytest.raises(FileExistsError):

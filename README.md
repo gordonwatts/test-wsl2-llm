@@ -8,11 +8,19 @@
 uvx test-wsl2-llm run `
   --distro atlas_al9 `
   --model MODEL[:EFFORT] `
+  --copy-file .\servicex.yaml `
   --prompt "Create hello.txt containing Hello from WSL" `
   --output .\results\hello
 ```
 
 This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
+
+Use `--copy-file PATH` (repeatable) to copy Windows files into the root of the fresh WSL
+workspace before Codex starts. This is useful for local credentials such as a
+`servicex.yaml` file. The same option can be written in YAML as `copy_files`; paths are
+resolved relative to the input YAML file. The resolved list is saved in the YAML
+`configuration` section and in the Markdown report's expanded `Resolved configuration`
+section. The copy operation itself does not add file contents to either report.
 
 Use `--force` to replace an existing Markdown/YAML result pair. Reports include the exact invocation used to create them, with local wall-clock times in Markdown and UTC timestamps preserved in YAML.
 Pass `--title "# My test result"` (or set `title` in YAML) to customize the Markdown heading.
@@ -75,6 +83,8 @@ marketplaces:
 plugins:
   - analysis-tools@my-marketplace
   - atlas-analysisbase@atlas-analysisbase-marketplace
+copy_files:
+  - .\servicex.yaml
 output: C:\Users\me\Results\analysis-run
 progress_lines: 5
 ```

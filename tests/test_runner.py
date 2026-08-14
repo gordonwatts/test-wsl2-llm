@@ -11,6 +11,7 @@ from test_wsl2_llm.runner import (
     _console_time,
     _installed_paths_from_json,
     _is_git_marketplace_source,
+    _transfer_files,
     _transfer_marketplaces,
     continuation_prompt,
 )
@@ -106,6 +107,34 @@ def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
     destination = "/tmp/test-wsl2-llm-run/.harness/inputs/marketplaces/marketplace-001"
     assert runtime == [destination]
     assert ("login_bash", 'git clone --depth 1 -- "$1" "$2"', (source, destination)) in client.calls
+
+
+def test_copy_files_are_transferred_to_workspace_root(tmp_path) -> None:
+    source = tmp_path / "servicex.yaml"
+    source.write_text("token: secret\n", encoding="utf-8")
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("bash", script, arguments))
+            if script == 'wslpath -a "$1"':
+                return subprocess.CompletedProcess([], 0, b"/mnt/c/servicex.yaml\n", b"")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    client = RecordingClient()
+    _transfer_files(client, [str(source)], "/tmp/run/workspace")  # type: ignore[arg-type]
+
+    assert ("bash", 'wslpath -a "$1"', (str(source.resolve()),)) in client.calls
+    assert (
+        "bash",
+        'cp -- "$2" "$1/"',
+        ("/tmp/run/workspace", "/mnt/c/servicex.yaml"),
+    ) in client.calls
 
 
 def test_continuation_prompt_contains_prior_chain_and_new_prompt() -> None:
