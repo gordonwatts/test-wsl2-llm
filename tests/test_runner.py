@@ -1,5 +1,6 @@
 import re
 import subprocess
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -13,6 +14,7 @@ from test_wsl2_llm.runner import (
     _console_time,
     _copy_back_files,
     _describe_copied_back,
+    _expand_copy_back_pattern,
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _root_contents,
@@ -142,7 +144,7 @@ def test_copy_files_are_transferred_to_workspace_root(tmp_path) -> None:
     ) in client.calls
 
 
-def test_copy_back_uses_output_stub_and_workspace_relative_source(tmp_path, monkeypatch) -> None:
+def test_copy_back_expands_wildcards_and_uses_output_stub(tmp_path, monkeypatch) -> None:
     destination = tmp_path / "run.plot.txt"
     destination.write_text("one\ntwo\n", encoding="utf-8")
     described = _describe_copied_back("plot.txt", destination)
@@ -156,7 +158,17 @@ def test_copy_back_uses_output_stub_and_workspace_relative_source(tmp_path, monk
         def bash(self, script: str, *arguments: str, **_kwargs):
             self.calls.append(("bash", script, arguments))
             if script == 'wslpath -a "$1"':
-                return subprocess.CompletedProcess([], 0, b"/mnt/c/results/run.plot.txt\n", b"")
+                destination = arguments[0].replace("\\", "/").rsplit("/", 1)[-1]
+                return subprocess.CompletedProcess(
+                    [], 0, f"/mnt/c/results/{destination}\n".encode(), b""
+                )
+            if "compgen -G" in script:
+                return subprocess.CompletedProcess(
+                    [],
+                    0,
+                    b"/tmp/run/workspace/plot_1.png\0/tmp/run/workspace/plot_2.png\0",
+                    b"",
+                )
             return subprocess.CompletedProcess([], 0, b"", b"")
 
         def text(self, completed) -> str:
@@ -169,15 +181,40 @@ def test_copy_back_uses_output_stub_and_workspace_relative_source(tmp_path, monk
         ),
     )
     client = RecordingClient()
-    copied = _copy_back_files(client, ["plot.txt"], "/tmp/run/workspace", str(tmp_path / "run"))
-    assert copied[0].destination.endswith("run.plot.txt")
-    assert ("bash", 'test -f "$1"', ("/tmp/run/workspace/plot.txt",)) in client.calls
-    assert any(
-        script == 'cp -- "$1" "$2"'
-        and arguments[0] == "/tmp/run/workspace/plot.txt"
-        and arguments[1] == "/mnt/c/results/run.plot.txt"
+    copied = _copy_back_files(client, ["plot_*.png"], "/tmp/run/workspace", str(tmp_path / "run"))
+    assert [item.source for item in copied] == ["plot_1.png", "plot_2.png"]
+    assert [Path(item.destination).name for item in copied] == [
+        "run.plot_1.png",
+        "run.plot_2.png",
+    ]
+    cp_calls = [
+        arguments
         for _, script, arguments in client.calls
-    )
+        if script == 'cp -- "$1" "$2"'
+    ]
+    assert cp_calls == [
+        ("/tmp/run/workspace/plot_1.png", "/mnt/c/results/run.plot_1.png"),
+        ("/tmp/run/workspace/plot_2.png", "/mnt/c/results/run.plot_2.png"),
+    ]
+
+
+def test_copy_back_pattern_without_matches_is_an_error() -> None:
+    class EmptyClient:
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    assert _expand_copy_back_pattern(EmptyClient(), "missing_*.png", "/tmp/run/workspace") == []
+
+
+def test_copy_back_rejects_pattern_without_matches(tmp_path) -> None:
+    class EmptyClient:
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    with pytest.raises(FileNotFoundError, match="missing_\\*\\.png"):
+        _copy_back_files(
+            EmptyClient(), ["missing_*.png"], "/tmp/run/workspace", str(tmp_path / "run")
+        )
 
 
 def test_root_contents_lists_ttree_branches_and_events(tmp_path) -> None:

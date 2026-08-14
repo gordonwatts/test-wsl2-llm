@@ -672,19 +672,53 @@ def _copy_back_files(
     output_stub = _output_stub(output)
     output_stub.parent.mkdir(parents=True, exist_ok=True)
     copied: list[CopiedBackFile] = []
-    for source in sources:
-        workspace_source = source if source.startswith("/") else f"{workspace}/{source}"
-        filename = PurePosixPath(source).name
-        if not filename or filename in {".", ".."}:
-            raise ValueError(f"copy-back path must name a file: {source}")
-        destination = output_stub.parent / f"{output_stub.name}.{filename}"
-        mounted_destination = client.text(
-            client.bash("wslpath -a \"$1\"", str(destination.resolve()))
-        ).strip()
-        client.bash('test -f "$1"', workspace_source)
-        client.bash('cp -- "$1" "$2"', workspace_source, mounted_destination)
-        copied.append(_describe_copied_back(source, destination))
+    seen_sources: set[str] = set()
+    for pattern in sources:
+        matches = _expand_copy_back_pattern(client, pattern, workspace)
+        if not matches:
+            raise FileNotFoundError(f"copy-back pattern did not match any files: {pattern}")
+        for workspace_source in matches:
+            if workspace_source in seen_sources:
+                continue
+            seen_sources.add(workspace_source)
+            filename = PurePosixPath(workspace_source).name
+            if not filename or filename in {".", ".."}:
+                raise ValueError(f"copy-back path must name a file: {workspace_source}")
+            destination = output_stub.parent / f"{output_stub.name}.{filename}"
+            mounted_destination = client.text(
+                client.bash("wslpath -a \"$1\"", str(destination.resolve()))
+            ).strip()
+            client.bash('cp -- "$1" "$2"', workspace_source, mounted_destination)
+            source_name = workspace_source.removeprefix(f"{workspace}/")
+            copied.append(_describe_copied_back(source_name, destination))
     return copied
+
+
+def _expand_copy_back_pattern(client: WslClient, pattern: str, workspace: str) -> list[str]:
+    """Expand a workspace-relative glob in WSL and retain regular files only."""
+    completed = client.bash(
+        """
+pattern="$1"
+workspace="$2"
+if [[ "$pattern" = /* ]]; then
+  search="$pattern"
+else
+  search="$workspace/$pattern"
+fi
+while IFS= read -r match; do
+  if test -f "$match"; then
+    printf '%s\\0' "$match"
+  fi
+done < <(compgen -G "$search")
+""".strip(),
+        pattern,
+        workspace,
+    )
+    return [
+        match.decode("utf-8", errors="replace")
+        for match in completed.stdout.split(b"\0")
+        if match
+    ]
 
 
 def _output_stub(output: str) -> Path:

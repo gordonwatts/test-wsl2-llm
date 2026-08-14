@@ -24,7 +24,8 @@ resolved relative to the input YAML file. The resolved list is saved in the YAML
 section. The copy operation itself does not add file contents to either report.
 
 Use `--copy-back PATH` (repeatable) to copy files from the WSL workspace back to Windows
-after Codex finishes. Relative paths are resolved from the workspace root. Each file is
+after Codex finishes. Relative paths and shell-style wildcards such as `plot_*.png` are
+resolved from the workspace root. Each matching file is
 written beside the reports as `<output-stub>.<file-name>` (for example,
 `results\hello.output.png`), and the Markdown report links to every copied file. Images
 are embedded, text files show their first ten lines, and ROOT files are inspected with

@@ -63,7 +63,7 @@ def run(
         list[str] | None,
         typer.Option(
             "--copy-back",
-            help="Workspace file copied back beside the result; repeatable.",
+            help="Workspace file or glob copied back beside the result; repeatable.",
         ),
     ] = None,
     distro: Annotated[
@@ -280,7 +280,7 @@ def continue_work(
         list[str] | None,
         typer.Option(
             "--copy-back",
-            help="Workspace file copied back beside the result; repeatable.",
+            help="Workspace file or glob copied back beside the result; repeatable.",
         ),
     ] = None,
     distro: Annotated[
