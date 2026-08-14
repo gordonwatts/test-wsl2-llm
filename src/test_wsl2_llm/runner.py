@@ -754,11 +754,6 @@ def _describe_copied_back(source: str, destination: Path) -> CopiedBackFile:
         file_type = "text"
     else:
         file_type = "file"
-    image_data_uri = None
-    if suffix == ".png":
-        image_data_uri = "data:image/png;base64," + base64.b64encode(
-            destination.read_bytes()
-        ).decode("ascii")
     preview = None
     if file_type == "text":
         preview = "\n".join(
@@ -769,7 +764,6 @@ def _describe_copied_back(source: str, destination: Path) -> CopiedBackFile:
         destination=str(destination),
         type=file_type,
         size=size,
-        image_data_uri=image_data_uri,
         text_preview=preview,
     )
 

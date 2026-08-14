@@ -258,7 +258,6 @@ def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> No
             destination=str(image),
             type="image",
             size=3,
-            image_data_uri="data:image/png;base64,cG5n",
         ),
         CopiedBackFile(
             source="events.root",
@@ -279,6 +278,7 @@ def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> No
         encoding="utf-8"
     )
     assert "[![run.plot.png](data:image/png;base64,cG5n)](run.plot.png)" in markdown
+    assert "image_data_uri" not in result.model_dump()["copied_back"][0]
     assert "| `events;1` | TTree | 12 | pt, eta |" in markdown
 
 

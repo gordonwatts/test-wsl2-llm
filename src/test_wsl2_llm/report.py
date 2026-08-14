@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -221,7 +222,7 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
         link = _file_link(file.destination, report_path)
         name = Path(file.destination).name
         if file.type == "image":
-            image_source = file.image_data_uri or link
+            image_source = _png_data_uri(file.destination) or link
             lines.extend([f"[![{name}]({image_source})]({link})", ""])
         else:
             lines.extend([f"### [{name}]({link})", ""])
@@ -263,6 +264,18 @@ def _file_link(destination: str, report_path: Path | None = None) -> str:
     else:
         link = os.path.relpath(destination_path, Path(report_path).resolve().parent)
     return quote(link.replace(os.sep, "/"), safe="/:@-._~!$&'()*+,;=")
+
+
+def _png_data_uri(destination: str) -> str | None:
+    """Encode a copied PNG only while rendering Markdown, never in the YAML result."""
+    path = Path(destination)
+    if path.suffix.lower() != ".png":
+        return None
+    try:
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    return f"data:image/png;base64,{encoded}"
 
 
 def _activity_section(result: TestResult) -> list[str]:
