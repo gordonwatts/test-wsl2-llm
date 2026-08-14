@@ -221,7 +221,8 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
         link = _file_link(file.destination, report_path)
         name = Path(file.destination).name
         if file.type == "image":
-            lines.extend([f"[![{name}]({link})]({link})", ""])
+            image_source = file.image_data_uri or link
+            lines.extend([f"[![{name}]({image_source})]({link})", ""])
         else:
             lines.extend([f"### [{name}]({link})", ""])
         lines.append(f"- Source: `{file.source}`")

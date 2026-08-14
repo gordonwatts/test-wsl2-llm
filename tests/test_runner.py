@@ -151,6 +151,11 @@ def test_copy_back_expands_wildcards_and_uses_output_stub(tmp_path, monkeypatch)
     assert described.type == "text"
     assert described.text_preview == "one\ntwo"
 
+    png = tmp_path / "plot.png"
+    png.write_bytes(b"png")
+    png_description = _describe_copied_back("plot.png", png)
+    assert png_description.image_data_uri == "data:image/png;base64,cG5n"
+
     class RecordingClient:
         def __init__(self) -> None:
             self.calls: list[tuple[str, str, tuple[str, ...]]] = []

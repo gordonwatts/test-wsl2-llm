@@ -28,7 +28,8 @@ after Codex finishes. Relative paths and shell-style wildcards such as `plot_*.p
 resolved from the workspace root. Each matching file is
 written beside the reports as `<output-stub>.<file-name>` (for example,
 `results\hello.output.png`), and the Markdown report links to every copied file. Images
-are embedded, text files show their first ten lines, and ROOT files are inspected with
+are displayed with PNG previews embedded directly in Markdown, text files show their
+first ten lines, and ROOT files are inspected with
 `uproot` to list their objects plus TTree branches and event counts. The YAML form is
 `copy_back`.
 

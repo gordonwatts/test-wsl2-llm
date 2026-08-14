@@ -254,7 +254,11 @@ def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> No
     root.write_bytes(b"root")
     result.copied_back = [
         CopiedBackFile(
-            source="plot.png", destination=str(image), type="image", size=3
+            source="plot.png",
+            destination=str(image),
+            type="image",
+            size=3,
+            image_data_uri="data:image/png;base64,cG5n",
         ),
         CopiedBackFile(
             source="events.root",
@@ -274,7 +278,7 @@ def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> No
     markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
         encoding="utf-8"
     )
-    assert "[![run.plot.png](run.plot.png)" in markdown
+    assert "[![run.plot.png](data:image/png;base64,cG5n)](run.plot.png)" in markdown
     assert "| `events;1` | TTree | 12 | pt, eta |" in markdown
 
 

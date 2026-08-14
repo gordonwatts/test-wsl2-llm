@@ -184,6 +184,7 @@ class CopiedBackFile(BaseModel):
     destination: str
     type: str
     size: int
+    image_data_uri: str | None = None
     text_preview: str | None = None
     root_contents: list[dict[str, Any]] = Field(default_factory=list)
     error: str | None = None
