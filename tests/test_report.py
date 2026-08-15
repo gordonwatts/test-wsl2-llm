@@ -211,6 +211,18 @@ def test_prompt_and_final_response_render_as_wrapping_blockquotes(tmp_path: Path
     assert "```text\nFirst response line." not in markdown
 
 
+def test_invocation_renders_as_wrapping_blockquote(tmp_path: Path) -> None:
+    result = sample_result()
+    result.invocation = "test-wsl2-llm run --output C:/a/very-long-result-path --prompt hello"
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    invocation = markdown.split("## Invocation", 1)[1].split("## Codex command", 1)[0]
+    assert "> test-wsl2-llm run --output C:/a/very-long-result-path --prompt hello" in invocation
+    assert "```text" not in invocation
+
+
 def test_report_details_include_copied_files_in_configuration(tmp_path: Path) -> None:
     result = sample_result()
     result.configuration["copy_files"] = ["C:/secrets/servicex.yaml"]

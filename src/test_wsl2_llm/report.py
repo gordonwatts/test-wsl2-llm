@@ -172,7 +172,7 @@ def render_markdown(
     else:
         lines.append("No token usage event was reported, so no cost was calculated.")
 
-    lines.extend(["", "## Invocation", "", _fence(result.invocation, "text")])
+    lines.extend(["", "## Invocation", "", _blockquote(result.invocation)])
     lines.extend(
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
