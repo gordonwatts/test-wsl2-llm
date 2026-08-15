@@ -25,6 +25,7 @@ def test_help_documents_run_and_core_options() -> None:
         "--save-config",
         "--title",
         "--copy-file",
+        "--copy-back",
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
@@ -205,6 +206,31 @@ def test_config_only_saves_copy_file_paths(tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     assert yaml.safe_load(destination.read_text(encoding="utf-8"))["copy_files"] == [
         str(secret.resolve())
+    ]
+
+
+def test_config_only_saves_copy_back_paths(tmp_path: Path) -> None:
+    destination = tmp_path / "saved.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--copy-back",
+            "plots/output.png",
+            "--output",
+            str(tmp_path / "out"),
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(destination.read_text(encoding="utf-8"))["copy_back"] == [
+        "plots/output.png"
     ]
 
 

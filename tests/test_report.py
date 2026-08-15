@@ -7,6 +7,7 @@ import yaml
 from test_wsl2_llm.models import (
     CommandResult,
     ConversationTurn,
+    CopiedBackFile,
     FinalResult,
     LogsResult,
     ModelCost,
@@ -196,6 +197,46 @@ def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_
     assert "Inspect the existing file." not in history
 
 
+def test_skill_directory_report_hides_harness_prefix_but_yaml_keeps_it(tmp_path: Path) -> None:
+    result = sample_result()
+    full_path = "/tmp/test-wsl2-llm-LXyJJYhz/.harness/codex-home/plugins/cache/example/skills/demo"
+    result.skills.directories = [full_path]
+
+    markdown_path, yaml_path = write_reports(result, str(tmp_path / "summary"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+    loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+    assert "plugins/cache/example/skills/demo" in markdown
+    assert "/tmp/test-wsl2-llm-LXyJJYhz/.harness/codex-home" not in markdown
+    assert loaded["skills"]["directories"] == [full_path]
+
+
+def test_prompt_and_final_response_render_as_wrapping_blockquotes(tmp_path: Path) -> None:
+    result = sample_result()
+    result.prompt = "First prompt line.\nSecond prompt line."
+    result.result.final_message = "First response line.\nSecond response line."
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "> First prompt line.\n> Second prompt line." in markdown
+    assert "> First response line.\n> Second response line." in markdown
+    assert "```text\nFirst prompt line." not in markdown
+    assert "```text\nFirst response line." not in markdown
+
+
+def test_invocation_renders_as_wrapping_blockquote(tmp_path: Path) -> None:
+    result = sample_result()
+    result.invocation = "test-wsl2-llm run --output C:/a/very-long-result-path --prompt hello"
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    invocation = markdown.split("## Invocation", 1)[1].split("## Codex command", 1)[0]
+    assert "> test-wsl2-llm run --output C:/a/very-long-result-path --prompt hello" in invocation
+    assert "```text" not in invocation
+
+
 def test_report_details_include_copied_files_in_configuration(tmp_path: Path) -> None:
     result = sample_result()
     result.configuration["copy_files"] = ["C:/secrets/servicex.yaml"]
@@ -207,6 +248,104 @@ def test_report_details_include_copied_files_in_configuration(tmp_path: Path) ->
     assert "<summary>Resolved configuration</summary>" in markdown
     assert "copy_files:" in markdown
     assert "C:/secrets/servicex.yaml" in markdown
+
+
+def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.notes.txt"
+    copied.write_text("\n".join(f"line {index}" for index in range(1, 21)), encoding="utf-8")
+    result.copied_back = [
+        CopiedBackFile(
+            source="notes.txt",
+            destination=str(copied),
+            type="text",
+            size=copied.stat().st_size,
+            text_preview="\n".join(f"line {index}" for index in range(1, 11)),
+        )
+    ]
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "## Copied-back files" in markdown
+    assert "[run.notes.txt](run.notes.txt)" in markdown
+    assert "Text contents (first 10 lines visible; scroll for the rest):" in markdown
+    assert "line 1" in markdown
+    assert "line 20" in markdown
+    assert 'max-height: 12em; overflow: auto' in markdown
+    assert "navigator.clipboard.writeText" in markdown
+    assert "📋" in markdown
+    assert 'title="Copy to clipboard"' in markdown
+
+
+def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.script.py"
+    copied.write_text("def greet(name):\n    return f'Hello {name}'\n", encoding="utf-8")
+    result.copied_back = [
+        CopiedBackFile(
+            source="script.py",
+            destination=str(copied),
+            type="text",
+            size=copied.stat().st_size,
+            text_preview="def greet(name):\n    return f'Hello {name}'",
+        )
+    ]
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "```python\ndef greet(name):" in markdown
+    assert '<code class="language-python">' not in markdown
+    assert "navigator.clipboard.writeText" in markdown
+
+
+def test_invocation_has_compact_copy_button(tmp_path: Path) -> None:
+    result = sample_result()
+    result.invocation = "test-wsl2-llm run --prompt hello"
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    invocation = markdown.split("## Invocation", 1)[1].split("## Codex command", 1)[0]
+    assert "📋" in invocation
+    assert 'aria-label="Copy to clipboard"' in invocation
+    assert "navigator.clipboard.writeText" in invocation
+
+
+def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> None:
+    result = sample_result()
+    image = tmp_path / "run.plot.png"
+    image.write_bytes(b"png")
+    root = tmp_path / "run.events.root"
+    root.write_bytes(b"root")
+    result.copied_back = [
+        CopiedBackFile(
+            source="plot.png",
+            destination=str(image),
+            type="image",
+            size=3,
+        ),
+        CopiedBackFile(
+            source="events.root",
+            destination=str(root),
+            type="root",
+            size=4,
+            root_contents=[
+                {
+                    "path": "events;1",
+                    "type": "TTree",
+                    "events": 12,
+                    "branches": ["pt", "eta"],
+                }
+            ],
+        ),
+    ]
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "[![run.plot.png](data:image/png;base64,cG5n)](run.plot.png)" in markdown
+    assert "image_data_uri" not in result.model_dump()["copied_back"][0]
+    assert "| `events;1` | TTree | 12 | pt, eta |" in markdown
 
 
 def test_report_refuses_either_existing_output(tmp_path: Path) -> None:

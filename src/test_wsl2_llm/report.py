@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import base64
+import html
 import json
 import os
 import re
 import tempfile
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 
@@ -25,7 +28,7 @@ def write_reports(result: TestResult, output: str, overwrite: bool = False) -> t
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
     data = result.model_dump(mode="json")
     yaml_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
-    markdown_text = render_markdown(result)
+    markdown_text = render_markdown(result, report_path=markdown_path)
     staged: list[tuple[Path, Path]] = []
     try:
         for destination, content in ((yaml_path, yaml_text), (markdown_path, markdown_text)):
@@ -59,28 +62,40 @@ def write_markdown(
         raise FileExistsError(f"result file already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(
-        render_markdown(result, include_details=include_details), encoding="utf-8", newline=""
+        render_markdown(result, report_path=destination, include_details=include_details),
+        encoding="utf-8",
+        newline="",
     )
     return destination
 
 
-def render_markdown(result: TestResult, *, include_details: bool = False) -> str:
+def render_markdown(
+    result: TestResult,
+    *,
+    report_path: Path | None = None,
+    include_details: bool = False,
+) -> str:
     """Render every canonical result field into a readable Markdown report."""
     lines = [
         result.title.rstrip(),
         "",
         "## Prompt" + (" (continuing retained workspace)" if result.continued_from else ""),
         "",
-        _fence(result.prompt),
+        _blockquote(result.prompt),
         "",
         "## Final response",
         "",
-        _fence(result.result.final_message or ""),
+        _blockquote(result.result.final_message or ""),
     ]
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
-    lines.extend(_bullets("Skill directories", result.skills.directories))
+    lines.extend(
+        _bullets(
+            "Skill directories",
+            [_display_skill_directory(path) for path in result.skills.directories],
+        )
+    )
 
     run = result.run
     lines.extend(
@@ -163,7 +178,7 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
     else:
         lines.append("No token usage event was reported, so no cost was calculated.")
 
-    lines.extend(["", "## Invocation", "", _fence(result.invocation, "text")])
+    lines.extend(["", "## Invocation", "", *_copyable_blockquote(result.invocation)])
     lines.extend(
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
@@ -174,6 +189,7 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
         for entry in result.workspace.files
     )
     lines.extend(_details("Workspace inventory", inventory, "text"))
+    lines.extend(_copied_back_section(result, report_path))
     lines.extend(_details("Complete Codex stderr", result.logs.stderr, "text"))
 
     if include_details:
@@ -201,6 +217,134 @@ def render_markdown(result: TestResult, *, include_details: bool = False) -> str
     lines.extend(_activity_section(result))
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
+
+
+def _copied_back_section(result: TestResult, report_path: Path | None) -> list[str]:
+    """Render copied-back artifacts with links and type-specific previews."""
+    if not result.copied_back:
+        return []
+    lines = ["", "## Copied-back files", ""]
+    for file in result.copied_back:
+        link = _file_link(file.destination, report_path)
+        name = Path(file.destination).name
+        if file.type == "image":
+            image_source = _png_data_uri(file.destination) or link
+            lines.extend([f"[![{name}]({image_source})]({link})", ""])
+        else:
+            lines.extend([f"### [{name}]({link})", ""])
+        lines.append(f"- Source: `{file.source}`")
+        lines.append(f"- Size: {_number(file.size)} bytes")
+        if file.type == "root":
+            if file.error:
+                lines.extend(["", "**ROOT inspection error:**", "", _fence(file.error)])
+            elif file.root_contents:
+                lines.extend(
+                    [
+                        "",
+                        "| Object | Type | Events | Branches |",
+                        "| --- | --- | ---: | --- |",
+                    ]
+                )
+                for item in file.root_contents:
+                    branches = ", ".join(item.get("branches", []))
+                    events = item.get("events", "")
+                    lines.append(
+                        f"| `{item.get('path', '')}` | {item.get('type', '')} | {events} | "
+                        f"{branches} |"
+                    )
+            else:
+                lines.extend(["", "ROOT file contains no listed objects."])
+        elif file.type == "text" and file.text_preview is not None:
+            text, source_available = _text_for_report(file.destination, file.text_preview)
+            label = (
+                "Text contents (first 10 lines visible; scroll for the rest):"
+                if source_available
+                else "First 10 lines (source file unavailable):"
+            )
+            language = "python" if Path(file.destination).suffix.lower() == ".py" else None
+            lines.extend(["", label, "", *_scrollable_text(text, language=language)])
+        elif file.type not in {"image", "file"}:
+            lines.extend(["", f"Type: `{file.type}`"])
+        lines.append("")
+    return lines
+
+
+def _file_link(destination: str, report_path: Path | None = None) -> str:
+    """Return a portable, URI-encoded relative Markdown link for a copied artifact."""
+    destination_path = Path(destination).resolve()
+    if report_path is None:
+        link = destination_path.name
+    else:
+        link = os.path.relpath(destination_path, Path(report_path).resolve().parent)
+    return quote(link.replace(os.sep, "/"), safe="/:@-._~!$&'()*+,;=")
+
+
+def _png_data_uri(destination: str) -> str | None:
+    """Encode a copied PNG only while rendering Markdown, never in the YAML result."""
+    path = Path(destination)
+    if path.suffix.lower() != ".png":
+        return None
+    try:
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+    except OSError:
+        return None
+    return f"data:image/png;base64,{encoded}"
+
+
+def _text_for_report(destination: str, fallback: str) -> tuple[str, bool]:
+    """Read the full copied text at render time, falling back to its captured preview."""
+    try:
+        return Path(destination).read_text(encoding="utf-8", errors="replace"), True
+    except OSError:
+        return fallback, False
+
+
+def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
+    """Render text in a bounded scrolling element with a best-effort copy button."""
+    if language == "python":
+        # Markdown renderers apply syntax highlighting to fenced blocks, not raw HTML
+        # ``<code class=...>`` elements. Keep the copy control adjacent to the fence.
+        return [
+            '<div style="text-align: right; margin-bottom: -2.2em; position: relative; '
+            'z-index: 1;">',
+            _copy_button("this.parentElement.nextElementSibling.textContent"),
+            "</div>",
+            "",
+            _fence(content, language),
+        ]
+    escaped = html.escape(content)
+    return [
+        '<div style="position: relative;">',
+        '<pre style="max-height: 12em; overflow: auto; white-space: pre-wrap; '
+        'overflow-wrap: anywhere; margin: 0;">'
+        + escaped
+        + "</pre>",
+        '<div style="position: absolute; top: 0.25em; right: 0.25em;">',
+        _copy_button("this.parentElement.parentElement.querySelector('pre').textContent"),
+        "</div>",
+        "</div>",
+    ]
+
+
+def _copyable_blockquote(content: str) -> list[str]:
+    """Render a wrapping blockquote with a compact copy control above it."""
+    return [
+        '<div style="text-align: right; margin-bottom: -1.5em; position: relative; z-index: 1;">',
+        _copy_button("this.parentElement.nextElementSibling.textContent"),
+        "</div>",
+        "",
+        _blockquote(content),
+    ]
+
+
+def _copy_button(expression: str) -> str:
+    """Return an accessible clipboard icon button for a nearby text element."""
+    return (
+        '<button type="button" title="Copy to clipboard" aria-label="Copy to clipboard" '
+        'style="border: 0; background: transparent; cursor: pointer; padding: 0.15em; '
+        'font-size: 0.9em;" onclick="navigator.clipboard.writeText('
+        f'{expression})">📋</button>'
+    )
 
 
 def _activity_section(result: TestResult) -> list[str]:
@@ -296,10 +440,27 @@ def _fence(content: str, language: str = "text") -> str:
     return f"{fence}{language}\n{content}\n{fence}"
 
 
+def _blockquote(content: str) -> str:
+    """Render prose as a Markdown blockquote so viewers can wrap it naturally."""
+    lines = content.splitlines()
+    if not lines:
+        return ">"
+    return "\n".join(f"> {line}" if line else ">" for line in lines)
+
+
 def _bullets(label: str, values: list[str]) -> list[str]:
     if not values:
         return [f"- {label}: none"]
     return [f"- {label}:"] + [f"  - `{value}`" for value in values]
+
+
+def _display_skill_directory(value: str) -> str:
+    """Hide the temporary harness prefix from human-readable skill paths."""
+    normalized = value.replace("\\", "/")
+    marker = "/.harness/codex-home/"
+    if marker in normalized:
+        return normalized.split(marker, 1)[1]
+    return value
 
 
 def _yaml(value: object) -> str:

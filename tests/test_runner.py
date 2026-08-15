@@ -1,16 +1,23 @@
 import re
 import subprocess
+from pathlib import Path
 
+import numpy as np
 import pytest
+import uproot
 
-from test_wsl2_llm.models import ConversationTurn
+from test_wsl2_llm.models import ConversationTurn, CopiedBackFile
 from test_wsl2_llm.models import TestConfig as WslTestConfig
 from test_wsl2_llm.runner import (
     WslClient,
     _codex_config,
     _console_time,
+    _copy_back_files,
+    _describe_copied_back,
+    _expand_copy_back_pattern,
     _installed_paths_from_json,
     _is_git_marketplace_source,
+    _root_contents,
     _transfer_files,
     _transfer_marketplaces,
     continuation_prompt,
@@ -135,6 +142,97 @@ def test_copy_files_are_transferred_to_workspace_root(tmp_path) -> None:
         'cp -- "$2" "$1/"',
         ("/tmp/run/workspace", "/mnt/c/servicex.yaml"),
     ) in client.calls
+
+
+def test_copy_back_expands_wildcards_and_uses_output_stub(tmp_path, monkeypatch) -> None:
+    destination = tmp_path / "run.plot.txt"
+    destination.write_text("one\ntwo\n", encoding="utf-8")
+    described = _describe_copied_back("plot.txt", destination)
+    assert described.type == "text"
+    assert described.text_preview == "one\ntwo"
+
+    png = tmp_path / "plot.png"
+    png.write_bytes(b"png")
+    png_description = _describe_copied_back("plot.png", png)
+    assert png_description.type == "image"
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("bash", script, arguments))
+            if script == 'wslpath -a "$1"':
+                destination = arguments[0].replace("\\", "/").rsplit("/", 1)[-1]
+                return subprocess.CompletedProcess(
+                    [], 0, f"/mnt/c/results/{destination}\n".encode(), b""
+                )
+            if "compgen -G" in script:
+                return subprocess.CompletedProcess(
+                    [],
+                    0,
+                    b"/tmp/run/workspace/plot_1.png\0/tmp/run/workspace/plot_2.png\0",
+                    b"",
+                )
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner._describe_copied_back",
+        lambda source, path: CopiedBackFile(
+            source=source, destination=str(path), type="file", size=1
+        ),
+    )
+    client = RecordingClient()
+    copied = _copy_back_files(client, ["plot_*.png"], "/tmp/run/workspace", str(tmp_path / "run"))
+    assert [item.source for item in copied] == ["plot_1.png", "plot_2.png"]
+    assert [Path(item.destination).name for item in copied] == [
+        "run.plot_1.png",
+        "run.plot_2.png",
+    ]
+    cp_calls = [
+        arguments
+        for _, script, arguments in client.calls
+        if script == 'cp -- "$1" "$2"'
+    ]
+    assert cp_calls == [
+        ("/tmp/run/workspace/plot_1.png", "/mnt/c/results/run.plot_1.png"),
+        ("/tmp/run/workspace/plot_2.png", "/mnt/c/results/run.plot_2.png"),
+    ]
+
+
+def test_copy_back_pattern_without_matches_is_an_error() -> None:
+    class EmptyClient:
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    assert _expand_copy_back_pattern(EmptyClient(), "missing_*.png", "/tmp/run/workspace") == []
+
+
+def test_copy_back_rejects_pattern_without_matches(tmp_path) -> None:
+    class EmptyClient:
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    with pytest.raises(FileNotFoundError, match="missing_\\*\\.png"):
+        _copy_back_files(
+            EmptyClient(), ["missing_*.png"], "/tmp/run/workspace", str(tmp_path / "run")
+        )
+
+
+def test_root_contents_lists_ttree_branches_and_events(tmp_path) -> None:
+    path = tmp_path / "events.root"
+    with uproot.recreate(path) as root_file:
+        root_file.mktree("events", {"pt": "float64", "run": "int32"})
+        root_file["events"].extend({"pt": np.array([1.0, 2.0]), "run": np.array([10, 11])})
+
+    contents = _root_contents(path)
+    tree = next(item for item in contents if item["path"].startswith("events"))
+    assert tree["type"] == "TTree"
+    assert tree["events"] == 2
+    assert tree["branches"] == ["pt", "run"]
 
 
 def test_continuation_prompt_contains_prior_chain_and_new_prompt() -> None:

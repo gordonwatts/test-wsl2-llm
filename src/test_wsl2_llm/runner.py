@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import mimetypes
 import queue
 import re
 import subprocess
@@ -13,10 +14,11 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, TextIO
 from urllib.parse import urlparse
 
+import uproot
 import yaml
 from rich.console import Console
 from rich.live import Live
@@ -25,6 +27,7 @@ from rich.panel import Panel
 from test_wsl2_llm.models import (
     CommandResult,
     ConversationTurn,
+    CopiedBackFile,
     FinalResult,
     LogsResult,
     ModelInformation,
@@ -185,6 +188,7 @@ def run_test(
     exit_code = 1
     error: str | None = None
     retained = False
+    copied_back: list[CopiedBackFile] = []
     runtime_marketplaces: list[str] = []
     resolved_parent = config.wsl_parent
     resolved_auth = config.auth_source
@@ -285,6 +289,9 @@ def run_test(
         with state.phase("workspace_inventory"):
             files = _inventory(client, workspace_path)
 
+        with state.phase("copy_back"):
+            copied_back = _copy_back_files(client, config.copy_back, workspace_path, config.output)
+
         with state.phase("session_trace_collection"):
             session_traces, session_events = _session_traces(client, codex_home)
             trace_events.extend(session_events)
@@ -297,6 +304,7 @@ def run_test(
         error = str(exc)
         LOGGER.exception("WSL Codex test failed")
         files = []
+        copied_back = []
         exit_code = exit_code or 1
         if workspace_path and run_root:
             try:
@@ -350,6 +358,7 @@ def run_test(
         result=FinalResult(final_message=final_message),
         conversation=[ConversationTurn(prompt=config.prompt, final_response=final_message)],
         workspace=WorkspaceResult(files=files),
+        copied_back=copied_back,
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
             stdout_jsonl=stdout,
@@ -397,6 +406,7 @@ def continue_test(
     codex_seconds = 0.0
     exit_code = 1
     error: str | None = None
+    copied_back: list[CopiedBackFile] = []
     model_information = ModelInformation(
         pricing_file=config.pricing_file or "bundled:model-pricing.yaml", currency="USD"
     )
@@ -493,6 +503,9 @@ def continue_test(
         with state.phase("workspace_inventory"):
             files = _inventory(client, workspace_path)
 
+        with state.phase("copy_back"):
+            copied_back = _copy_back_files(client, config.copy_back, workspace_path, config.output)
+
         with state.phase("session_trace_collection"):
             session_traces, session_events = _session_traces(client, codex_home)
             trace_events.extend(session_events)
@@ -500,6 +513,7 @@ def continue_test(
         error = str(exc)
         LOGGER.exception("WSL Codex continuation failed")
         files = []
+        copied_back = []
         exit_code = exit_code or 1
         try:
             with state.phase("workspace_inventory"):
@@ -552,6 +566,7 @@ def continue_test(
         result=FinalResult(final_message=final_message),
         conversation=conversation,
         workspace=WorkspaceResult(files=files),
+        copied_back=copied_back,
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
             stdout_jsonl=stdout,
@@ -646,6 +661,155 @@ def _transfer_files(client: WslClient, sources: list[str], workspace: str) -> No
             raise FileNotFoundError(f"copy file does not exist: {source}")
         mounted = client.text(client.bash("wslpath -a \"$1\"", str(windows_path.resolve()))).strip()
         client.bash('cp -- "$2" "$1/"', workspace, mounted)
+
+
+def _copy_back_files(
+    client: WslClient, sources: list[str], workspace: str, output: str
+) -> list[CopiedBackFile]:
+    """Copy requested workspace files beside the result and collect safe previews."""
+    if not sources:
+        return []
+    output_stub = _output_stub(output)
+    output_stub.parent.mkdir(parents=True, exist_ok=True)
+    copied: list[CopiedBackFile] = []
+    seen_sources: set[str] = set()
+    for pattern in sources:
+        matches = _expand_copy_back_pattern(client, pattern, workspace)
+        if not matches:
+            raise FileNotFoundError(f"copy-back pattern did not match any files: {pattern}")
+        for workspace_source in matches:
+            if workspace_source in seen_sources:
+                continue
+            seen_sources.add(workspace_source)
+            filename = PurePosixPath(workspace_source).name
+            if not filename or filename in {".", ".."}:
+                raise ValueError(f"copy-back path must name a file: {workspace_source}")
+            destination = output_stub.parent / f"{output_stub.name}.{filename}"
+            mounted_destination = client.text(
+                client.bash("wslpath -a \"$1\"", str(destination.resolve()))
+            ).strip()
+            client.bash('cp -- "$1" "$2"', workspace_source, mounted_destination)
+            source_name = workspace_source.removeprefix(f"{workspace}/")
+            copied.append(_describe_copied_back(source_name, destination))
+    return copied
+
+
+def _expand_copy_back_pattern(client: WslClient, pattern: str, workspace: str) -> list[str]:
+    """Expand a workspace-relative glob in WSL and retain regular files only."""
+    completed = client.bash(
+        """
+pattern="$1"
+workspace="$2"
+if [[ "$pattern" = /* ]]; then
+  search="$pattern"
+else
+  search="$workspace/$pattern"
+fi
+while IFS= read -r match; do
+  if test -f "$match"; then
+    printf '%s\\0' "$match"
+  fi
+done < <(compgen -G "$search")
+""".strip(),
+        pattern,
+        workspace,
+    )
+    return [
+        match.decode("utf-8", errors="replace")
+        for match in completed.stdout.split(b"\0")
+        if match
+    ]
+
+
+def _output_stub(output: str) -> Path:
+    path = Path(output).resolve()
+    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
+        path = path.with_suffix("")
+    return path
+
+
+def _describe_copied_back(source: str, destination: Path) -> CopiedBackFile:
+    suffix = destination.suffix.lower()
+    size = destination.stat().st_size
+    if suffix == ".root":
+        try:
+            return CopiedBackFile(
+                source=source,
+                destination=str(destination),
+                type="root",
+                size=size,
+                root_contents=_root_contents(destination),
+            )
+        except Exception as exc:
+            return CopiedBackFile(
+                source=source,
+                destination=str(destination),
+                type="root",
+                size=size,
+                error=str(exc),
+            )
+    if _is_image(destination):
+        file_type = "image"
+    elif _is_text_file(destination):
+        file_type = "text"
+    else:
+        file_type = "file"
+    preview = None
+    if file_type == "text":
+        preview = "\n".join(
+            destination.read_text(encoding="utf-8", errors="replace").splitlines()[:10]
+        )
+    return CopiedBackFile(
+        source=source,
+        destination=str(destination),
+        type=file_type,
+        size=size,
+        text_preview=preview,
+    )
+
+
+def _is_image(path: Path) -> bool:
+    return path.suffix.lower() in {
+        ".apng",
+        ".avif",
+        ".bmp",
+        ".gif",
+        ".jpeg",
+        ".jpg",
+        ".png",
+        ".svg",
+        ".tif",
+        ".tiff",
+        ".webp",
+    }
+
+
+def _is_text_file(path: Path) -> bool:
+    mime, _ = mimetypes.guess_type(path.name)
+    if mime and mime.startswith("text/"):
+        return True
+    try:
+        sample = path.read_bytes()[:8192]
+        if b"\0" in sample:
+            return False
+        sample.decode("utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    return True
+
+
+def _root_contents(path: Path) -> list[dict[str, Any]]:
+    contents: list[dict[str, Any]] = []
+    with uproot.open(path) as root_file:
+        for key, item in root_file.items(recursive=True):
+            classname = str(getattr(item, "classname", type(item).__name__))
+            entry: dict[str, Any] = {"path": str(key), "type": classname}
+            if classname == "TTree" or hasattr(item, "num_entries"):
+                entry["events"] = int(item.num_entries)
+                branch_names = item.keys()
+                entry["branches"] = [str(branch) for branch in branch_names]
+            contents.append(entry)
+    return contents
 
 
 def _is_git_marketplace_source(source: str) -> bool:

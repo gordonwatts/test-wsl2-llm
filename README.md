@@ -9,6 +9,7 @@ uvx test-wsl2-llm run `
   --distro atlas_al9 `
   --model MODEL[:EFFORT] `
   --copy-file .\servicex.yaml `
+  --copy-back output.png `
   --prompt "Create hello.txt containing Hello from WSL" `
   --output .\results\hello
 ```
@@ -21,6 +22,16 @@ workspace before Codex starts. This is useful for local credentials such as a
 resolved relative to the input YAML file. The resolved list is saved in the YAML
 `configuration` section and in the Markdown report's expanded `Resolved configuration`
 section. The copy operation itself does not add file contents to either report.
+
+Use `--copy-back PATH` (repeatable) to copy files from the WSL workspace back to Windows
+after Codex finishes. Relative paths and shell-style wildcards such as `plot_*.png` are
+resolved from the workspace root. Each matching file is
+written beside the reports as `<output-stub>.<file-name>` (for example,
+`results\hello.output.png`), and the Markdown report links to every copied file. Images
+are displayed with PNG previews embedded directly in Markdown, text files show their
+first ten lines, and ROOT files are inspected with
+`uproot` to list their objects plus TTree branches and event counts. The YAML form is
+`copy_back`.
 
 Use `--force` to replace an existing Markdown/YAML result pair. Reports include the exact invocation used to create them, with local wall-clock times in Markdown and UTC timestamps preserved in YAML.
 Pass `--title "# My test result"` (or set `title` in YAML) to customize the Markdown heading.
@@ -85,6 +96,8 @@ plugins:
   - atlas-analysisbase@atlas-analysisbase-marketplace
 copy_files:
   - .\servicex.yaml
+copy_back:
+  - output.png
 output: C:\Users\me\Results\analysis-run
 progress_lines: 5
 ```
