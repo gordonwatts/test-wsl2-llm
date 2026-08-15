@@ -256,7 +256,8 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
                 if source_available
                 else "First 10 lines (source file unavailable):"
             )
-            lines.extend(["", label, "", *_scrollable_text(text)])
+            language = "python" if Path(file.destination).suffix.lower() == ".py" else None
+            lines.extend(["", label, "", *_scrollable_text(text, language=language)])
         elif file.type not in {"image", "file"}:
             lines.extend(["", f"Type: `{file.type}`"])
         lines.append("")
@@ -293,13 +294,14 @@ def _text_for_report(destination: str, fallback: str) -> tuple[str, bool]:
         return fallback, False
 
 
-def _scrollable_text(content: str) -> list[str]:
+def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
     """Render text in a bounded scrolling element with a best-effort copy button."""
     escaped = html.escape(content)
+    code = f'<code class="language-{language}">{escaped}</code>' if language else escaped
     return [
         '<pre style="max-height: 12em; overflow: auto; white-space: pre-wrap; '
         'overflow-wrap: anywhere; margin: 0;">'
-        + escaped
+        + code
         + "</pre>",
         '<button type="button" onclick="navigator.clipboard.writeText('
         'this.previousElementSibling.textContent)">Copy to clipboard</button>',

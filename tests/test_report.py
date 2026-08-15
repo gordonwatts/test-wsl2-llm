@@ -262,6 +262,27 @@ def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> No
     assert "Copy to clipboard" in markdown
 
 
+def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.script.py"
+    copied.write_text("def greet(name):\n    return f'Hello {name}'\n", encoding="utf-8")
+    result.copied_back = [
+        CopiedBackFile(
+            source="script.py",
+            destination=str(copied),
+            type="text",
+            size=copied.stat().st_size,
+            text_preview="def greet(name):\n    return f'Hello {name}'",
+        )
+    ]
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert '<code class="language-python">def greet(name):' in markdown
+    assert "navigator.clipboard.writeText" in markdown
+
+
 def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> None:
     result = sample_result()
     image = tmp_path / "run.plot.png"
