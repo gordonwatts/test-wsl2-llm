@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import html
 import json
 import os
 import re
@@ -249,7 +250,13 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
             else:
                 lines.extend(["", "ROOT file contains no listed objects."])
         elif file.type == "text" and file.text_preview is not None:
-            lines.extend(["", "First 10 lines:", "", _fence(file.text_preview)])
+            text, source_available = _text_for_report(file.destination, file.text_preview)
+            label = (
+                "Text contents (first 10 lines visible; scroll for the rest):"
+                if source_available
+                else "First 10 lines (source file unavailable):"
+            )
+            lines.extend(["", label, "", *_scrollable_text(text)])
         elif file.type not in {"image", "file"}:
             lines.extend(["", f"Type: `{file.type}`"])
         lines.append("")
@@ -276,6 +283,27 @@ def _png_data_uri(destination: str) -> str | None:
     except OSError:
         return None
     return f"data:image/png;base64,{encoded}"
+
+
+def _text_for_report(destination: str, fallback: str) -> tuple[str, bool]:
+    """Read the full copied text at render time, falling back to its captured preview."""
+    try:
+        return Path(destination).read_text(encoding="utf-8", errors="replace"), True
+    except OSError:
+        return fallback, False
+
+
+def _scrollable_text(content: str) -> list[str]:
+    """Render text in a bounded scrolling element with a best-effort copy button."""
+    escaped = html.escape(content)
+    return [
+        '<pre style="max-height: 12em; overflow: auto; white-space: pre-wrap; '
+        'overflow-wrap: anywhere; margin: 0;">'
+        + escaped
+        + "</pre>",
+        '<button type="button" onclick="navigator.clipboard.writeText('
+        'this.previousElementSibling.textContent)">Copy to clipboard</button>',
+    ]
 
 
 def _activity_section(result: TestResult) -> list[str]:

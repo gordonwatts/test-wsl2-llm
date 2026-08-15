@@ -239,14 +239,14 @@ def test_report_details_include_copied_files_in_configuration(tmp_path: Path) ->
 def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> None:
     result = sample_result()
     copied = tmp_path / "run.notes.txt"
-    copied.write_text("line 1\nline 2", encoding="utf-8")
+    copied.write_text("\n".join(f"line {index}" for index in range(1, 21)), encoding="utf-8")
     result.copied_back = [
         CopiedBackFile(
             source="notes.txt",
             destination=str(copied),
             type="text",
             size=copied.stat().st_size,
-            text_preview="line 1\nline 2",
+            text_preview="\n".join(f"line {index}" for index in range(1, 11)),
         )
     ]
     markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
@@ -254,8 +254,12 @@ def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> No
     )
     assert "## Copied-back files" in markdown
     assert "[run.notes.txt](run.notes.txt)" in markdown
-    assert "First 10 lines:" in markdown
-    assert "line 1\nline 2" in markdown
+    assert "Text contents (first 10 lines visible; scroll for the rest):" in markdown
+    assert "line 1" in markdown
+    assert "line 20" in markdown
+    assert 'max-height: 12em; overflow: auto' in markdown
+    assert "navigator.clipboard.writeText" in markdown
+    assert "Copy to clipboard" in markdown
 
 
 def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> None:
