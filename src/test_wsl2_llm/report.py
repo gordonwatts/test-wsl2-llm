@@ -173,7 +173,7 @@ def render_markdown(
     else:
         lines.append("No token usage event was reported, so no cost was calculated.")
 
-    lines.extend(["", "## Invocation", "", _blockquote(result.invocation)])
+    lines.extend(["", "## Invocation", "", *_copyable_blockquote(result.invocation)])
     lines.extend(
         ["", "## Codex command", "", _fence(_display_command(result.command.argv), "text")]
     )
@@ -300,19 +300,46 @@ def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
         # Markdown renderers apply syntax highlighting to fenced blocks, not raw HTML
         # ``<code class=...>`` elements. Keep the copy control adjacent to the fence.
         return [
+            '<div style="text-align: right; margin-bottom: -2.2em; position: relative; '
+            'z-index: 1;">',
+            _copy_button("this.parentElement.nextElementSibling.textContent"),
+            "</div>",
+            "",
             _fence(content, language),
-            '<button type="button" onclick="navigator.clipboard.writeText('
-            'this.previousElementSibling.textContent)">Copy to clipboard</button>',
         ]
     escaped = html.escape(content)
     return [
+        '<div style="position: relative;">',
         '<pre style="max-height: 12em; overflow: auto; white-space: pre-wrap; '
         'overflow-wrap: anywhere; margin: 0;">'
         + escaped
         + "</pre>",
-        '<button type="button" onclick="navigator.clipboard.writeText('
-        'this.previousElementSibling.textContent)">Copy to clipboard</button>',
+        '<div style="position: absolute; top: 0.25em; right: 0.25em;">',
+        _copy_button("this.parentElement.parentElement.querySelector('pre').textContent"),
+        "</div>",
+        "</div>",
     ]
+
+
+def _copyable_blockquote(content: str) -> list[str]:
+    """Render a wrapping blockquote with a compact copy control above it."""
+    return [
+        '<div style="text-align: right; margin-bottom: -1.5em; position: relative; z-index: 1;">',
+        _copy_button("this.parentElement.nextElementSibling.textContent"),
+        "</div>",
+        "",
+        _blockquote(content),
+    ]
+
+
+def _copy_button(expression: str) -> str:
+    """Return an accessible clipboard icon button for a nearby text element."""
+    return (
+        '<button type="button" title="Copy to clipboard" aria-label="Copy to clipboard" '
+        'style="border: 0; background: transparent; cursor: pointer; padding: 0.15em; '
+        'font-size: 0.9em;" onclick="navigator.clipboard.writeText('
+        f'{expression})">📋</button>'
+    )
 
 
 def _activity_section(result: TestResult) -> list[str]:

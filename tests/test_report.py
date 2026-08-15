@@ -259,7 +259,8 @@ def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> No
     assert "line 20" in markdown
     assert 'max-height: 12em; overflow: auto' in markdown
     assert "navigator.clipboard.writeText" in markdown
-    assert "Copy to clipboard" in markdown
+    assert "📋" in markdown
+    assert 'title="Copy to clipboard"' in markdown
 
 
 def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
@@ -282,6 +283,19 @@ def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
     assert "```python\ndef greet(name):" in markdown
     assert '<code class="language-python">' not in markdown
     assert "navigator.clipboard.writeText" in markdown
+
+
+def test_invocation_has_compact_copy_button(tmp_path: Path) -> None:
+    result = sample_result()
+    result.invocation = "test-wsl2-llm run --prompt hello"
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    invocation = markdown.split("## Invocation", 1)[1].split("## Codex command", 1)[0]
+    assert "📋" in invocation
+    assert 'aria-label="Copy to clipboard"' in invocation
+    assert "navigator.clipboard.writeText" in invocation
 
 
 def test_report_renders_image_and_root_copied_back_details(tmp_path: Path) -> None:
