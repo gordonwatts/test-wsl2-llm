@@ -296,12 +296,19 @@ def _text_for_report(destination: str, fallback: str) -> tuple[str, bool]:
 
 def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
     """Render text in a bounded scrolling element with a best-effort copy button."""
+    if language == "python":
+        # Markdown renderers apply syntax highlighting to fenced blocks, not raw HTML
+        # ``<code class=...>`` elements. Keep the copy control adjacent to the fence.
+        return [
+            _fence(content, language),
+            '<button type="button" onclick="navigator.clipboard.writeText('
+            'this.previousElementSibling.textContent)">Copy to clipboard</button>',
+        ]
     escaped = html.escape(content)
-    code = f'<code class="language-{language}">{escaped}</code>' if language else escaped
     return [
         '<pre style="max-height: 12em; overflow: auto; white-space: pre-wrap; '
         'overflow-wrap: anywhere; margin: 0;">'
-        + code
+        + escaped
         + "</pre>",
         '<button type="button" onclick="navigator.clipboard.writeText('
         'this.previousElementSibling.textContent)">Copy to clipboard</button>',

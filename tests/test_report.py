@@ -279,7 +279,8 @@ def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
     markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
         encoding="utf-8"
     )
-    assert '<code class="language-python">def greet(name):' in markdown
+    assert "```python\ndef greet(name):" in markdown
+    assert '<code class="language-python">' not in markdown
     assert "navigator.clipboard.writeText" in markdown
 
 
