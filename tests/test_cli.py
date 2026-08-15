@@ -5,6 +5,7 @@ from test_report import sample_result
 from typer.testing import CliRunner
 
 from test_wsl2_llm.cli import _connect_command, app
+from test_wsl2_llm.config import output_paths
 
 runner = CliRunner()
 
@@ -26,11 +27,70 @@ def test_help_documents_run_and_core_options() -> None:
         "--title",
         "--copy-file",
         "--copy-back",
+        "--repeat",
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
     assert "connect" in top.stdout
     assert "continue" in top.stdout
+
+
+def test_repeat_indexes_each_run_output(monkeypatch, tmp_path: Path) -> None:
+    calls: list[str] = []
+    written: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        calls.append(config.output)
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        written.append(output)
+        return output_paths(output)
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out.md"),
+            "--repeat",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    expected = [str(tmp_path / f"out-{index:03d}") for index in range(1, 4)]
+    assert calls == expected
+    assert written == expected
+    assert "Repeat 1/3" in result.output
+    assert "Repeat 3/3" in result.output
+
+
+def test_repeat_rejects_non_positive_count(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--repeat",
+            "0",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "Invalid value for '--repeat'" in result.output
 
 
 def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -> None:

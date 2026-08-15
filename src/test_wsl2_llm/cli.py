@@ -75,6 +75,14 @@ def run(
     output: Annotated[
         Path | None, typer.Option(help="Windows result stem or .md/.yaml path; both are written.")
     ] = None,
+    repeat: Annotated[
+        int,
+        typer.Option(
+            "--repeat",
+            min=1,
+            help="Run the test this many times; repeated results use an -001, -002, ... suffix.",
+        ),
+    ] = 1,
     force: Annotated[
         bool,
         typer.Option("--force", help="Overwrite an existing Markdown/YAML result pair."),
@@ -126,7 +134,7 @@ def run(
         ),
     ] = 0,
 ) -> None:
-    """Run one isolated Codex test and write paired Markdown/YAML results."""
+    """Run isolated Codex tests and write paired Markdown/YAML results."""
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
@@ -162,9 +170,16 @@ def run(
         if config_only:
             return
 
-        markdown_path, yaml_path = output_paths(resolved.output)
+        run_outputs = [
+            _repeat_output(resolved.output, index, repeat) for index in range(1, repeat + 1)
+        ]
         if not resolved.overwrite:
-            existing = [path for path in (markdown_path, yaml_path) if path.exists()]
+            existing = [
+                path
+                for run_output in run_outputs
+                for path in output_paths(run_output)
+                if path.exists()
+            ]
             if existing:
                 raise FileExistsError(
                     f"result file already exists: {', '.join(map(str, existing))}"
@@ -173,12 +188,19 @@ def run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
-        result = run_test(resolved, verbosity=verbose, console=console, invocation=sys.argv)
-        markdown_path, yaml_path = write_reports(result, resolved.output, resolved.overwrite)
-        console.print(f"Markdown result: {markdown_path}")
-        console.print(f"YAML result: {yaml_path}")
-        if result.run.exit_code:
-            raise typer.Exit(result.run.exit_code)
+        exit_codes: list[int] = []
+        for index, run_output in enumerate(run_outputs, start=1):
+            run_config = resolved.model_copy(update={"output": run_output})
+            result = run_test(run_config, verbosity=verbose, console=console, invocation=sys.argv)
+            markdown_path, yaml_path = write_reports(result, run_output, resolved.overwrite)
+            if repeat > 1:
+                console.print(f"Repeat {index}/{repeat}")
+            console.print(f"Markdown result: {markdown_path}")
+            console.print(f"YAML result: {yaml_path}")
+            if result.run.exit_code:
+                exit_codes.append(result.run.exit_code)
+        if exit_codes:
+            raise typer.Exit(exit_codes[0])
     except (OSError, ValueError, ValidationError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(2) from exc
@@ -486,6 +508,17 @@ def _configure_logging(verbosity: int) -> None:
         handlers=[RichHandler(show_time=True, show_path=False, markup=False)],
         force=True,
     )
+
+
+def _repeat_output(output: str, index: int, repeat: int) -> str:
+    """Return the result stem for one repetition, preserving single-run names."""
+    if repeat == 1:
+        return output
+    path = Path(output)
+    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
+        path = path.with_suffix("")
+    width = max(3, len(str(repeat)))
+    return str(path.with_name(f"{path.name}-{index:0{width}d}"))
 
 
 def _load_result_yaml(path: Path) -> TestResult:
