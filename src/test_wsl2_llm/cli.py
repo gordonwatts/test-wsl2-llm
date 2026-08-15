@@ -6,6 +6,7 @@ import logging
 import posixpath
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Annotated
 
@@ -81,6 +82,14 @@ def run(
             "--repeat",
             min=1,
             help="Run the test this many times; repeated results use an -001, -002, ... suffix.",
+        ),
+    ] = 1,
+    threads: Annotated[
+        int,
+        typer.Option(
+            "--threads",
+            min=1,
+            help="Run up to this many repetitions concurrently; defaults to one.",
         ),
     ] = 1,
     force: Annotated[
@@ -188,17 +197,34 @@ def run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
-        exit_codes: list[int] = []
-        for index, run_output in enumerate(run_outputs, start=1):
+        def run_one(index: int, run_output: str) -> tuple[int, Path, Path, int]:
             run_config = resolved.model_copy(update={"output": run_output})
-            result = run_test(run_config, verbosity=verbose, console=console, invocation=sys.argv)
+            result = run_test(
+                run_config,
+                verbosity=verbose,
+                console=Console(stderr=True),
+                invocation=sys.argv,
+            )
             markdown_path, yaml_path = write_reports(result, run_output, resolved.overwrite)
+            return index, markdown_path, yaml_path, result.run.exit_code
+
+        exit_codes: list[int] = []
+        completed_runs: list[tuple[int, Path, Path, int]] = []
+        with ThreadPoolExecutor(max_workers=min(threads, repeat)) as executor:
+            futures = [
+                executor.submit(run_one, index, run_output)
+                for index, run_output in enumerate(run_outputs, start=1)
+            ]
+            for future in as_completed(futures):
+                completed_runs.append(future.result())
+
+        for index, markdown_path, yaml_path, exit_code in sorted(completed_runs):
             if repeat > 1:
                 console.print(f"Repeat {index}/{repeat}")
             console.print(f"Markdown result: {markdown_path}")
             console.print(f"YAML result: {yaml_path}")
-            if result.run.exit_code:
-                exit_codes.append(result.run.exit_code)
+            if exit_code:
+                exit_codes.append(exit_code)
         if exit_codes:
             raise typer.Exit(exit_codes[0])
     except (OSError, ValueError, ValidationError) as exc:

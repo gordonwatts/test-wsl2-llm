@@ -23,6 +23,11 @@ YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, sta
 name. Existing indexed results are checked before the first run; use `--force` to replace
 them.
 
+Use `--threads N` with `--repeat` to run up to `N` fresh WSL2 tests concurrently. For
+example, `--repeat 10 --threads 4` runs ten repetitions in batches of at most four. The
+default is `--threads 1`, and the number of workers is capped at the repeat count. Each
+repetition still has its own indexed reports, workspace, logs, and copied-back artifacts.
+
 Use `--copy-file PATH` (repeatable) to copy Windows files into the root of the fresh WSL
 workspace before Codex starts. This is useful for local credentials such as a
 `servicex.yaml` file. The same option can be written in YAML as `copy_files`; paths are

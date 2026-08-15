@@ -1,4 +1,5 @@
 from pathlib import Path
+from threading import Barrier, Lock
 
 import yaml
 from test_report import sample_result
@@ -28,6 +29,7 @@ def test_help_documents_run_and_core_options() -> None:
         "--copy-file",
         "--copy-back",
         "--repeat",
+        "--threads",
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
@@ -74,6 +76,55 @@ def test_repeat_indexes_each_run_output(monkeypatch, tmp_path: Path) -> None:
     assert "Repeat 3/3" in result.output
 
 
+def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> None:
+    barrier = Barrier(4)
+    lock = Lock()
+    active = 0
+    maximum_active = 0
+    calls: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+            calls.append(config.output)
+        try:
+            barrier.wait(timeout=2)
+            return sample_result()
+        finally:
+            with lock:
+                active -= 1
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        return output_paths(output)
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--repeat",
+            "4",
+            "--threads",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert maximum_active == 4
+    assert sorted(calls) == sorted(str(tmp_path / f"out-{index:03d}") for index in range(1, 5))
+
+
 def test_repeat_rejects_non_positive_count(tmp_path: Path) -> None:
     result = runner.invoke(
         app,
@@ -91,6 +142,25 @@ def test_repeat_rejects_non_positive_count(tmp_path: Path) -> None:
     )
     assert result.exit_code == 2
     assert "Invalid value for '--repeat'" in result.output
+
+
+def test_threads_rejects_non_positive_count(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--threads",
+            "0",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "Invalid value for '--threads'" in result.output
 
 
 def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -> None:
