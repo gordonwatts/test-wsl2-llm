@@ -90,7 +90,12 @@ def render_markdown(
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
-    lines.extend(_bullets("Skill directories", result.skills.directories))
+    lines.extend(
+        _bullets(
+            "Skill directories",
+            [_display_skill_directory(path) for path in result.skills.directories],
+        )
+    )
 
     run = result.run
     lines.extend(
@@ -447,6 +452,15 @@ def _bullets(label: str, values: list[str]) -> list[str]:
     if not values:
         return [f"- {label}: none"]
     return [f"- {label}:"] + [f"  - `{value}`" for value in values]
+
+
+def _display_skill_directory(value: str) -> str:
+    """Hide the temporary harness prefix from human-readable skill paths."""
+    normalized = value.replace("\\", "/")
+    marker = "/.harness/codex-home/"
+    if marker in normalized:
+        return normalized.split(marker, 1)[1]
+    return value
 
 
 def _yaml(value: object) -> str:

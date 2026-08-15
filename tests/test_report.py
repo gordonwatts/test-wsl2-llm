@@ -197,6 +197,20 @@ def test_continuation_report_keeps_new_prompt_at_top_and_history_in_details(tmp_
     assert "Inspect the existing file." not in history
 
 
+def test_skill_directory_report_hides_harness_prefix_but_yaml_keeps_it(tmp_path: Path) -> None:
+    result = sample_result()
+    full_path = "/tmp/test-wsl2-llm-LXyJJYhz/.harness/codex-home/plugins/cache/example/skills/demo"
+    result.skills.directories = [full_path]
+
+    markdown_path, yaml_path = write_reports(result, str(tmp_path / "summary"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+    loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+    assert "plugins/cache/example/skills/demo" in markdown
+    assert "/tmp/test-wsl2-llm-LXyJJYhz/.harness/codex-home" not in markdown
+    assert loaded["skills"]["directories"] == [full_path]
+
+
 def test_prompt_and_final_response_render_as_wrapping_blockquotes(tmp_path: Path) -> None:
     result = sample_result()
     result.prompt = "First prompt line.\nSecond prompt line."
