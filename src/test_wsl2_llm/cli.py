@@ -6,14 +6,20 @@ import logging
 import posixpath
 import subprocess
 import sys
+from collections import deque
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Annotated
 
 import typer
 import yaml
 from pydantic import ValidationError
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.logging import RichHandler
+from rich.panel import Panel
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
 from test_wsl2_llm.models import TestResult
@@ -75,6 +81,22 @@ def run(
     output: Annotated[
         Path | None, typer.Option(help="Windows result stem or .md/.yaml path; both are written.")
     ] = None,
+    repeat: Annotated[
+        int,
+        typer.Option(
+            "--repeat",
+            min=1,
+            help="Run the test this many times; repeated results use an -001, -002, ... suffix.",
+        ),
+    ] = 1,
+    threads: Annotated[
+        int,
+        typer.Option(
+            "--threads",
+            min=1,
+            help="Run up to this many repetitions concurrently; defaults to one.",
+        ),
+    ] = 1,
     force: Annotated[
         bool,
         typer.Option("--force", help="Overwrite an existing Markdown/YAML result pair."),
@@ -126,7 +148,7 @@ def run(
         ),
     ] = 0,
 ) -> None:
-    """Run one isolated Codex test and write paired Markdown/YAML results."""
+    """Run isolated Codex tests and write paired Markdown/YAML results."""
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
@@ -162,9 +184,16 @@ def run(
         if config_only:
             return
 
-        markdown_path, yaml_path = output_paths(resolved.output)
+        run_outputs = [
+            _repeat_output(resolved.output, index, repeat) for index in range(1, repeat + 1)
+        ]
         if not resolved.overwrite:
-            existing = [path for path in (markdown_path, yaml_path) if path.exists()]
+            existing = [
+                path
+                for run_output in run_outputs
+                for path in output_paths(run_output)
+                if path.exists()
+            ]
             if existing:
                 raise FileExistsError(
                     f"result file already exists: {', '.join(map(str, existing))}"
@@ -173,12 +202,50 @@ def run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
-        result = run_test(resolved, verbosity=verbose, console=console, invocation=sys.argv)
-        markdown_path, yaml_path = write_reports(result, resolved.output, resolved.overwrite)
-        console.print(f"Markdown result: {markdown_path}")
-        console.print(f"YAML result: {yaml_path}")
-        if result.run.exit_code:
-            raise typer.Exit(result.run.exit_code)
+        def run_one(
+            index: int, run_output: str, repeat_display: _RepeatDisplay | None
+        ) -> tuple[int, Path, Path, int]:
+            run_config = resolved.model_copy(update={"output": run_output})
+            result = run_test(
+                run_config,
+                verbosity=verbose,
+                console=console,
+                live_progress=repeat_display is None,
+                log_callback=repeat_display.log if repeat_display is not None else None,
+                invocation=sys.argv,
+            )
+            markdown_path, yaml_path = write_reports(result, run_output, resolved.overwrite)
+            return index, markdown_path, yaml_path, result.run.exit_code
+
+        exit_codes: list[int] = []
+        completed_runs: list[tuple[int, Path, Path, int]] = []
+
+        def collect_runs(repeat_display: _RepeatDisplay | None) -> None:
+            with ThreadPoolExecutor(max_workers=min(threads, repeat)) as executor:
+                futures = [
+                    executor.submit(run_one, index, run_output, repeat_display)
+                    for index, run_output in enumerate(run_outputs, start=1)
+                ]
+                for future in as_completed(futures):
+                    completed_runs.append(future.result())
+                    if repeat_display is not None:
+                        repeat_display.advance()
+
+        if repeat > 1:
+            with _RepeatDisplay(console, repeat) as repeat_display:
+                collect_runs(repeat_display)
+        else:
+            collect_runs(None)
+
+        for index, markdown_path, yaml_path, exit_code in sorted(completed_runs):
+            if repeat > 1:
+                console.print(f"Repeat {index}/{repeat}")
+            console.print(f"Markdown result: {markdown_path}")
+            console.print(f"YAML result: {yaml_path}")
+            if exit_code:
+                exit_codes.append(exit_code)
+        if exit_codes:
+            raise typer.Exit(exit_codes[0])
     except (OSError, ValueError, ValidationError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(2) from exc
@@ -486,6 +553,58 @@ def _configure_logging(verbosity: int) -> None:
         handlers=[RichHandler(show_time=True, show_path=False, markup=False)],
         force=True,
     )
+
+
+def _repeat_output(output: str, index: int, repeat: int) -> str:
+    """Return the result stem for one repetition, preserving single-run names."""
+    if repeat == 1:
+        return output
+    path = Path(output)
+    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
+        path = path.with_suffix("")
+    width = max(3, len(str(repeat)))
+    return str(path.with_name(f"{path.name}-{index:0{width}d}"))
+
+
+class _RepeatDisplay:
+    """Render the repeat bar and bounded Codex log in one live terminal display."""
+
+    def __init__(self, console: Console, total: int) -> None:
+        self._lock = Lock()
+        self._recent: deque[str] = deque(maxlen=5)
+        self._progress = Progress(
+            TextColumn("Repeating runs"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            auto_refresh=False,
+        )
+        self._task_id = self._progress.add_task("", total=total)
+        self._live = Live(
+            self._render(), console=console, refresh_per_second=8, transient=True
+        )
+
+    def __enter__(self) -> _RepeatDisplay:
+        self._live.start(refresh=True)
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self._live.stop()
+
+    def log(self, line: str) -> None:
+        with self._lock:
+            self._recent.append(line)
+            self._live.update(self._render())
+
+    def advance(self) -> None:
+        with self._lock:
+            self._progress.advance(self._task_id)
+            self._live.update(self._render())
+
+    def _render(self) -> Group:
+        log_text = "\n".join(self._recent) or "Starting Codex..."
+        return Group(self._progress, Panel(log_text, title="Codex progress"))
 
 
 def _load_result_yaml(path: Path) -> TestResult:

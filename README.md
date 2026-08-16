@@ -16,6 +16,22 @@ uvx test-wsl2-llm run `
 
 This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
 
+Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
+YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
+`-001` (for example, `results\hello-001.md`, `results\hello-001.yaml`, and
+`results\hello-001.output.png`). The default `--repeat 1` keeps the unsuffixed output
+name. Existing indexed results are checked before the first run; use `--force` to replace
+them.
+
+Use `--threads N` with `--repeat` to run up to `N` fresh WSL2 tests concurrently. For
+example, `--repeat 10 --threads 4` runs ten repetitions in batches of at most four. The
+default is `--threads 1`, and the number of workers is capped at the repeat count. Each
+repetition still has its own indexed reports, workspace, logs, and copied-back artifacts.
+While repetitions are running, a transient aggregate progress bar shows completed runs;
+it is removed before the indexed output paths are printed. Repeated-run Codex progress is
+written as ordinary log lines so it does not compete with the aggregate live display.
+Single runs keep the live Codex progress panel and do not show the aggregate bar.
+
 Use `--copy-file PATH` (repeatable) to copy Windows files into the root of the fresh WSL
 workspace before Codex starts. This is useful for local credentials such as a
 `servicex.yaml` file. The same option can be written in YAML as `copy_files`; paths are

@@ -1,10 +1,13 @@
 from pathlib import Path
+from threading import Barrier, Lock
 
 import yaml
 from test_report import sample_result
 from typer.testing import CliRunner
 
+import test_wsl2_llm.cli as cli_module
 from test_wsl2_llm.cli import _connect_command, app
+from test_wsl2_llm.config import output_paths
 
 runner = CliRunner()
 
@@ -26,11 +29,207 @@ def test_help_documents_run_and_core_options() -> None:
         "--title",
         "--copy-file",
         "--copy-back",
+        "--repeat",
+        "--threads",
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
     assert "connect" in top.stdout
     assert "continue" in top.stdout
+
+
+def test_repeat_indexes_each_run_output(monkeypatch, tmp_path: Path) -> None:
+    calls: list[str] = []
+    written: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        calls.append(config.output)
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        written.append(output)
+        return output_paths(output)
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out.md"),
+            "--repeat",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    expected = [str(tmp_path / f"out-{index:03d}") for index in range(1, 4)]
+    assert calls == expected
+    assert written == expected
+    assert "Repeat 1/3" in result.output
+    assert "Repeat 3/3" in result.output
+
+
+def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> None:
+    barrier = Barrier(4)
+    lock = Lock()
+    active = 0
+    maximum_active = 0
+    calls: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        nonlocal active, maximum_active
+        with lock:
+            active += 1
+            maximum_active = max(maximum_active, active)
+            calls.append(config.output)
+        try:
+            barrier.wait(timeout=2)
+            return sample_result()
+        finally:
+            with lock:
+                active -= 1
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        return output_paths(output)
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--repeat",
+            "4",
+            "--threads",
+            "4",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert maximum_active == 4
+    assert sorted(calls) == sorted(str(tmp_path / f"out-{index:03d}") for index in range(1, 5))
+
+
+def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: Path) -> None:
+    progress_instances: list[dict[str, object]] = []
+    live_progress_values: list[bool] = []
+
+    class RecordingRepeatDisplay:
+        def __init__(self, _console, total):
+            progress_instances.append({"total": total, "advances": 0})
+            self.state = progress_instances[-1]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc_info):
+            return False
+
+        def log(self, _line):
+            pass
+
+        def advance(self):
+            self.state["advances"] = int(self.state["advances"]) + 1
+
+    def fake_run(_config, **kwargs):
+        live_progress_values.append(kwargs["live_progress"])
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        return output_paths(output)
+
+    monkeypatch.setattr(cli_module, "_RepeatDisplay", RecordingRepeatDisplay)
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    repeated = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "repeated"),
+            "--repeat",
+            "2",
+        ],
+    )
+    single = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "single"),
+        ],
+    )
+
+    assert repeated.exit_code == 0, repeated.output
+    assert single.exit_code == 0, single.output
+    assert len(progress_instances) == 1
+    assert progress_instances[0]["total"] == 2
+    assert progress_instances[0]["advances"] == 2
+    assert live_progress_values == [False, False, True]
+
+
+def test_repeat_rejects_non_positive_count(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--repeat",
+            "0",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "Invalid value for '--repeat'" in result.output
+
+
+def test_threads_rejects_non_positive_count(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+            "--threads",
+            "0",
+        ],
+    )
+    assert result.exit_code == 2
+    assert "Invalid value for '--threads'" in result.output
 
 
 def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -> None:
