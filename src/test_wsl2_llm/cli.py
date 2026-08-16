@@ -15,6 +15,7 @@ import yaml
 from pydantic import ValidationError
 from rich.console import Console
 from rich.logging import RichHandler
+from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
 from test_wsl2_llm.models import TestResult
@@ -210,13 +211,31 @@ def run(
 
         exit_codes: list[int] = []
         completed_runs: list[tuple[int, Path, Path, int]] = []
-        with ThreadPoolExecutor(max_workers=min(threads, repeat)) as executor:
-            futures = [
-                executor.submit(run_one, index, run_output)
-                for index, run_output in enumerate(run_outputs, start=1)
-            ]
-            for future in as_completed(futures):
-                completed_runs.append(future.result())
+
+        def collect_runs(progress: Progress | None, task_id: int | None) -> None:
+            with ThreadPoolExecutor(max_workers=min(threads, repeat)) as executor:
+                futures = [
+                    executor.submit(run_one, index, run_output)
+                    for index, run_output in enumerate(run_outputs, start=1)
+                ]
+                for future in as_completed(futures):
+                    completed_runs.append(future.result())
+                    if progress is not None and task_id is not None:
+                        progress.advance(task_id)
+
+        if repeat > 1:
+            with Progress(
+                TextColumn("Repeating runs"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeRemainingColumn(),
+                console=console,
+                transient=True,
+            ) as progress:
+                task_id = progress.add_task("", total=repeat)
+                collect_runs(progress, task_id)
+        else:
+            collect_runs(None, None)
 
         for index, markdown_path, yaml_path, exit_code in sorted(completed_runs):
             if repeat > 1:

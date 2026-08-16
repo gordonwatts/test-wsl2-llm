@@ -5,6 +5,7 @@ import yaml
 from test_report import sample_result
 from typer.testing import CliRunner
 
+import test_wsl2_llm.cli as cli_module
 from test_wsl2_llm.cli import _connect_command, app
 from test_wsl2_llm.config import output_paths
 
@@ -123,6 +124,71 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
     assert result.exit_code == 0, result.output
     assert maximum_active == 4
     assert sorted(calls) == sorted(str(tmp_path / f"out-{index:03d}") for index in range(1, 5))
+
+
+def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: Path) -> None:
+    progress_instances: list[dict[str, object]] = []
+
+    class RecordingProgress:
+        def __init__(self, *columns, **kwargs):
+            progress_instances.append({"columns": columns, **kwargs, "advances": 0})
+            self.state = progress_instances[-1]
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc_info):
+            return False
+
+        def add_task(self, *_args, **_kwargs):
+            return 1
+
+        def advance(self, _task_id):
+            self.state["advances"] = int(self.state["advances"]) + 1
+
+    def fake_run(_config, **_kwargs):
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        return output_paths(output)
+
+    monkeypatch.setattr(cli_module, "Progress", RecordingProgress)
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    repeated = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "repeated"),
+            "--repeat",
+            "2",
+        ],
+    )
+    single = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "single"),
+        ],
+    )
+
+    assert repeated.exit_code == 0, repeated.output
+    assert single.exit_code == 0, single.output
+    assert len(progress_instances) == 1
+    assert progress_instances[0]["transient"] is True
+    assert progress_instances[0]["advances"] == 2
 
 
 def test_repeat_rejects_non_positive_count(tmp_path: Path) -> None:

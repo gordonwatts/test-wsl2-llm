@@ -27,6 +27,8 @@ Use `--threads N` with `--repeat` to run up to `N` fresh WSL2 tests concurrently
 example, `--repeat 10 --threads 4` runs ten repetitions in batches of at most four. The
 default is `--threads 1`, and the number of workers is capped at the repeat count. Each
 repetition still has its own indexed reports, workspace, logs, and copied-back artifacts.
+While repetitions are running, a transient aggregate progress bar shows completed runs;
+it is removed before the indexed output paths are printed. Single runs do not show this bar.
 
 Use `--copy-file PATH` (repeatable) to copy Windows files into the root of the fresh WSL
 workspace before Codex starts. This is useful for local credentials such as a
