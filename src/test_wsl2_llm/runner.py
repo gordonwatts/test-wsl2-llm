@@ -11,7 +11,7 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -168,6 +168,7 @@ def run_test(
     verbosity: int = 0,
     console: Console | None = None,
     live_progress: bool = True,
+    log_callback: Callable[[str], None] | None = None,
     invocation: list[str] | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
@@ -283,6 +284,7 @@ def run_test(
                 verbosity=verbosity,
                 console=console,
                 live_progress=live_progress,
+                log_callback=log_callback,
             )
             codex_seconds = time.perf_counter() - codex_started
             if exit_code:
@@ -884,6 +886,7 @@ def _stream_codex(
     verbosity: int,
     console: Console,
     live_progress: bool = True,
+    log_callback: Callable[[str], None] | None = None,
 ) -> tuple[int, str, str, list[TraceEvent], list[dict[str, Any]]]:
     process = subprocess.Popen(
         command,
@@ -964,7 +967,10 @@ def _stream_codex(
             elif live:
                 live.update(Panel("\n".join(recent), title="Codex progress"))
             elif not live_progress:
-                console.print(display)
+                if log_callback is not None:
+                    log_callback(display)
+                else:
+                    console.print(display)
 
     if verbosity >= 2 or not live_progress:
         consume(None)

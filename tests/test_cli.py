@@ -130,9 +130,9 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
     progress_instances: list[dict[str, object]] = []
     live_progress_values: list[bool] = []
 
-    class RecordingProgress:
-        def __init__(self, *columns, **kwargs):
-            progress_instances.append({"columns": columns, **kwargs, "advances": 0})
+    class RecordingRepeatDisplay:
+        def __init__(self, _console, total):
+            progress_instances.append({"total": total, "advances": 0})
             self.state = progress_instances[-1]
 
         def __enter__(self):
@@ -141,10 +141,10 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
         def __exit__(self, *_exc_info):
             return False
 
-        def add_task(self, *_args, **_kwargs):
-            return 1
+        def log(self, _line):
+            pass
 
-        def advance(self, _task_id):
+        def advance(self):
             self.state["advances"] = int(self.state["advances"]) + 1
 
     def fake_run(_config, **kwargs):
@@ -155,7 +155,7 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
         del result, overwrite
         return output_paths(output)
 
-    monkeypatch.setattr(cli_module, "Progress", RecordingProgress)
+    monkeypatch.setattr(cli_module, "_RepeatDisplay", RecordingRepeatDisplay)
     monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
     monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
 
@@ -189,7 +189,7 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
     assert repeated.exit_code == 0, repeated.output
     assert single.exit_code == 0, single.output
     assert len(progress_instances) == 1
-    assert progress_instances[0]["transient"] is True
+    assert progress_instances[0]["total"] == 2
     assert progress_instances[0]["advances"] == 2
     assert live_progress_values == [False, False, True]
 

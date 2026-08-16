@@ -6,15 +6,19 @@ import logging
 import posixpath
 import subprocess
 import sys
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from threading import Lock
 from typing import Annotated
 
 import typer
 import yaml
 from pydantic import ValidationError
-from rich.console import Console
+from rich.console import Console, Group
+from rich.live import Live
 from rich.logging import RichHandler
+from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
@@ -198,13 +202,16 @@ def run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
-        def run_one(index: int, run_output: str) -> tuple[int, Path, Path, int]:
+        def run_one(
+            index: int, run_output: str, repeat_display: _RepeatDisplay | None
+        ) -> tuple[int, Path, Path, int]:
             run_config = resolved.model_copy(update={"output": run_output})
             result = run_test(
                 run_config,
                 verbosity=verbose,
                 console=console,
-                live_progress=repeat == 1,
+                live_progress=repeat_display is None,
+                log_callback=repeat_display.log if repeat_display is not None else None,
                 invocation=sys.argv,
             )
             markdown_path, yaml_path = write_reports(result, run_output, resolved.overwrite)
@@ -213,30 +220,22 @@ def run(
         exit_codes: list[int] = []
         completed_runs: list[tuple[int, Path, Path, int]] = []
 
-        def collect_runs(progress: Progress | None, task_id: int | None) -> None:
+        def collect_runs(repeat_display: _RepeatDisplay | None) -> None:
             with ThreadPoolExecutor(max_workers=min(threads, repeat)) as executor:
                 futures = [
-                    executor.submit(run_one, index, run_output)
+                    executor.submit(run_one, index, run_output, repeat_display)
                     for index, run_output in enumerate(run_outputs, start=1)
                 ]
                 for future in as_completed(futures):
                     completed_runs.append(future.result())
-                    if progress is not None and task_id is not None:
-                        progress.advance(task_id)
+                    if repeat_display is not None:
+                        repeat_display.advance()
 
         if repeat > 1:
-            with Progress(
-                TextColumn("Repeating runs"),
-                BarColumn(),
-                TaskProgressColumn(),
-                TimeRemainingColumn(),
-                console=console,
-                transient=True,
-            ) as progress:
-                task_id = progress.add_task("", total=repeat)
-                collect_runs(progress, task_id)
+            with _RepeatDisplay(console, repeat) as repeat_display:
+                collect_runs(repeat_display)
         else:
-            collect_runs(None, None)
+            collect_runs(None)
 
         for index, markdown_path, yaml_path, exit_code in sorted(completed_runs):
             if repeat > 1:
@@ -565,6 +564,47 @@ def _repeat_output(output: str, index: int, repeat: int) -> str:
         path = path.with_suffix("")
     width = max(3, len(str(repeat)))
     return str(path.with_name(f"{path.name}-{index:0{width}d}"))
+
+
+class _RepeatDisplay:
+    """Render the repeat bar and bounded Codex log in one live terminal display."""
+
+    def __init__(self, console: Console, total: int) -> None:
+        self._lock = Lock()
+        self._recent: deque[str] = deque(maxlen=5)
+        self._progress = Progress(
+            TextColumn("Repeating runs"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TimeRemainingColumn(),
+            console=console,
+            auto_refresh=False,
+        )
+        self._task_id = self._progress.add_task("", total=total)
+        self._live = Live(
+            self._render(), console=console, refresh_per_second=8, transient=True
+        )
+
+    def __enter__(self) -> _RepeatDisplay:
+        self._live.start(refresh=True)
+        return self
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self._live.stop()
+
+    def log(self, line: str) -> None:
+        with self._lock:
+            self._recent.append(line)
+            self._live.update(self._render())
+
+    def advance(self) -> None:
+        with self._lock:
+            self._progress.advance(self._task_id)
+            self._live.update(self._render())
+
+    def _render(self) -> Group:
+        log_text = "\n".join(self._recent) or "Starting Codex..."
+        return Group(self._progress, Panel(log_text, title="Codex progress"))
 
 
 def _load_result_yaml(path: Path) -> TestResult:

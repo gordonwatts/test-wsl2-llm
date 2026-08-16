@@ -63,6 +63,7 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
         "test_wsl2_llm.runner.subprocess.Popen", lambda *_args, **_kwargs: FakeProcess()
     )
     rendered = StringIO()
+    logs: list[str] = []
     exit_code, stdout, stderr, _traces, _events = _stream_codex(
         ["codex"],
         "hello",
@@ -70,13 +71,15 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
         verbosity=0,
         console=Console(file=rendered),
         live_progress=False,
+        log_callback=logs.append,
     )
 
     assert exit_code == 0
     assert stdout == '{"type":"item.started"}\n'
     assert stderr == "plain stderr\n"
-    assert "item.started" in rendered.getvalue()
-    assert "plain stderr" in rendered.getvalue()
+    assert any("item.started" in line for line in logs)
+    assert any("plain stderr" in line for line in logs)
+    assert rendered.getvalue() == ""
 
 
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:
