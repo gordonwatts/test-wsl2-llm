@@ -1,10 +1,12 @@
 import re
 import subprocess
+from io import StringIO
 from pathlib import Path
 
 import numpy as np
 import pytest
 import uproot
+from rich.console import Console
 
 from test_wsl2_llm.models import ConversationTurn, CopiedBackFile
 from test_wsl2_llm.models import TestConfig as WslTestConfig
@@ -18,6 +20,7 @@ from test_wsl2_llm.runner import (
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _root_contents,
+    _stream_codex,
     _transfer_files,
     _transfer_marketplaces,
     continuation_prompt,
@@ -38,6 +41,42 @@ def test_wsl_command_keeps_values_as_separate_arguments() -> None:
         "script",
         "path with spaces;$x",
     ]
+
+
+def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
+    class FakeStdin:
+        def write(self, _value: str) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stdout = StringIO('{"type":"item.started"}\n')
+        stderr = StringIO("plain stderr\n")
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner.subprocess.Popen", lambda *_args, **_kwargs: FakeProcess()
+    )
+    rendered = StringIO()
+    exit_code, stdout, stderr, _traces, _events = _stream_codex(
+        ["codex"],
+        "hello",
+        progress_lines=5,
+        verbosity=0,
+        console=Console(file=rendered),
+        live_progress=False,
+    )
+
+    assert exit_code == 0
+    assert stdout == '{"type":"item.started"}\n'
+    assert stderr == "plain stderr\n"
+    assert "item.started" in rendered.getvalue()
+    assert "plain stderr" in rendered.getvalue()
 
 
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:

@@ -203,7 +203,8 @@ def run(
             result = run_test(
                 run_config,
                 verbosity=verbose,
-                console=Console(stderr=True),
+                console=console,
+                live_progress=repeat == 1,
                 invocation=sys.argv,
             )
             markdown_path, yaml_path = write_reports(result, run_output, resolved.overwrite)

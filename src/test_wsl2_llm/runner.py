@@ -167,6 +167,7 @@ def run_test(
     *,
     verbosity: int = 0,
     console: Console | None = None,
+    live_progress: bool = True,
     invocation: list[str] | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
@@ -281,6 +282,7 @@ def run_test(
                 progress_lines=config.progress_lines,
                 verbosity=verbosity,
                 console=console,
+                live_progress=live_progress,
             )
             codex_seconds = time.perf_counter() - codex_started
             if exit_code:
@@ -881,6 +883,7 @@ def _stream_codex(
     progress_lines: int,
     verbosity: int,
     console: Console,
+    live_progress: bool = True,
 ) -> tuple[int, str, str, list[TraceEvent], list[dict[str, Any]]]:
     process = subprocess.Popen(
         command,
@@ -960,8 +963,10 @@ def _stream_codex(
                 LOGGER.debug("[%s] %s", stream, line.rstrip("\r\n"))
             elif live:
                 live.update(Panel("\n".join(recent), title="Codex progress"))
+            elif not live_progress:
+                console.print(display)
 
-    if verbosity >= 2:
+    if verbosity >= 2 or not live_progress:
         consume(None)
     else:
         with Live(

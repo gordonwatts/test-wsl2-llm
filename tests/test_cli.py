@@ -128,6 +128,7 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
 
 def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: Path) -> None:
     progress_instances: list[dict[str, object]] = []
+    live_progress_values: list[bool] = []
 
     class RecordingProgress:
         def __init__(self, *columns, **kwargs):
@@ -146,7 +147,8 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
         def advance(self, _task_id):
             self.state["advances"] = int(self.state["advances"]) + 1
 
-    def fake_run(_config, **_kwargs):
+    def fake_run(_config, **kwargs):
+        live_progress_values.append(kwargs["live_progress"])
         return sample_result()
 
     def fake_write(result, output, overwrite=False):
@@ -189,6 +191,7 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
     assert len(progress_instances) == 1
     assert progress_instances[0]["transient"] is True
     assert progress_instances[0]["advances"] == 2
+    assert live_progress_values == [False, False, True]
 
 
 def test_repeat_rejects_non_positive_count(tmp_path: Path) -> None:

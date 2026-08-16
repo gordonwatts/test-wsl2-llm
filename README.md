@@ -28,7 +28,9 @@ example, `--repeat 10 --threads 4` runs ten repetitions in batches of at most fo
 default is `--threads 1`, and the number of workers is capped at the repeat count. Each
 repetition still has its own indexed reports, workspace, logs, and copied-back artifacts.
 While repetitions are running, a transient aggregate progress bar shows completed runs;
-it is removed before the indexed output paths are printed. Single runs do not show this bar.
+it is removed before the indexed output paths are printed. Repeated-run Codex progress is
+written as ordinary log lines so it does not compete with the aggregate live display.
+Single runs keep the live Codex progress panel and do not show the aggregate bar.
 
 Use `--copy-file PATH` (repeatable) to copy Windows files into the root of the fresh WSL
 workspace before Codex starts. This is useful for local credentials such as a
