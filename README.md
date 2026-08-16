@@ -32,6 +32,91 @@ it is removed before the indexed output paths are printed. Repeated-run Codex pr
 written as ordinary log lines so it does not compete with the aggregate live display.
 Single runs keep the live Codex progress panel and do not show the aggregate bar.
 
+## Template batches
+
+Create a starter batch file, then edit its prompt and questions:
+
+```powershell
+test-wsl2-llm template init .\questions.yaml
+```
+
+Run the template with one isolated WSL2 job per question (and per repetition):
+
+```powershell
+test-wsl2-llm template run .\questions.yaml
+```
+
+Pass one or more question IDs after the config to run only those questions:
+
+```powershell
+test-wsl2-llm template run .\questions.yaml q1 q3
+```
+
+The equivalent repeatable flag form is also supported:
+
+```powershell
+test-wsl2-llm template run .\questions.yaml --question q1 --question q3
+```
+
+If no IDs are supplied, every question is run. Unknown or duplicate IDs are
+rejected before any WSL job starts.
+
+Template runs are resumable by default. If any Markdown or YAML result already
+exists for a question, that question (including its repetitions) is skipped and
+a warning tells you to use `--force`. Supplying `--force` reruns existing
+questions and reports that choice in the warning.
+
+The YAML uses a shared `prompt_template` and a list of question mappings. Every
+mapping needs a unique, filename-safe `id`; its other scalar fields are available
+through strict `{{ field }}` substitutions. For example:
+
+```yaml
+prompt_template: |
+  Plot {{ quantity }} for the dataset {{ dataset }}.
+  Save plots as plot_<n>.png and put the code in script.py.
+questions:
+  - id: etmiss
+    quantity: ETmiss
+    dataset: user.example:dataset_a
+  - id: leading-jet-pt
+    quantity: leading-jet pT
+    dataset: user.example:dataset_b
+model: MODEL:high
+copy_files:
+  - .\servicex.yaml
+copy_back:
+  - plot_*.png
+  - script.py
+output: .\results\analysis
+repeat: 2
+threads: 4
+```
+
+This writes `analysis-etmiss-001.md` and matching YAML and copied-back artifacts,
+then the corresponding files for `leading-jet-pt`. With `repeat: 1`, the numeric
+suffix is omitted. `threads` limits total simultaneous jobs across all questions
+and repetitions. The command accepts the shared `run` options as CLI overrides,
+including `--model`, `--output`, `--repeat`, `--threads`, and `--force`.
+
+Templates accept the same run configuration keys as a normal saved configuration,
+including `marketplaces`, `plugins`, `copy_files`, `copy_back`, sandbox, network,
+approval, authentication, pricing, and cleanup settings. This supports the
+command-line-to-template workflow:
+
+```powershell
+test-wsl2-llm run --prompt-file .\prompt.md --model MODEL:high `
+  --marketplace https://github.com/example/marketplace.git `
+  --plugin demo@example `
+  --output .\results\trial `
+  --save-config .\trial-config.yaml --config-only
+test-wsl2-llm template init .\questions.yaml
+```
+
+Copy the shared keys from `trial-config.yaml` into `questions.yaml`, replace its
+single-run `prompt` with `prompt_template`, and add `questions`. The saved `prompt`
+field is accepted and ignored when `prompt_template` is present, so the copied
+marketplace/plugin and execution settings continue to apply to every expanded job.
+
 Use `--copy-file PATH` (repeatable) to copy Windows files into the root of the fresh WSL
 workspace before Codex starts. This is useful for local credentials such as a
 `servicex.yaml` file. The same option can be written in YAML as `copy_files`; paths are
