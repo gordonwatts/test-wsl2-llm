@@ -143,6 +143,14 @@ def run(
     progress_lines: Annotated[
         int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
     ] = None,
+    timeout: Annotated[
+        float | None,
+        typer.Option("--timeout", help="Maximum Codex execution time in seconds."),
+    ] = None,
+    max_copy_back: Annotated[
+        int | None,
+        typer.Option("--max-copy-back", help="Maximum number of files copied back per run."),
+    ] = None,
     cleanup: Annotated[
         bool | None,
         typer.Option("--cleanup/--keep-workspace", help="Remove WSL run root after collection."),
@@ -187,6 +195,8 @@ def run(
             "auth_source": auth_source,
             "pricing_file": str(pricing_file) if pricing_file else None,
             "progress_lines": progress_lines,
+            "timeout_seconds": timeout,
+            "max_copy_back_files": max_copy_back,
             "cleanup": cleanup,
         }
         resolved = build_config(file_values, cli_values)
@@ -368,6 +378,14 @@ def template_run(
     progress_lines: Annotated[
         int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
     ] = None,
+    timeout: Annotated[
+        float | None,
+        typer.Option("--timeout", help="Maximum Codex execution time in seconds."),
+    ] = None,
+    max_copy_back: Annotated[
+        int | None,
+        typer.Option("--max-copy-back", help="Maximum number of files copied back per run."),
+    ] = None,
     cleanup: Annotated[
         bool | None,
         typer.Option(
@@ -438,6 +456,8 @@ def template_run(
             "auth_source": auth_source,
             "pricing_file": str(pricing_file) if pricing_file else None,
             "progress_lines": progress_lines,
+            "timeout_seconds": timeout,
+            "max_copy_back_files": max_copy_back,
             "cleanup": cleanup,
         }
         base_values = dict(shared)
@@ -712,6 +732,14 @@ def continue_work(
     progress_lines: Annotated[
         int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
     ] = None,
+    timeout: Annotated[
+        float | None,
+        typer.Option("--timeout", help="Maximum Codex execution time in seconds."),
+    ] = None,
+    max_copy_back: Annotated[
+        int | None,
+        typer.Option("--max-copy-back", help="Maximum number of files copied back per run."),
+    ] = None,
     config: Annotated[
         Path | None, typer.Option(help="Input YAML overrides for this continuation.")
     ] = None,
@@ -791,6 +819,8 @@ def continue_work(
             "auth_source": auth_source,
             "pricing_file": str(pricing_file) if pricing_file else None,
             "progress_lines": progress_lines,
+            "timeout_seconds": timeout,
+            "max_copy_back_files": max_copy_back,
             "cleanup": False,
         }
         resolved = build_config(defaults, cli_values, cwd=input_yaml.parent)

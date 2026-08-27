@@ -31,6 +31,8 @@ def test_help_documents_run_and_core_options() -> None:
         "--copy-back",
         "--repeat",
         "--threads",
+        "--timeout",
+        "--max-copy-back",
     ):
         assert option in run.stdout
     assert "--overwrite" not in run.stdout

@@ -19,6 +19,7 @@ from test_wsl2_llm.runner import (
     _expand_copy_back_pattern,
     _installed_paths_from_json,
     _is_git_marketplace_source,
+    _progress_description,
     _root_contents,
     _stream_codex,
     _transfer_files,
@@ -80,6 +81,23 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     assert any("item.started" in line for line in logs)
     assert any("plain stderr" in line for line in logs)
     assert rendered.getvalue() == ""
+
+
+def test_progress_description_is_human_readable_and_bounded() -> None:
+    description = _progress_description(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "echo " + "x" * 500,
+                "exit_code": 0,
+            },
+        },
+        "ignored",
+    )
+    assert description.startswith("Completed command (exit 0): echo")
+    assert len(description) <= 240
+    assert "item.completed" not in description
 
 
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:
@@ -251,6 +269,35 @@ def test_copy_back_pattern_without_matches_is_an_error() -> None:
             return subprocess.CompletedProcess([], 0, b"", b"")
 
     assert _expand_copy_back_pattern(EmptyClient(), "missing_*.png", "/tmp/run/workspace") == []
+
+
+def test_copy_back_limits_matches(tmp_path, monkeypatch) -> None:
+    class RecordingClient:
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            if "compgen -G" in script:
+                return subprocess.CompletedProcess(
+                    [],
+                    0,
+                    b"/tmp/run/workspace/plot_1.png\0/tmp/run/workspace/plot_2.png\0",
+                    b"",
+                )
+            if script == 'wslpath -a "$1"':
+                return subprocess.CompletedProcess([], 0, b"/mnt/c/out.png\n", b"")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner._describe_copied_back",
+        lambda source, path: CopiedBackFile(
+            source=source, destination=str(path), type="file", size=1
+        ),
+    )
+    copied = _copy_back_files(
+        RecordingClient(), ["plot_*.png"], "/tmp/run/workspace", str(tmp_path / "run"), max_files=1
+    )
+    assert [item.source for item in copied] == ["plot_1.png"]
 
 
 def test_copy_back_rejects_pattern_without_matches(tmp_path) -> None:
