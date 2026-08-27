@@ -33,7 +33,7 @@ class TestConfig(BaseModel):
     auth_source: str = "~/.codex/auth.json"
     pricing_file: str | None = None
     progress_lines: int = 5
-    timeout_seconds: float | None = 900.0
+    timeout_seconds: float | None = 1800.0
     max_copy_back_files: int = 100
     cleanup: bool = False
 

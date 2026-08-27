@@ -924,7 +924,7 @@ def _stream_codex(
     prompt: str,
     *,
     progress_lines: int,
-    timeout_seconds: float | None = 900.0,
+    timeout_seconds: float | None = 1800.0,
     verbosity: int,
     console: Console,
     live_progress: bool = True,

@@ -37,7 +37,7 @@ copy_back:
   - plot_*.png
   - script.py
 max_copy_back_files: 100
-timeout_seconds: 900
+timeout_seconds: 1800
 output: .\\results\\{output_stem}
 repeat: 1
 threads: 1
