@@ -231,5 +231,6 @@ class TestResult(BaseModel):
     conversation: list[ConversationTurn] = Field(default_factory=list)
     workspace: WorkspaceResult
     copied_back: list[CopiedBackFile] = Field(default_factory=list)
+    missing_copy_back: list[str] = Field(default_factory=list)
     command: CommandResult
     logs: LogsResult

@@ -191,6 +191,7 @@ def run_test(
     error: str | None = None
     retained = False
     copied_back: list[CopiedBackFile] = []
+    missing_copy_back: list[str] = []
     runtime_marketplaces: list[str] = []
     resolved_parent = config.wsl_parent
     resolved_auth = config.auth_source
@@ -301,6 +302,7 @@ def run_test(
                 workspace_path,
                 config.output,
                 max_files=config.max_copy_back_files,
+                missing=missing_copy_back,
             )
 
         with state.phase("session_trace_collection"):
@@ -370,6 +372,7 @@ def run_test(
         conversation=[ConversationTurn(prompt=config.prompt, final_response=final_message)],
         workspace=WorkspaceResult(files=files),
         copied_back=copied_back,
+        missing_copy_back=missing_copy_back,
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
             stdout_jsonl=stdout,
@@ -418,6 +421,7 @@ def continue_test(
     exit_code = 1
     error: str | None = None
     copied_back: list[CopiedBackFile] = []
+    missing_copy_back: list[str] = []
     model_information = ModelInformation(
         pricing_file=config.pricing_file or "bundled:model-pricing.yaml", currency="USD"
     )
@@ -522,6 +526,7 @@ def continue_test(
                 workspace_path,
                 config.output,
                 max_files=config.max_copy_back_files,
+                missing=missing_copy_back,
             )
 
         with state.phase("session_trace_collection"):
@@ -585,6 +590,7 @@ def continue_test(
         conversation=conversation,
         workspace=WorkspaceResult(files=files),
         copied_back=copied_back,
+        missing_copy_back=missing_copy_back,
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
             stdout_jsonl=stdout,
@@ -688,6 +694,7 @@ def _copy_back_files(
     output: str,
     *,
     max_files: int | None = 100,
+    missing: list[str] | None = None,
 ) -> list[CopiedBackFile]:
     """Copy requested workspace files beside the result and collect safe previews."""
     if not sources:
@@ -702,7 +709,10 @@ def _copy_back_files(
             break
         matches = _expand_copy_back_pattern(client, pattern, workspace)
         if not matches:
-            raise FileNotFoundError(f"copy-back pattern did not match any files: {pattern}")
+            LOGGER.warning("copy-back pattern did not match any files: %s", pattern)
+            if missing is not None:
+                missing.append(pattern)
+            continue
         if max_files is not None and len(matches) > max_files - len(copied):
             remaining = max_files - len(copied)
             LOGGER.warning(
@@ -1100,7 +1110,7 @@ def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
         else:
             description = raw_line.rstrip()
     description = re.sub(r"\s+", " ", description).strip()
-    return description if len(description) <= 240 else description[:237].rstrip() + "..."
+    return description if len(description) <= 120 else description[:117].rstrip() + "..."
 
 
 def _inventory(client: WslClient, workspace: str) -> list[WorkspaceFile]:

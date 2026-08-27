@@ -16,7 +16,6 @@ from test_wsl2_llm.runner import (
     _console_time,
     _copy_back_files,
     _describe_copied_back,
-    _expand_copy_back_pattern,
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _progress_description,
@@ -96,7 +95,7 @@ def test_progress_description_is_human_readable_and_bounded() -> None:
         "ignored",
     )
     assert description.startswith("Completed command (exit 0): echo")
-    assert len(description) <= 240
+    assert len(description) <= 120
     assert "item.completed" not in description
 
 
@@ -263,12 +262,21 @@ def test_copy_back_expands_wildcards_and_uses_output_stub(tmp_path, monkeypatch)
     ]
 
 
-def test_copy_back_pattern_without_matches_is_an_error() -> None:
+def test_copy_back_pattern_without_matches_is_recorded_and_skipped() -> None:
     class EmptyClient:
         def bash(self, script: str, *arguments: str, **_kwargs):
             return subprocess.CompletedProcess([], 0, b"", b"")
 
-    assert _expand_copy_back_pattern(EmptyClient(), "missing_*.png", "/tmp/run/workspace") == []
+    missing: list[str] = []
+    copied = _copy_back_files(
+        EmptyClient(),
+        ["missing_*.png", "also-missing.txt"],
+        "/tmp/run/workspace",
+        "C:/results/run",
+        missing=missing,
+    )
+    assert copied == []
+    assert missing == ["missing_*.png", "also-missing.txt"]
 
 
 def test_copy_back_limits_matches(tmp_path, monkeypatch) -> None:
@@ -300,15 +308,20 @@ def test_copy_back_limits_matches(tmp_path, monkeypatch) -> None:
     assert [item.source for item in copied] == ["plot_1.png"]
 
 
-def test_copy_back_rejects_pattern_without_matches(tmp_path) -> None:
+def test_copy_back_pattern_without_matches_can_be_collected_without_error(tmp_path) -> None:
     class EmptyClient:
         def bash(self, script: str, *arguments: str, **_kwargs):
             return subprocess.CompletedProcess([], 0, b"", b"")
 
-    with pytest.raises(FileNotFoundError, match="missing_\\*\\.png"):
-        _copy_back_files(
-            EmptyClient(), ["missing_*.png"], "/tmp/run/workspace", str(tmp_path / "run")
-        )
+    missing: list[str] = []
+    assert _copy_back_files(
+        EmptyClient(),
+        ["missing_*.png"],
+        "/tmp/run/workspace",
+        str(tmp_path / "run"),
+        missing=missing,
+    ) == []
+    assert missing == ["missing_*.png"]
 
 
 def test_root_contents_lists_ttree_branches_and_events(tmp_path) -> None:
