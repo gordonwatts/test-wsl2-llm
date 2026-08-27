@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 import queue
 import re
 import subprocess
@@ -969,14 +970,28 @@ def _stream_codex(
     parsed_events: list[dict[str, Any]] = []
     recent: list[str] = []
     completed_streams = 0
+    stopped_at: float | None = None
 
     def stop_process() -> None:
+        nonlocal stopped_at
+        if stopped_at is None:
+            stopped_at = time.perf_counter()
         if getattr(process, "poll", lambda: None)() is not None:
             return
-        terminate = getattr(process, "terminate", None)
-        if not callable(terminate):
-            return
-        terminate()
+        pid = getattr(process, "pid", None)
+        if os.name == "nt" and isinstance(pid, int):
+            # wsl.exe can leave the Linux child holding stdout/stderr open after
+            # the wrapper exits; terminate the complete process tree on Windows.
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            terminate = getattr(process, "terminate", None)
+            if not callable(terminate):
+                return
+            terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -997,6 +1012,8 @@ def _stream_codex(
                     stop_process()
                 stream, line, received_at, elapsed = messages.get(timeout=0.25)
             except queue.Empty:
+                if stopped_at is not None and time.perf_counter() - stopped_at > 5:
+                    break
                 continue
             except KeyboardInterrupt:
                 interrupted = True
@@ -1057,8 +1074,23 @@ def _stream_codex(
         ) as live:
             consume(live)
     for thread in threads:
-        thread.join()
-    exit_code = process.wait()
+        thread.join(timeout=5)
+    try:
+        exit_code = process.wait(timeout=5)
+    except TypeError:
+        exit_code = process.wait()
+    except subprocess.TimeoutExpired:
+        stop_process()
+        try:
+            exit_code = process.wait(timeout=5)
+        except TypeError:
+            exit_code = process.wait()
+        except subprocess.TimeoutExpired:
+            exit_code = 130 if interrupted else 124
+    except KeyboardInterrupt:
+        interrupted = True
+        stop_process()
+        exit_code = 130
     if timed_out:
         exit_code = 124
         raw["stderr"].append(

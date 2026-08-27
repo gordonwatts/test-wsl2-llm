@@ -1,3 +1,4 @@
+import queue
 import re
 import subprocess
 from io import StringIO
@@ -80,6 +81,59 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     assert any("item.started" in line for line in logs)
     assert any("plain stderr" in line for line in logs)
     assert rendered.getvalue() == ""
+
+
+def test_codex_keyboard_interrupt_stops_process_and_keeps_partial_logs(monkeypatch) -> None:
+    class FakeStdin:
+        def write(self, _value: str) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stdout = StringIO('{"type":"item.started"}\n')
+        stderr = StringIO("")
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def poll(self) -> int | None:
+            return 0 if self.stopped else None
+
+        def terminate(self) -> None:
+            self.stopped = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 130 if self.stopped else 0
+
+    process = FakeProcess()
+    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.Popen", lambda *_a, **_k: process)
+    original_get = queue.Queue.get
+    interrupted = True
+
+    def interrupt_once(self, *args, **kwargs):
+        nonlocal interrupted
+        if interrupted:
+            interrupted = False
+            raise KeyboardInterrupt
+        return original_get(self, *args, **kwargs)
+
+    monkeypatch.setattr(queue.Queue, "get", interrupt_once)
+    exit_code, stdout, stderr, *_ = _stream_codex(
+        ["codex"],
+        "hello",
+        progress_lines=5,
+        timeout_seconds=30,
+        verbosity=0,
+        console=Console(file=StringIO()),
+        live_progress=False,
+    )
+    assert exit_code == 130
+    assert stdout
+    assert "interrupted by keyboard interrupt" in stderr
+    assert process.stopped
 
 
 def test_progress_description_is_human_readable_and_bounded() -> None:
