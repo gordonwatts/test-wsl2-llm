@@ -398,3 +398,22 @@ def test_activity_summary_omits_auto_reviewer_messages(tmp_path: Path) -> None:
     markdown = write_markdown(result, tmp_path / "summary.md").read_text(encoding="utf-8")
     assert "Created the requested file." in markdown
     assert '"risk_level"' not in markdown
+
+
+def test_activity_summary_reads_current_stdout_jsonl_events(tmp_path: Path) -> None:
+    result = sample_result()
+    result.logs.session_traces = []
+    result.logs.stdout_jsonl = (
+        '{"type":"item.completed","item":{"type":"agent_message",'
+        '"text":"Inspecting the repository."}}\n'
+        '{"type":"item.completed","item":{"type":"command_execution",'
+        '"command":"git status --short","exit_code":0}}\n'
+        '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
+    )
+
+    markdown = write_markdown(result, tmp_path / "summary.md").read_text(encoding="utf-8")
+
+    assert "- Inspecting the repository." in markdown
+    assert "- Command (exit 0): git status --short" in markdown
+    assert "No readable progress updates were recorded." not in markdown
+    assert "- done" not in markdown

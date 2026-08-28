@@ -4,6 +4,14 @@ import os
 
 import pytest
 
+from test_wsl2_llm.config import DEFAULT_CONFIG_ENV
+
+
+@pytest.fixture(autouse=True)
+def isolate_default_config(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """Keep developer-level defaults from changing deterministic test inputs."""
+    monkeypatch.setenv(DEFAULT_CONFIG_ENV, str(tmp_path / "missing-default-config.yaml"))
+
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("wsl-acceptance")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import fnmatch
 import json
 import logging
 import mimetypes
@@ -12,7 +13,7 @@ import re
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -29,6 +30,7 @@ from test_wsl2_llm.models import (
     CommandResult,
     ConversationTurn,
     CopiedBackFile,
+    EnvironmentPolicy,
     FinalResult,
     LogsResult,
     ModelInformation,
@@ -58,11 +60,67 @@ def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def sanitized_windows_environment(
+    policy: EnvironmentPolicy,
+    source: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Copy the Windows environment and apply a case-insensitive WSL launch policy."""
+    environment = dict(os.environ if source is None else source)
+    names_to_unset = {name.casefold() for name in policy.unset}
+    environment = {
+        name: value
+        for name, value in environment.items()
+        if name.casefold() not in names_to_unset
+    }
+    wslenv_name = next((name for name in environment if name.casefold() == "wslenv"), None)
+    if wslenv_name is not None and names_to_unset:
+        environment[wslenv_name] = ":".join(
+            entry
+            for entry in environment[wslenv_name].split(":")
+            if entry.split("/", 1)[0].casefold() not in names_to_unset
+        )
+    path_name = next((name for name in environment if name.casefold() == "path"), None)
+    removed_paths: list[str] = []
+    if path_name is not None and policy.path_remove:
+        patterns = [pattern.strip().strip('"').casefold() for pattern in policy.path_remove]
+
+        def should_remove(entry: str) -> bool:
+            candidate = entry.strip().strip('"').casefold()
+            return any(
+                fnmatch.fnmatchcase(candidate, pattern)
+                if any(character in pattern for character in "*?[")
+                else candidate.startswith(pattern)
+                for pattern in patterns
+            )
+
+        kept_paths: list[str] = []
+        for entry in environment[path_name].split(";"):
+            if should_remove(entry):
+                removed_paths.append(entry)
+            else:
+                kept_paths.append(entry)
+        environment[path_name] = ";".join(kept_paths)
+    for entry in removed_paths:
+        LOGGER.info("Removed Windows PATH entry before WSL launch: %s", entry)
+    if not removed_paths:
+        LOGGER.debug("No Windows PATH entries were removed before WSL launch.")
+    return environment
+
+
 class WslClient:
     """Invoke one WSL distribution without shell-interpolating caller values."""
 
-    def __init__(self, distro: str | None = None) -> None:
+    def __init__(
+        self,
+        distro: str | None = None,
+        environment_policy: EnvironmentPolicy | None = None,
+        *,
+        source_environment: Mapping[str, str] | None = None,
+    ) -> None:
         self.distro = distro
+        self.environment = sanitized_windows_environment(
+            environment_policy or EnvironmentPolicy(), source_environment
+        )
 
     def command(self, arguments: list[str]) -> list[str]:
         command = ["wsl.exe"]
@@ -84,6 +142,7 @@ class WslClient:
             input=input_bytes,
             capture_output=True,
             check=False,
+            env=self.environment,
         )
         if check and completed.returncode:
             stderr = completed.stderr.decode("utf-8", errors="replace").strip()
@@ -174,7 +233,7 @@ def run_test(
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     console = console or Console(stderr=True)
-    client = WslClient(config.distro)
+    client = WslClient(config.distro, config.environment)
     state = RunState()
     codex_version: str | None = None
     workspace_path: str | None = None
@@ -282,6 +341,7 @@ def run_test(
             ) = _stream_codex(
                 command_argv,
                 config.prompt,
+                environment=client.environment,
                 progress_lines=config.progress_lines,
                 timeout_seconds=config.timeout_seconds,
                 verbosity=verbosity,
@@ -400,7 +460,7 @@ def continue_test(
         raise ValueError("the result workspace was not retained; rerun without --cleanup")
 
     console = console or Console(stderr=True)
-    client = WslClient(config.distro or previous.run.distro)
+    client = WslClient(config.distro or previous.run.distro, config.environment)
     run_root = workspace_path.rsplit("/", 1)[0]
     codex_home = f"{run_root}/.harness/codex-home"
     state = RunState()
@@ -508,6 +568,7 @@ def continue_test(
             ) = _stream_codex(
                 command_argv,
                 effective_prompt,
+                environment=client.environment,
                 progress_lines=config.progress_lines,
                 timeout_seconds=config.timeout_seconds,
                 verbosity=verbosity,
@@ -924,6 +985,7 @@ def _stream_codex(
     command: list[str],
     prompt: str,
     *,
+    environment: Mapping[str, str] | None = None,
     progress_lines: int,
     timeout_seconds: float | None = 1800.0,
     verbosity: int,
@@ -940,6 +1002,7 @@ def _stream_codex(
         encoding="utf-8",
         errors="replace",
         bufsize=1,
+        env=environment,
     )
     assert process.stdin is not None and process.stdout is not None and process.stderr is not None
     process.stdin.write(prompt)

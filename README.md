@@ -198,6 +198,14 @@ The default Codex policy is `workspace-write` with network access, `on-request` 
 
 ## YAML configuration
 
+Before loading an explicit `--config` file or template, the CLI looks for the optional user
+defaults file `~/.test-wsl2-llm/config.yaml`. The path can be overridden with the
+`TEST_WSL2_LLM_DEFAULT_CONFIG` environment variable. The defaults file may be partial; values are
+merged in this order: user defaults, explicit run/template configuration, then CLI options.
+Nested `environment.unset` and `environment.path_remove` fields merge independently, while an
+explicit list replaces the corresponding default list. Finding the defaults file emits an INFO
+message, visible with `-v`.
+
 ```yaml
 prompt: |
   Use $analysis-helper to create answer.txt.
@@ -215,6 +223,15 @@ copy_files:
   - .\servicex.yaml
 copy_back:
   - output.png
+environment:
+  unset:
+    - INCLUDE
+    - EXTERNAL_INCLUDE
+    - LIB
+    - LIBPATH
+  path_remove:
+    - 'C:\Program Files (x86)\Microsoft Visual Studio\'
+    - 'C:\Program Files (x86)\Windows Kits\*'
 output: C:\Users\me\Results\analysis-run
 progress_lines: 5
 ```
@@ -224,6 +241,15 @@ Run it and override individual fields on the command line:
 ```powershell
 test-wsl2-llm run --config .\test.yaml --model MODEL:high
 ```
+
+The optional `environment` policy filters the inherited Windows environment before every WSL
+launch. `unset` removes variable names case-insensitively, including variables that would
+otherwise cross through `WSLENV`. `path_remove` removes individual semicolon-separated Windows
+`PATH` entries using case-insensitive prefixes or glob patterns. Both lists default to empty, so
+existing configurations are unchanged. Use repeatable `--unset-env NAME` and
+`--path-remove PREFIX_OR_GLOB` options to set either list from `run`, `template run`, or
+`continue`. Saved configuration records only the policy names and patterns, never environment
+values.
 
 Create a reusable configuration from CLI inputs without invoking WSL:
 
@@ -236,7 +262,10 @@ test-wsl2-llm run `
   --config-only
 ```
 
-Use `-v` to see WSL and Codex commands. Use `-vv` to log every returned line instead of the bounded live display.
+Use `-v` to see WSL/Codex commands and every Windows `PATH` entry removed before a WSL
+launch. Use `-vv` to log every returned line instead of the bounded live display and to state
+explicitly when no `PATH` entry matched the configured removal patterns. `connect` supports the
+same `-v` and `-vv` PATH diagnostics.
 
 Git marketplace URLs supplied with `--marketplace` or YAML are shallow-cloned into the fresh WSL run harness before installation. For example:
 

@@ -1,9 +1,19 @@
+import logging
 from pathlib import Path
 
 import pytest
 import yaml
 
-from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
+from test_wsl2_llm.config import (
+    DEFAULT_CONFIG_ENV,
+    build_config,
+    default_config_path,
+    load_config_file,
+    load_default_config,
+    merge_config_values,
+    output_paths,
+    save_config,
+)
 
 
 def test_cli_overrides_yaml_and_embeds_prompt_file(tmp_path: Path) -> None:
@@ -50,6 +60,80 @@ def test_saved_config_is_resolved_and_reusable(tmp_path: Path) -> None:
     destination = tmp_path / "saved.yaml"
     save_config(resolved, destination)
     assert yaml.safe_load(destination.read_text(encoding="utf-8"))["prompt"] == "hello"
+
+
+def test_environment_cli_fields_merge_with_yaml_and_are_saved(tmp_path: Path) -> None:
+    resolved = build_config(
+        {
+            "prompt": "hello",
+            "model": "model",
+            "output": str(tmp_path / "out"),
+            "environment": {
+                "unset": ["INCLUDE"],
+                "path_remove": [r"C:\Program Files\Microsoft Visual Studio"],
+            },
+        },
+        {"environment": {"unset": ["LIB"], "path_remove": None}},
+        cwd=tmp_path,
+    )
+    destination = tmp_path / "saved.yaml"
+    save_config(resolved, destination)
+
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["environment"] == {
+        "unset": ["LIB"],
+        "path_remove": [r"C:\Program Files\Microsoft Visual Studio"],
+    }
+
+
+def test_default_config_is_partial_and_logs_when_found(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    defaults = tmp_path / "defaults.yaml"
+    defaults.write_text(
+        "environment:\n  unset: [INCLUDE]\n  path_remove: ['C:\\Visual Studio']\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(DEFAULT_CONFIG_ENV, str(defaults))
+
+    with caplog.at_level(logging.INFO):
+        loaded = load_default_config()
+
+    assert loaded["environment"] == {
+        "unset": ["INCLUDE"],
+        "path_remove": [r"C:\Visual Studio"],
+    }
+    assert f"Loading default configuration: {defaults}" in caplog.text
+
+
+def test_default_config_uses_dedicated_home_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv(DEFAULT_CONFIG_ENV)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    assert default_config_path() == tmp_path / ".test-wsl2-llm" / "config.yaml"
+
+
+def test_explicit_config_merges_nested_environment_over_defaults() -> None:
+    merged = merge_config_values(
+        {
+            "marketplaces": ["default-marketplace"],
+            "environment": {
+                "unset": ["INCLUDE"],
+                "path_remove": [r"C:\Visual Studio"],
+            },
+        },
+        {"environment": {"unset": ["LIB"]}},
+    )
+
+    assert merged == {
+        "marketplaces": ["default-marketplace"],
+        "environment": {
+            "unset": ["LIB"],
+            "path_remove": [r"C:\Visual Studio"],
+        },
+    }
 
 
 def test_prompt_and_prompt_file_are_mutually_exclusive(tmp_path: Path) -> None:
