@@ -52,6 +52,30 @@ def test_saved_config_is_resolved_and_reusable(tmp_path: Path) -> None:
     assert yaml.safe_load(destination.read_text(encoding="utf-8"))["prompt"] == "hello"
 
 
+def test_environment_cli_fields_merge_with_yaml_and_are_saved(tmp_path: Path) -> None:
+    resolved = build_config(
+        {
+            "prompt": "hello",
+            "model": "model",
+            "output": str(tmp_path / "out"),
+            "environment": {
+                "unset": ["INCLUDE"],
+                "path_remove": [r"C:\Program Files\Microsoft Visual Studio"],
+            },
+        },
+        {"environment": {"unset": ["LIB"], "path_remove": None}},
+        cwd=tmp_path,
+    )
+    destination = tmp_path / "saved.yaml"
+    save_config(resolved, destination)
+
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["environment"] == {
+        "unset": ["LIB"],
+        "path_remove": [r"C:\Program Files\Microsoft Visual Studio"],
+    }
+
+
 def test_prompt_and_prompt_file_are_mutually_exclusive(tmp_path: Path) -> None:
     prompt = tmp_path / "prompt.md"
     prompt.write_text("file", encoding="utf-8")

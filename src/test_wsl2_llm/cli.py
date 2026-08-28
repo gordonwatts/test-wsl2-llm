@@ -22,7 +22,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
-from test_wsl2_llm.models import TestResult
+from test_wsl2_llm.models import EnvironmentPolicy, TestResult
 from test_wsl2_llm.runner import WslClient
 from test_wsl2_llm.template import (
     load_template_file,
@@ -84,6 +84,20 @@ def run(
         typer.Option(
             "--copy-back",
             help="Workspace file or glob copied back beside the result; repeatable.",
+        ),
+    ] = None,
+    unset_env: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--unset-env",
+            help="Windows environment variable removed before WSL launches; repeatable.",
+        ),
+    ] = None,
+    path_remove: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--path-remove",
+            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
         ),
     ] = None,
     distro: Annotated[
@@ -183,6 +197,7 @@ def run(
             "plugins": plugin,
             "copy_files": copy_file,
             "copy_back": copy_back,
+            "environment": _environment_cli_values(unset_env, path_remove),
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -325,6 +340,20 @@ def template_run(
             "--copy-back", help="Workspace file or glob copied back beside the result; repeatable."
         ),
     ] = None,
+    unset_env: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--unset-env",
+            help="Windows environment variable removed before WSL launches; repeatable.",
+        ),
+    ] = None,
+    path_remove: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--path-remove",
+            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+        ),
+    ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the template value.")
     ] = None,
@@ -442,6 +471,7 @@ def template_run(
             "plugins": plugin,
             "copy_files": copy_file,
             "copy_back": copy_back,
+            "environment": _environment_cli_values(unset_env, path_remove),
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -517,7 +547,7 @@ def template_run(
                 continue
             if existing:
                 destination = Path(question_jobs[0][3].output).parent
-                logger.warning(
+                logger.info(
                     "Rerunning %s; results exist in %s (--force).",
                     identifier,
                     destination,
@@ -650,8 +680,10 @@ def connect(
             raise ValueError("the result workspace was not retained; rerun without --cleanup")
 
         command = _connect_command(result, resume=resume)
+        policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
+        environment = WslClient(result.run.distro, policy).environment
         console.print(f"Connecting to {workspace} (interactive Codex; press Ctrl-D to exit)")
-        completed = subprocess.run(command, check=False)
+        completed = subprocess.run(command, check=False, env=environment)
         if completed.returncode:
             raise typer.Exit(completed.returncode)
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
@@ -693,6 +725,20 @@ def continue_work(
         typer.Option(
             "--copy-back",
             help="Workspace file or glob copied back beside the result; repeatable.",
+        ),
+    ] = None,
+    unset_env: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--unset-env",
+            help="Windows environment variable removed before WSL launches; repeatable.",
+        ),
+    ] = None,
+    path_remove: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--path-remove",
+            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
         ),
     ] = None,
     distro: Annotated[
@@ -808,6 +854,7 @@ def continue_work(
             "plugins": defaults["plugins"],
             "copy_files": defaults["copy_files"],
             "copy_back": defaults["copy_back"],
+            "environment": _environment_cli_values(unset_env, path_remove),
             "distro": distro,
             "output": str(output) if output else None,
             "overwrite": True if force else None,
@@ -908,6 +955,14 @@ def _configure_logging(verbosity: int) -> None:
         handlers=[RichHandler(show_time=True, show_path=False, markup=False)],
         force=True,
     )
+
+
+def _environment_cli_values(
+    unset: list[str] | None, path_remove: list[str] | None
+) -> dict[str, list[str] | None] | None:
+    if unset is None and path_remove is None:
+        return None
+    return {"unset": unset, "path_remove": path_remove}
 
 
 def _repeat_output(output: str, index: int, repeat: int) -> str:

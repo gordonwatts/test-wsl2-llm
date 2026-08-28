@@ -215,6 +215,15 @@ copy_files:
   - .\servicex.yaml
 copy_back:
   - output.png
+environment:
+  unset:
+    - INCLUDE
+    - EXTERNAL_INCLUDE
+    - LIB
+    - LIBPATH
+  path_remove:
+    - 'C:\Program Files (x86)\Microsoft Visual Studio\'
+    - 'C:\Program Files (x86)\Windows Kits\*'
 output: C:\Users\me\Results\analysis-run
 progress_lines: 5
 ```
@@ -224,6 +233,15 @@ Run it and override individual fields on the command line:
 ```powershell
 test-wsl2-llm run --config .\test.yaml --model MODEL:high
 ```
+
+The optional `environment` policy filters the inherited Windows environment before every WSL
+launch. `unset` removes variable names case-insensitively, including variables that would
+otherwise cross through `WSLENV`. `path_remove` removes individual semicolon-separated Windows
+`PATH` entries using case-insensitive prefixes or glob patterns. Both lists default to empty, so
+existing configurations are unchanged. Use repeatable `--unset-env NAME` and
+`--path-remove PREFIX_OR_GLOB` options to set either list from `run`, `template run`, or
+`continue`. Saved configuration records only the policy names and patterns, never environment
+values.
 
 Create a reusable configuration from CLI inputs without invoking WSL:
 

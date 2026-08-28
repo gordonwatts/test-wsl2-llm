@@ -44,6 +44,16 @@ def build_config(
     cwd = (cwd or Path.cwd()).resolve()
     merged = dict(file_values)
     merged.update({key: value for key, value in cli_values.items() if value is not None})
+    if cli_values.get("environment") is not None:
+        environment = dict(file_values.get("environment", {}))
+        environment.update(
+            {
+                key: value
+                for key, value in cli_values["environment"].items()
+                if value is not None
+            }
+        )
+        merged["environment"] = environment
     if "marketplaces" in cli_values and cli_values["marketplaces"] is not None:
         merged["marketplaces"] = [
             _normalize_marketplace(str(source), cwd) for source in cli_values["marketplaces"]

@@ -9,7 +9,7 @@ import pytest
 import uproot
 from rich.console import Console
 
-from test_wsl2_llm.models import ConversationTurn, CopiedBackFile
+from test_wsl2_llm.models import ConversationTurn, CopiedBackFile, EnvironmentPolicy
 from test_wsl2_llm.models import TestConfig as WslTestConfig
 from test_wsl2_llm.runner import (
     WslClient,
@@ -25,6 +25,7 @@ from test_wsl2_llm.runner import (
     _transfer_files,
     _transfer_marketplaces,
     continuation_prompt,
+    sanitized_windows_environment,
 )
 
 
@@ -44,6 +45,50 @@ def test_wsl_command_keeps_values_as_separate_arguments() -> None:
     ]
 
 
+def test_environment_policy_removes_variables_and_path_entries_case_insensitively() -> None:
+    source = {
+        "Path": (
+            r"C:\Tools;C:\Program Files (x86)\Microsoft Visual Studio\2022\bin;"
+            r"D:\Windows Kits\10\bin"
+        ),
+        "Include": "secret include value",
+        "WSLENV": "INCLUDE/u",
+        "KEEP": "yes",
+    }
+    policy = EnvironmentPolicy(
+        unset=["INCLUDE"],
+        path_remove=[
+            r"c:\program files (x86)\microsoft visual studio",
+            r"D:\WINDOWS KITS\*",
+        ],
+    )
+
+    filtered = sanitized_windows_environment(policy, source)
+
+    assert "Include" not in filtered
+    assert filtered["Path"] == r"C:\Tools"
+    assert filtered["WSLENV"] == ""
+    assert filtered["KEEP"] == "yes"
+
+
+def test_wsl_client_passes_sanitized_environment_to_subprocess(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["environment"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0, b"", b"")
+
+    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.run", fake_run)
+    client = WslClient(
+        environment_policy=EnvironmentPolicy(unset=["LIB"]),
+        source_environment={"Path": r"C:\Tools", "LIB": "secret"},
+    )
+    client.run(["true"])
+
+    assert captured["environment"] == {"Path": r"C:\Tools"}
+
+
 def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     class FakeStdin:
         def write(self, _value: str) -> None:
@@ -60,14 +105,19 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
         def wait(self) -> int:
             return 0
 
-    monkeypatch.setattr(
-        "test_wsl2_llm.runner.subprocess.Popen", lambda *_args, **_kwargs: FakeProcess()
-    )
+    captured: dict[str, object] = {}
+
+    def fake_popen(*_args, **kwargs):
+        captured["environment"] = kwargs["env"]
+        return FakeProcess()
+
+    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.Popen", fake_popen)
     rendered = StringIO()
     logs: list[str] = []
     exit_code, stdout, stderr, _traces, _events = _stream_codex(
         ["codex"],
         "hello",
+        environment={"Path": r"C:\Clean"},
         progress_lines=5,
         verbosity=0,
         console=Console(file=rendered),
@@ -81,6 +131,7 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     assert any("item.started" in line for line in logs)
     assert any("plain stderr" in line for line in logs)
     assert rendered.getvalue() == ""
+    assert captured["environment"] == {"Path": r"C:\Clean"}
 
 
 def test_codex_keyboard_interrupt_stops_process_and_keeps_partial_logs(monkeypatch) -> None:

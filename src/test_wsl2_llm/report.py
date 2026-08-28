@@ -363,6 +363,35 @@ def _activity_section(result: TestResult) -> list[str]:
     updates: list[str] = []
     seen: set[str] = set()
     final_message = re.sub(r"\s+", " ", result.result.final_message or "").strip()
+
+    def add_update(message: str) -> None:
+        message = re.sub(r"\s+", " ", message).strip()
+        if not message or message == final_message or _is_review_decision(message):
+            return
+        if len(message) > 500:
+            message = message[:497].rstrip() + "..."
+        if message not in seen:
+            seen.add(message)
+            updates.append(message)
+
+    for line in result.logs.stdout_jsonl.splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        item = event.get("item") if isinstance(event, dict) else None
+        if event.get("type") != "item.completed" or not isinstance(item, dict):
+            continue
+        if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
+            add_update(item["text"])
+        elif item.get("type") == "command_execution":
+            command = item.get("command")
+            if not isinstance(command, str) or not command.strip():
+                continue
+            exit_code = item.get("exit_code")
+            status = f" (exit {exit_code})" if exit_code is not None else ""
+            add_update(f"Command{status}: {command}")
+
     for trace in result.logs.session_traces:
         for line in trace.content.splitlines():
             try:
@@ -377,14 +406,7 @@ def _activity_section(result: TestResult) -> list[str]:
             message = payload.get("message")
             if not isinstance(message, str):
                 continue
-            message = re.sub(r"\s+", " ", message).strip()
-            if not message or message == final_message or _is_review_decision(message):
-                continue
-            if len(message) > 500:
-                message = message[:497].rstrip() + "..."
-            if message not in seen:
-                seen.add(message)
-                updates.append(message)
+            add_update(message)
 
     lines = [
         "",

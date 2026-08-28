@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 from threading import Barrier, Lock
 
@@ -29,6 +30,8 @@ def test_help_documents_run_and_core_options() -> None:
         "--title",
         "--copy-file",
         "--copy-back",
+        "--unset-env",
+        "--path-remove",
         "--repeat",
         "--threads",
         "--timeout",
@@ -326,6 +329,29 @@ def test_connect_command_targets_retained_workspace_and_resume() -> None:
     assert "workspace" in script and "\\$workspace" in script
 
 
+def test_connect_applies_saved_environment_policy(monkeypatch, tmp_path: Path) -> None:
+    result = sample_result()
+    result.configuration["environment"] = {
+        "unset": ["TEST_WSL2_LLM_REMOVE"],
+        "path_remove": [],
+    }
+    source = tmp_path / "result.yaml"
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    monkeypatch.setenv("TEST_WSL2_LLM_REMOVE", "secret value")
+    captured: dict[str, object] = {}
+
+    def fake_run(command, **kwargs):
+        captured["environment"] = kwargs["env"]
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
+
+    invoked = runner.invoke(app, ["connect", str(source)])
+
+    assert invoked.exit_code == 0, invoked.output
+    assert "TEST_WSL2_LLM_REMOVE" not in captured["environment"]
+
+
 def test_connect_rejects_cleaned_up_result(tmp_path: Path) -> None:
     source = tmp_path / "result.yaml"
     result = sample_result()
@@ -370,6 +396,10 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
             "gpt-test",
             "--output",
             str(tmp_path / "out"),
+            "--unset-env",
+            "INCLUDE",
+            "--path-remove",
+            r"C:\Program Files\Microsoft Visual Studio",
             "--save-config",
             str(destination),
             "--config-only",
@@ -379,6 +409,10 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
     saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
     assert saved["prompt"] == "hello"
     assert saved["title"] == "# WSL2 Codex test result"
+    assert saved["environment"] == {
+        "unset": ["INCLUDE"],
+        "path_remove": [r"C:\Program Files\Microsoft Visual Studio"],
+    }
     assert not (tmp_path / "out.yaml").exists()
 
 

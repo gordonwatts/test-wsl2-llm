@@ -250,7 +250,7 @@ def test_template_run_force_reruns_questions_with_existing_results(
     existing.parent.mkdir()
     existing.write_text("existing", encoding="utf-8")
 
-    result = runner.invoke(app, ["template", "run", str(config), "--force"])
+    result = runner.invoke(app, ["template", "run", str(config), "--force", "-v"])
 
     assert result.exit_code == 0, result.output
     assert prompts == ["Do first"]

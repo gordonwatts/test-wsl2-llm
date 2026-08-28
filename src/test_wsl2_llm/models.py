@@ -9,6 +9,22 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
 
 
+class EnvironmentPolicy(BaseModel):
+    """Windows environment filtering applied before launching WSL."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    unset: list[str] = Field(default_factory=list)
+    path_remove: list[str] = Field(default_factory=list)
+
+    @field_validator("unset", "path_remove")
+    @classmethod
+    def non_empty_entries(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("entries must not be empty")
+        return values
+
+
 class TestConfig(BaseModel):
     """All behavior-affecting settings for one WSL Codex test."""
 
@@ -22,6 +38,7 @@ class TestConfig(BaseModel):
     plugins: list[str] = Field(default_factory=list)
     copy_files: list[str] = Field(default_factory=list)
     copy_back: list[str] = Field(default_factory=list)
+    environment: EnvironmentPolicy = Field(default_factory=EnvironmentPolicy)
     distro: str | None = None
     wsl_parent: str = "/tmp"
     output: str

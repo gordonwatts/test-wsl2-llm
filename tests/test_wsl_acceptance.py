@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import uuid
 from pathlib import Path, PurePosixPath
@@ -10,6 +11,8 @@ import yaml
 from typer.testing import CliRunner
 
 from test_wsl2_llm.cli import app
+from test_wsl2_llm.models import EnvironmentPolicy
+from test_wsl2_llm.runner import WslClient
 
 pytestmark = pytest.mark.wsl_acceptance
 runner = CliRunner()
@@ -47,6 +50,28 @@ def _cleanup_workspace(distro: str, workspace: str | None) -> None:
     if not PurePosixPath(run_root).name.startswith("test-wsl2-llm-"):
         raise AssertionError(f"refusing to remove unexpected path: {run_root}")
     _wsl(distro, ["rm", "-rf", "--", run_root], check=False)
+
+
+def test_atlas_al9_environment_policy_filters_wsl_imports() -> None:
+    variable = "TEST_WSL2_LLM_ENV_SENTINEL"
+    path_entry = r"C:\TEST_WSL2_LLM_VISUAL_STUDIO_SENTINEL"
+    source = dict(os.environ)
+    source[variable] = "secret value"
+    source["PATH"] = f"{path_entry};{source.get('PATH', '')}"
+    source["WSLENV"] = ":".join(filter(None, [variable, source.get("WSLENV", "")]))
+    client = WslClient(
+        "atlas_al9",
+        EnvironmentPolicy(unset=[variable], path_remove=[path_entry]),
+        source_environment=source,
+    )
+
+    completed = client.bash(
+        'printf "%s\\n%s" "${TEST_WSL2_LLM_ENV_SENTINEL-missing}" "$PATH"'
+    )
+    variable_value, wsl_path = client.text(completed).split("\n", 1)
+
+    assert variable_value == "missing"
+    assert "test_wsl2_llm_visual_studio_sentinel" not in wsl_path.casefold()
 
 
 @pytest.mark.timeout(900)
