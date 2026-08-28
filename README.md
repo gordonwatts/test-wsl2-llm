@@ -262,7 +262,10 @@ test-wsl2-llm run `
   --config-only
 ```
 
-Use `-v` to see WSL and Codex commands. Use `-vv` to log every returned line instead of the bounded live display.
+Use `-v` to see WSL/Codex commands and every Windows `PATH` entry removed before a WSL
+launch. Use `-vv` to log every returned line instead of the bounded live display and to state
+explicitly when no `PATH` entry matched the configured removal patterns. `connect` supports the
+same `-v` and `-vv` PATH diagnostics.
 
 Git marketplace URLs supplied with `--marketplace` or YAML are shallow-cloned into the fresh WSL run harness before installation. For example:
 

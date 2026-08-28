@@ -1,3 +1,4 @@
+import logging
 import queue
 import re
 import subprocess
@@ -45,7 +46,9 @@ def test_wsl_command_keeps_values_as_separate_arguments() -> None:
     ]
 
 
-def test_environment_policy_removes_variables_and_path_entries_case_insensitively() -> None:
+def test_environment_policy_logs_removed_path_entries_at_info(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     source = {
         "Path": (
             r"C:\Tools;C:\Program Files (x86)\Microsoft Visual Studio\2022\bin;"
@@ -63,12 +66,28 @@ def test_environment_policy_removes_variables_and_path_entries_case_insensitivel
         ],
     )
 
-    filtered = sanitized_windows_environment(policy, source)
+    with caplog.at_level(logging.INFO, logger="test_wsl2_llm.runner"):
+        filtered = sanitized_windows_environment(policy, source)
 
     assert "Include" not in filtered
     assert filtered["Path"] == r"C:\Tools"
     assert filtered["WSLENV"] == ""
     assert filtered["KEEP"] == "yes"
+    assert "Microsoft Visual Studio\\2022\\bin" in caplog.text
+    assert r"D:\Windows Kits\10\bin" in caplog.text
+
+
+def test_environment_policy_logs_no_path_matches_at_debug(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    with caplog.at_level(logging.DEBUG, logger="test_wsl2_llm.runner"):
+        filtered = sanitized_windows_environment(
+            EnvironmentPolicy(path_remove=[r"C:\Visual Studio"]),
+            {"Path": r"C:\Tools;D:\Python"},
+        )
+
+    assert filtered["Path"] == r"C:\Tools;D:\Python"
+    assert "No Windows PATH entries were removed before WSL launch." in caplog.text
 
 
 def test_wsl_client_passes_sanitized_environment_to_subprocess(monkeypatch) -> None:

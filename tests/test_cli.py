@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 from threading import Barrier, Lock
@@ -16,6 +17,7 @@ runner = CliRunner()
 def test_help_documents_run_and_core_options() -> None:
     top = runner.invoke(app, ["--help"])
     run = runner.invoke(app, ["run", "--help"])
+    connect = runner.invoke(app, ["connect", "--help"])
     assert top.exit_code == 0
     assert "run" in top.stdout
     assert run.exit_code == 0
@@ -40,6 +42,7 @@ def test_help_documents_run_and_core_options() -> None:
         assert option in run.stdout
     assert "--overwrite" not in run.stdout
     assert "connect" in top.stdout
+    assert "--verbose" in connect.stdout
     assert "continue" in top.stdout
 
 
@@ -330,14 +333,16 @@ def test_connect_command_targets_retained_workspace_and_resume() -> None:
 
 
 def test_connect_applies_saved_environment_policy(monkeypatch, tmp_path: Path) -> None:
+    removed_path = r"C:\TEST_WSL2_LLM_REMOVE_FROM_PATH"
     result = sample_result()
     result.configuration["environment"] = {
         "unset": ["TEST_WSL2_LLM_REMOVE"],
-        "path_remove": [],
+        "path_remove": [removed_path],
     }
     source = tmp_path / "result.yaml"
     source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
     monkeypatch.setenv("TEST_WSL2_LLM_REMOVE", "secret value")
+    monkeypatch.setenv("PATH", f"{removed_path};{os.environ.get('PATH', '')}")
     captured: dict[str, object] = {}
 
     def fake_run(command, **kwargs):
@@ -346,10 +351,36 @@ def test_connect_applies_saved_environment_policy(monkeypatch, tmp_path: Path) -
 
     monkeypatch.setattr(cli_module.subprocess, "run", fake_run)
 
-    invoked = runner.invoke(app, ["connect", str(source)])
+    invoked = runner.invoke(app, ["connect", str(source), "-v"])
 
     assert invoked.exit_code == 0, invoked.output
-    assert "TEST_WSL2_LLM_REMOVE" not in captured["environment"]
+    environment = captured["environment"]
+    assert "TEST_WSL2_LLM_REMOVE" not in environment
+    path_name = next(name for name in environment if name.casefold() == "path")
+    assert removed_path not in environment[path_name]
+    normalized_output = " ".join(invoked.output.split())
+    assert f"Removed Windows PATH entry before WSL launch: {removed_path}" in normalized_output
+
+
+def test_connect_double_verbose_reports_no_removed_paths(monkeypatch, tmp_path: Path) -> None:
+    result = sample_result()
+    result.configuration["environment"] = {
+        "unset": [],
+        "path_remove": [r"C:\TEST_WSL2_LLM_DOES_NOT_EXIST"],
+    }
+    source = tmp_path / "result.yaml"
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    monkeypatch.setattr(
+        cli_module.subprocess,
+        "run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0),
+    )
+
+    invoked = runner.invoke(app, ["connect", str(source), "-vv"])
+
+    assert invoked.exit_code == 0, invoked.output
+    normalized_output = " ".join(invoked.output.split())
+    assert "No Windows PATH entries were removed before WSL launch." in normalized_output
 
 
 def test_connect_rejects_cleaned_up_result(tmp_path: Path) -> None:

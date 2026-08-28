@@ -80,6 +80,7 @@ def sanitized_windows_environment(
             if entry.split("/", 1)[0].casefold() not in names_to_unset
         )
     path_name = next((name for name in environment if name.casefold() == "path"), None)
+    removed_paths: list[str] = []
     if path_name is not None and policy.path_remove:
         patterns = [pattern.strip().strip('"').casefold() for pattern in policy.path_remove]
 
@@ -92,9 +93,17 @@ def sanitized_windows_environment(
                 for pattern in patterns
             )
 
-        environment[path_name] = ";".join(
-            entry for entry in environment[path_name].split(";") if not should_remove(entry)
-        )
+        kept_paths: list[str] = []
+        for entry in environment[path_name].split(";"):
+            if should_remove(entry):
+                removed_paths.append(entry)
+            else:
+                kept_paths.append(entry)
+        environment[path_name] = ";".join(kept_paths)
+    for entry in removed_paths:
+        LOGGER.info("Removed Windows PATH entry before WSL launch: %s", entry)
+    if not removed_paths:
+        LOGGER.debug("No Windows PATH entries were removed before WSL launch.")
     return environment
 
 

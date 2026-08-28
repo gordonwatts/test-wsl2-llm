@@ -187,7 +187,13 @@ def run(
     verbose: Annotated[
         int,
         typer.Option(
-            "-v", "--verbose", count=True, help="-v shows commands; -vv streams all output."
+            "-v",
+            "--verbose",
+            count=True,
+            help=(
+                "-v shows commands and removed PATH entries; -vv streams all output and "
+                "reports when no PATH entries matched."
+            ),
         ),
     ] = 0,
 ) -> None:
@@ -440,7 +446,13 @@ def template_run(
     verbose: Annotated[
         int,
         typer.Option(
-            "-v", "--verbose", count=True, help="-v shows commands; -vv streams all output."
+            "-v",
+            "--verbose",
+            count=True,
+            help=(
+                "-v shows commands and removed PATH entries; -vv streams all output and "
+                "reports when no PATH entries matched."
+            ),
         ),
     ] = 0,
 ) -> None:
@@ -678,9 +690,21 @@ def connect(
         bool,
         typer.Option("--resume", "-r", help="Resume the most recent conversation in this run."),
     ] = False,
+    verbose: Annotated[
+        int,
+        typer.Option(
+            "-v",
+            "--verbose",
+            count=True,
+            help=(
+                "-v shows removed PATH entries; -vv reports when no PATH entries matched."
+            ),
+        ),
+    ] = 0,
 ) -> None:
     """Open an interactive Codex session in the retained run workspace."""
     console = Console(stderr=True)
+    _configure_logging(verbose)
     try:
         result = _load_result_yaml(input_yaml)
         workspace = result.run.workspace_path
@@ -689,11 +713,11 @@ def connect(
         if not result.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun without --cleanup")
 
-        command = _connect_command(result, resume=resume)
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
-        environment = WslClient(result.run.distro, policy).environment
+        client = WslClient(result.run.distro, policy)
+        command = _connect_command(result, resume=resume, client=client)
         console.print(f"Connecting to {workspace} (interactive Codex; press Ctrl-D to exit)")
-        completed = subprocess.run(command, check=False, env=environment)
+        completed = subprocess.run(command, check=False, env=client.environment)
         if completed.returncode:
             raise typer.Exit(completed.returncode)
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
@@ -809,7 +833,13 @@ def continue_work(
     verbose: Annotated[
         int,
         typer.Option(
-            "-v", "--verbose", count=True, help="-v shows commands; -vv streams all output."
+            "-v",
+            "--verbose",
+            count=True,
+            help=(
+                "-v shows commands and removed PATH entries; -vv streams all output and "
+                "reports when no PATH entries matched."
+            ),
         ),
     ] = 0,
 ) -> None:
@@ -921,7 +951,9 @@ def continue_work(
         raise typer.Exit(2) from exc
 
 
-def _connect_command(result: TestResult, *, resume: bool) -> list[str]:
+def _connect_command(
+    result: TestResult, *, resume: bool, client: WslClient | None = None
+) -> list[str]:
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path
     if not workspace:
@@ -950,7 +982,7 @@ if [ "$mode" = resume ]; then
 fi
 exec env CODEX_HOME="$home" codex --cd "$workspace"
 """.strip()
-    client = WslClient(result.run.distro)
+    client = client or WslClient(result.run.distro)
     return client.command(
         client.shell_command(
             script, codex_home, workspace, auth_source, mode, interactive_login=True
