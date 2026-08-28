@@ -21,7 +21,7 @@ def default_config_path() -> Path:
     override = os.environ.get(DEFAULT_CONFIG_ENV)
     if override:
         return Path(override).expanduser().resolve()
-    return Path.home() / ".config" / "test-wsl2-llm" / "config.yaml"
+    return Path.home() / ".test-wsl2-llm" / "config.yaml"
 
 
 def load_default_config() -> dict[str, Any]:

@@ -7,6 +7,7 @@ import yaml
 from test_wsl2_llm.config import (
     DEFAULT_CONFIG_ENV,
     build_config,
+    default_config_path,
     load_config_file,
     load_default_config,
     merge_config_values,
@@ -103,6 +104,15 @@ def test_default_config_is_partial_and_logs_when_found(
         "path_remove": [r"C:\Visual Studio"],
     }
     assert f"Loading default configuration: {defaults}" in caplog.text
+
+
+def test_default_config_uses_dedicated_home_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv(DEFAULT_CONFIG_ENV)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+
+    assert default_config_path() == tmp_path / ".test-wsl2-llm" / "config.yaml"
 
 
 def test_explicit_config_merges_nested_environment_over_defaults() -> None:
