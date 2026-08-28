@@ -31,6 +31,14 @@ While repetitions are running, a transient aggregate progress bar shows complete
 it is removed before the indexed output paths are printed. Repeated-run Codex progress is
 written as ordinary log lines so it does not compete with the aggregate live display.
 Single runs keep the live Codex progress panel and do not show the aggregate bar.
+Status updates are condensed to one line and truncated when an event contains a long
+command or message.
+
+Each run has a 30-minute Codex execution timeout by default. Use `--timeout SECONDS`
+to choose a different limit. A timed-out run is stopped, its partial logs and workspace
+inventory are still collected, and the report is marked failed. Pressing Ctrl-C has the
+same cleanup behavior and records an interruption in the report instead of losing the
+partial result.
 
 ## Template batches
 
@@ -133,6 +141,14 @@ are displayed with PNG previews embedded directly in Markdown, text files show t
 first ten lines, and ROOT files are inspected with
 `uproot` to list their objects plus TTree branches and event counts. The YAML form is
 `copy_back`.
+
+If a requested copy-back path or glob has no matches, collection continues for the other
+patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
+Markdown report's Copied-back files section.
+
+At most 100 copied-back files are collected per run by default, preventing broad globs
+such as `plot_*.png` from creating thousands of artifacts. Use `--max-copy-back N` (or
+`max_copy_back_files` in YAML) to choose a different positive limit.
 
 Use `--force` to replace an existing Markdown/YAML result pair. Reports include the exact invocation used to create them, with local wall-clock times in Markdown and UTC timestamps preserved in YAML.
 Pass `--title "# My test result"` (or set `title` in YAML) to customize the Markdown heading.

@@ -1,3 +1,4 @@
+import queue
 import re
 import subprocess
 from io import StringIO
@@ -16,9 +17,9 @@ from test_wsl2_llm.runner import (
     _console_time,
     _copy_back_files,
     _describe_copied_back,
-    _expand_copy_back_pattern,
     _installed_paths_from_json,
     _is_git_marketplace_source,
+    _progress_description,
     _root_contents,
     _stream_codex,
     _transfer_files,
@@ -82,6 +83,76 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     assert rendered.getvalue() == ""
 
 
+def test_codex_keyboard_interrupt_stops_process_and_keeps_partial_logs(monkeypatch) -> None:
+    class FakeStdin:
+        def write(self, _value: str) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stdout = StringIO('{"type":"item.started"}\n')
+        stderr = StringIO("")
+        def __init__(self) -> None:
+            self.stopped = False
+
+        def poll(self) -> int | None:
+            return 0 if self.stopped else None
+
+        def terminate(self) -> None:
+            self.stopped = True
+
+        def wait(self, timeout: float | None = None) -> int:
+            del timeout
+            return 130 if self.stopped else 0
+
+    process = FakeProcess()
+    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.Popen", lambda *_a, **_k: process)
+    original_get = queue.Queue.get
+    interrupted = True
+
+    def interrupt_once(self, *args, **kwargs):
+        nonlocal interrupted
+        if interrupted:
+            interrupted = False
+            raise KeyboardInterrupt
+        return original_get(self, *args, **kwargs)
+
+    monkeypatch.setattr(queue.Queue, "get", interrupt_once)
+    exit_code, stdout, stderr, *_ = _stream_codex(
+        ["codex"],
+        "hello",
+        progress_lines=5,
+        timeout_seconds=30,
+        verbosity=0,
+        console=Console(file=StringIO()),
+        live_progress=False,
+    )
+    assert exit_code == 130
+    assert stdout
+    assert "interrupted by keyboard interrupt" in stderr
+    assert process.stopped
+
+
+def test_progress_description_is_human_readable_and_bounded() -> None:
+    description = _progress_description(
+        {
+            "type": "item.completed",
+            "item": {
+                "type": "command_execution",
+                "command": "echo " + "x" * 500,
+                "exit_code": 0,
+            },
+        },
+        "ignored",
+    )
+    assert description.startswith("Completed command (exit 0): echo")
+    assert len(description) <= 120
+    assert "item.completed" not in description
+
+
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:
     config = WslTestConfig(
         prompt="hello",
@@ -94,6 +165,7 @@ def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) 
     assert 'sandbox_mode = "workspace-write"' in text
     assert 'model_reasoning_effort = "medium"' in text
     assert "network_access = true" in text
+    assert config.timeout_seconds == 1800
 
 
 def test_shell_command_escapes_wsl_dollar_expansion_and_encodes_values() -> None:
@@ -245,23 +317,66 @@ def test_copy_back_expands_wildcards_and_uses_output_stub(tmp_path, monkeypatch)
     ]
 
 
-def test_copy_back_pattern_without_matches_is_an_error() -> None:
+def test_copy_back_pattern_without_matches_is_recorded_and_skipped() -> None:
     class EmptyClient:
         def bash(self, script: str, *arguments: str, **_kwargs):
             return subprocess.CompletedProcess([], 0, b"", b"")
 
-    assert _expand_copy_back_pattern(EmptyClient(), "missing_*.png", "/tmp/run/workspace") == []
+    missing: list[str] = []
+    copied = _copy_back_files(
+        EmptyClient(),
+        ["missing_*.png", "also-missing.txt"],
+        "/tmp/run/workspace",
+        "C:/results/run",
+        missing=missing,
+    )
+    assert copied == []
+    assert missing == ["missing_*.png", "also-missing.txt"]
 
 
-def test_copy_back_rejects_pattern_without_matches(tmp_path) -> None:
+def test_copy_back_limits_matches(tmp_path, monkeypatch) -> None:
+    class RecordingClient:
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            if "compgen -G" in script:
+                return subprocess.CompletedProcess(
+                    [],
+                    0,
+                    b"/tmp/run/workspace/plot_1.png\0/tmp/run/workspace/plot_2.png\0",
+                    b"",
+                )
+            if script == 'wslpath -a "$1"':
+                return subprocess.CompletedProcess([], 0, b"/mnt/c/out.png\n", b"")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner._describe_copied_back",
+        lambda source, path: CopiedBackFile(
+            source=source, destination=str(path), type="file", size=1
+        ),
+    )
+    copied = _copy_back_files(
+        RecordingClient(), ["plot_*.png"], "/tmp/run/workspace", str(tmp_path / "run"), max_files=1
+    )
+    assert [item.source for item in copied] == ["plot_1.png"]
+
+
+def test_copy_back_pattern_without_matches_can_be_collected_without_error(tmp_path) -> None:
     class EmptyClient:
         def bash(self, script: str, *arguments: str, **_kwargs):
             return subprocess.CompletedProcess([], 0, b"", b"")
 
-    with pytest.raises(FileNotFoundError, match="missing_\\*\\.png"):
-        _copy_back_files(
-            EmptyClient(), ["missing_*.png"], "/tmp/run/workspace", str(tmp_path / "run")
-        )
+    missing: list[str] = []
+    assert _copy_back_files(
+        EmptyClient(),
+        ["missing_*.png"],
+        "/tmp/run/workspace",
+        str(tmp_path / "run"),
+        missing=missing,
+    ) == []
+    assert missing == ["missing_*.png"]
 
 
 def test_root_contents_lists_ttree_branches_and_events(tmp_path) -> None:

@@ -33,6 +33,8 @@ class TestConfig(BaseModel):
     auth_source: str = "~/.codex/auth.json"
     pricing_file: str | None = None
     progress_lines: int = 5
+    timeout_seconds: float | None = 1800.0
+    max_copy_back_files: int = 100
     cleanup: bool = False
 
     @model_validator(mode="before")
@@ -63,6 +65,20 @@ class TestConfig(BaseModel):
     def positive_progress_lines(cls, value: int) -> int:
         if not 1 <= value <= 5:
             raise ValueError("must be between 1 and 5")
+        return value
+
+    @field_validator("timeout_seconds")
+    @classmethod
+    def positive_timeout(cls, value: float | None) -> float | None:
+        if value is not None and value <= 0:
+            raise ValueError("must be greater than zero")
+        return value
+
+    @field_validator("max_copy_back_files")
+    @classmethod
+    def positive_max_copy_back_files(cls, value: int) -> int:
+        if value < 1:
+            raise ValueError("must be at least 1")
         return value
 
 
@@ -215,5 +231,6 @@ class TestResult(BaseModel):
     conversation: list[ConversationTurn] = Field(default_factory=list)
     workspace: WorkspaceResult
     copied_back: list[CopiedBackFile] = Field(default_factory=list)
+    missing_copy_back: list[str] = Field(default_factory=list)
     command: CommandResult
     logs: LogsResult

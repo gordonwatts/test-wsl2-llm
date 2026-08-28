@@ -221,9 +221,20 @@ def render_markdown(
 
 def _copied_back_section(result: TestResult, report_path: Path | None) -> list[str]:
     """Render copied-back artifacts with links and type-specific previews."""
-    if not result.copied_back:
+    if not result.copied_back and not result.missing_copy_back:
         return []
     lines = ["", "## Copied-back files", ""]
+    if result.missing_copy_back:
+        lines.extend(
+            [
+                "### Missing requested files",
+                "",
+                "The following copy-back patterns did not match any files:",
+                "",
+                *[f"- `{pattern}`" for pattern in result.missing_copy_back],
+                "",
+            ]
+        )
     for file in result.copied_back:
         link = _file_link(file.destination, report_path)
         name = Path(file.destination).name

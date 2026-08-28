@@ -277,6 +277,18 @@ def test_report_renders_copied_back_links_and_text_preview(tmp_path: Path) -> No
     assert 'title="Copy to clipboard"' in markdown
 
 
+def test_report_renders_missing_copy_back_patterns(tmp_path: Path) -> None:
+    result = sample_result()
+    result.copied_back = []
+    result.missing_copy_back = ["plot_*.png", "missing.txt"]
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "### Missing requested files" in markdown
+    assert "`plot_*.png`" in markdown
+    assert "`missing.txt`" in markdown
+
+
 def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
     result = sample_result()
     copied = tmp_path / "run.script.py"

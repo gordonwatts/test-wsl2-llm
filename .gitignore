@@ -8,3 +8,6 @@ htmlcov/
 build/
 dist/
 *.egg-info/
+results/*
+/ab-*
+/q*

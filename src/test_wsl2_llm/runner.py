@@ -6,6 +6,7 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 import queue
 import re
 import subprocess
@@ -191,6 +192,7 @@ def run_test(
     error: str | None = None
     retained = False
     copied_back: list[CopiedBackFile] = []
+    missing_copy_back: list[str] = []
     runtime_marketplaces: list[str] = []
     resolved_parent = config.wsl_parent
     resolved_auth = config.auth_source
@@ -281,6 +283,7 @@ def run_test(
                 command_argv,
                 config.prompt,
                 progress_lines=config.progress_lines,
+                timeout_seconds=config.timeout_seconds,
                 verbosity=verbosity,
                 console=console,
                 live_progress=live_progress,
@@ -294,7 +297,14 @@ def run_test(
             files = _inventory(client, workspace_path)
 
         with state.phase("copy_back"):
-            copied_back = _copy_back_files(client, config.copy_back, workspace_path, config.output)
+            copied_back = _copy_back_files(
+                client,
+                config.copy_back,
+                workspace_path,
+                config.output,
+                max_files=config.max_copy_back_files,
+                missing=missing_copy_back,
+            )
 
         with state.phase("session_trace_collection"):
             session_traces, session_events = _session_traces(client, codex_home)
@@ -363,6 +373,7 @@ def run_test(
         conversation=[ConversationTurn(prompt=config.prompt, final_response=final_message)],
         workspace=WorkspaceResult(files=files),
         copied_back=copied_back,
+        missing_copy_back=missing_copy_back,
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
             stdout_jsonl=stdout,
@@ -411,6 +422,7 @@ def continue_test(
     exit_code = 1
     error: str | None = None
     copied_back: list[CopiedBackFile] = []
+    missing_copy_back: list[str] = []
     model_information = ModelInformation(
         pricing_file=config.pricing_file or "bundled:model-pricing.yaml", currency="USD"
     )
@@ -497,6 +509,7 @@ def continue_test(
                 command_argv,
                 effective_prompt,
                 progress_lines=config.progress_lines,
+                timeout_seconds=config.timeout_seconds,
                 verbosity=verbosity,
                 console=console,
             )
@@ -508,7 +521,14 @@ def continue_test(
             files = _inventory(client, workspace_path)
 
         with state.phase("copy_back"):
-            copied_back = _copy_back_files(client, config.copy_back, workspace_path, config.output)
+            copied_back = _copy_back_files(
+                client,
+                config.copy_back,
+                workspace_path,
+                config.output,
+                max_files=config.max_copy_back_files,
+                missing=missing_copy_back,
+            )
 
         with state.phase("session_trace_collection"):
             session_traces, session_events = _session_traces(client, codex_home)
@@ -571,6 +591,7 @@ def continue_test(
         conversation=conversation,
         workspace=WorkspaceResult(files=files),
         copied_back=copied_back,
+        missing_copy_back=missing_copy_back,
         command=CommandResult(argv=command_argv),
         logs=LogsResult(
             stdout_jsonl=stdout,
@@ -668,7 +689,13 @@ def _transfer_files(client: WslClient, sources: list[str], workspace: str) -> No
 
 
 def _copy_back_files(
-    client: WslClient, sources: list[str], workspace: str, output: str
+    client: WslClient,
+    sources: list[str],
+    workspace: str,
+    output: str,
+    *,
+    max_files: int | None = 100,
+    missing: list[str] | None = None,
 ) -> list[CopiedBackFile]:
     """Copy requested workspace files beside the result and collect safe previews."""
     if not sources:
@@ -678,9 +705,24 @@ def _copy_back_files(
     copied: list[CopiedBackFile] = []
     seen_sources: set[str] = set()
     for pattern in sources:
+        if max_files is not None and len(copied) >= max_files:
+            LOGGER.warning("copy-back limit reached; skipping remaining patterns")
+            break
         matches = _expand_copy_back_pattern(client, pattern, workspace)
         if not matches:
-            raise FileNotFoundError(f"copy-back pattern did not match any files: {pattern}")
+            LOGGER.warning("copy-back pattern did not match any files: %s", pattern)
+            if missing is not None:
+                missing.append(pattern)
+            continue
+        if max_files is not None and len(matches) > max_files - len(copied):
+            remaining = max_files - len(copied)
+            LOGGER.warning(
+                "copy-back pattern %s matched %d files; copying only the first %d",
+                pattern,
+                len(matches),
+                remaining,
+            )
+            matches = matches[:remaining]
         for workspace_source in matches:
             if workspace_source in seen_sources:
                 continue
@@ -883,6 +925,7 @@ def _stream_codex(
     prompt: str,
     *,
     progress_lines: int,
+    timeout_seconds: float | None = 1800.0,
     verbosity: int,
     console: Console,
     live_progress: bool = True,
@@ -905,6 +948,9 @@ def _stream_codex(
         queue.Queue()
     )
     started = time.perf_counter()
+    deadline = started + timeout_seconds if timeout_seconds is not None else None
+    interrupted = False
+    timed_out = False
 
     def reader(name: str, stream: TextIO) -> None:
         for line in stream:
@@ -924,18 +970,61 @@ def _stream_codex(
     parsed_events: list[dict[str, Any]] = []
     recent: list[str] = []
     completed_streams = 0
+    stopped_at: float | None = None
+
+    def stop_process() -> None:
+        nonlocal stopped_at
+        if stopped_at is None:
+            stopped_at = time.perf_counter()
+        if getattr(process, "poll", lambda: None)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if os.name == "nt" and isinstance(pid, int):
+            # wsl.exe can leave the Linux child holding stdout/stderr open after
+            # the wrapper exits; terminate the complete process tree on Windows.
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            terminate = getattr(process, "terminate", None)
+            if not callable(terminate):
+                return
+            terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        except TypeError:
+            process.wait()
 
     def consume(live: Live | None) -> None:
-        nonlocal completed_streams
+        nonlocal completed_streams, interrupted, timed_out
         while completed_streams < 2:
-            stream, line, received_at, elapsed = messages.get()
+            try:
+                if (
+                    deadline is not None
+                    and getattr(process, "poll", lambda: None)() is None
+                    and time.perf_counter() >= deadline
+                ):
+                    timed_out = True
+                    stop_process()
+                stream, line, received_at, elapsed = messages.get(timeout=0.25)
+            except queue.Empty:
+                if stopped_at is not None and time.perf_counter() - stopped_at > 5:
+                    break
+                continue
+            except KeyboardInterrupt:
+                interrupted = True
+                stop_process()
+                continue
             if line is None:
                 completed_streams += 1
                 continue
             sequences[stream] += 1
             raw[stream].append(line)
             parsed = parse_json_line(line)
-            event_type = parsed.get("type") if parsed else None
             if parsed:
                 parsed_events.append(parsed)
                 trace_events.append(
@@ -959,7 +1048,10 @@ def _stream_codex(
                         elapsed_seconds=elapsed,
                     )
                 )
-            display = f"{_console_time(received_at)} [{stream}] {event_type or line.rstrip()}"
+            display = (
+                f"{_console_time(received_at)} [{stream}] "
+                f"{_progress_description(parsed, line)}"
+            )
             recent.append(display)
             del recent[:-progress_lines]
             if verbosity >= 2:
@@ -982,14 +1074,75 @@ def _stream_codex(
         ) as live:
             consume(live)
     for thread in threads:
-        thread.join()
+        thread.join(timeout=5)
+    try:
+        exit_code = process.wait(timeout=5)
+    except TypeError:
+        exit_code = process.wait()
+    except subprocess.TimeoutExpired:
+        stop_process()
+        try:
+            exit_code = process.wait(timeout=5)
+        except TypeError:
+            exit_code = process.wait()
+        except subprocess.TimeoutExpired:
+            exit_code = 130 if interrupted else 124
+    except KeyboardInterrupt:
+        interrupted = True
+        stop_process()
+        exit_code = 130
+    if timed_out:
+        exit_code = 124
+        raw["stderr"].append(
+            f"[test-wsl2-llm] Codex timed out after {timeout_seconds:g} seconds.\n"
+        )
+    elif interrupted:
+        exit_code = 130
+        raw["stderr"].append("[test-wsl2-llm] Codex run interrupted by keyboard interrupt.\n")
     return (
-        process.wait(),
+        exit_code,
         "".join(raw["stdout"]),
         "".join(raw["stderr"]),
         trace_events,
         parsed_events,
     )
+
+
+def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
+    """Turn JSONL progress events into short, useful one-line status messages."""
+    if not parsed:
+        description = raw_line.rstrip()
+    else:
+        event_type = parsed.get("type")
+        item = parsed.get("item")
+        if event_type in {"item.started", "item.completed"} and isinstance(item, dict):
+            phase = "Started" if event_type.endswith("started") else "Completed"
+            item_type = str(item.get("type", "item")).replace("_", " ")
+            if item_type == "command execution":
+                command = re.sub(r"\s+", " ", str(item.get("command", ""))).strip()
+                suffix = f": {command}" if command else ""
+                if phase == "Completed" and item.get("exit_code") is not None:
+                    suffix = f" (exit {item['exit_code']}){suffix}"
+                description = f"{phase} command{suffix}"
+            elif item_type == "agent message":
+                text = re.sub(r"\s+", " ", str(item.get("text", ""))).strip()
+                description = (
+                    f"{phase} model message: {text}" if text else f"{phase} model message"
+                )
+            elif item_type == "file change":
+                description = f"{phase} file changes"
+            elif item_type == "web search":
+                description = f"{phase} web search"
+            else:
+                description = f"{phase} {item_type}"
+        elif isinstance(event_type, str):
+            description = event_type.replace(".", " ").replace("_", " ").capitalize()
+            if event_type.startswith("item."):
+                description = f"{description} ({event_type})"
+        else:
+            description = raw_line.rstrip()
+    description = re.sub(r"\s+", " ", description).strip()
+    return description if len(description) <= 120 else description[:117].rstrip() + "..."
 
 
 def _inventory(client: WslClient, workspace: str) -> list[WorkspaceFile]:
