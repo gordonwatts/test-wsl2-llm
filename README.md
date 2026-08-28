@@ -176,7 +176,14 @@ test-wsl2-llm connect .\results\hello.yaml
 test-wsl2-llm connect .\results\hello.yaml --resume
 ```
 
-The first form launches Codex with `codex --cd <workspace>`. The `--resume` form launches
+The first form launches Codex with `codex --cd <workspace>`. Use `--access shell` to open a
+login Bash shell in the retained workspace instead:
+
+```powershell
+test-wsl2-llm connect .\results\hello.yaml --access shell
+```
+
+The `--resume` form launches
 `codex resume --last --cd <workspace>`, selecting the newest session in that run's retained
 isolated Codex home. The run must have been created without `--cleanup`.
 

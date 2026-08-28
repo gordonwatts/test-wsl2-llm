@@ -10,7 +10,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
-from typing import Annotated
+from typing import Annotated, Literal
 
 import typer
 import yaml
@@ -686,6 +686,13 @@ def generate_markdown(
 @app.command()
 def connect(
     input_yaml: Annotated[Path, typer.Argument(help="YAML result report from a completed run.")],
+    access: Annotated[
+        Literal["codex", "shell"],
+        typer.Option(
+            "--access",
+            help="Interactive access mode: codex starts Codex; shell starts a Bash shell.",
+        ),
+    ] = "codex",
     resume: Annotated[
         bool,
         typer.Option("--resume", "-r", help="Resume the most recent conversation in this run."),
@@ -715,8 +722,11 @@ def connect(
 
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
         client = WslClient(result.run.distro, policy)
-        command = _connect_command(result, resume=resume, client=client)
-        console.print(f"Connecting to {workspace} (interactive Codex; press Ctrl-D to exit)")
+        if access == "shell" and resume:
+            raise ValueError("--resume is only supported with --access codex")
+        command = _connect_command(result, resume=resume, access=access, client=client)
+        description = "interactive shell" if access == "shell" else "interactive Codex"
+        console.print(f"Connecting to {workspace} ({description}; press Ctrl-D to exit)")
         completed = subprocess.run(command, check=False, env=client.environment)
         if completed.returncode:
             raise typer.Exit(completed.returncode)
@@ -952,12 +962,24 @@ def continue_work(
 
 
 def _connect_command(
-    result: TestResult, *, resume: bool, client: WslClient | None = None
+    result: TestResult,
+    *,
+    resume: bool,
+    access: Literal["codex", "shell"] = "codex",
+    client: WslClient | None = None,
 ) -> list[str]:
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path
     if not workspace:
         raise ValueError("the result does not contain a retained workspace path")
+    client = client or WslClient(result.run.distro)
+    if access == "shell":
+        if resume:
+            raise ValueError("--resume is only supported with --access codex")
+        script = 'workspace="$1"\ncd -- "$workspace"\nexec bash -li'
+        return client.command(
+            client.shell_command(script, workspace, interactive_login=True)
+        )
     run_root = posixpath.dirname(workspace)
     codex_home = posixpath.join(run_root, ".harness", "codex-home")
     auth_source = str(result.configuration.get("auth_source") or "~/.codex/auth.json")
@@ -982,7 +1004,6 @@ if [ "$mode" = resume ]; then
 fi
 exec env CODEX_HOME="$home" codex --cd "$workspace"
 """.strip()
-    client = client or WslClient(result.run.distro)
     return client.command(
         client.shell_command(
             script, codex_home, workspace, auth_source, mode, interactive_login=True

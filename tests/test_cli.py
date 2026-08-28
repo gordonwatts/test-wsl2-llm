@@ -3,6 +3,7 @@ import subprocess
 from pathlib import Path
 from threading import Barrier, Lock
 
+import pytest
 import yaml
 from test_report import sample_result
 from typer.testing import CliRunner
@@ -43,6 +44,7 @@ def test_help_documents_run_and_core_options() -> None:
     assert "--overwrite" not in run.stdout
     assert "connect" in top.stdout
     assert "--verbose" in connect.stdout
+    assert "--access" in connect.stdout
     assert "continue" in top.stdout
 
 
@@ -330,6 +332,20 @@ def test_connect_command_targets_retained_workspace_and_resume() -> None:
     script = command[-1]
     assert "codex resume --last --cd" in script
     assert "workspace" in script and "\\$workspace" in script
+
+
+def test_connect_shell_command_targets_retained_workspace() -> None:
+    result = sample_result()
+    command = _connect_command(result, resume=False, access="shell")
+    script = command[-1]
+    assert "cd --" in script
+    assert "exec bash -li" in script
+    assert "codex" not in script
+
+
+def test_connect_rejects_resume_with_shell_access() -> None:
+    with pytest.raises(ValueError, match="only supported with --access codex"):
+        _connect_command(sample_result(), resume=True, access="shell")
 
 
 def test_connect_applies_saved_environment_policy(monkeypatch, tmp_path: Path) -> None:

@@ -272,7 +272,7 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
                 if source_available
                 else "First 10 lines (source file unavailable):"
             )
-            language = "python" if Path(file.destination).suffix.lower() == ".py" else None
+            language = _code_language(Path(file.destination))
             lines.extend(["", label, "", *_scrollable_text(text, language=language)])
         elif file.type not in {"image", "file"}:
             lines.extend(["", f"Type: `{file.type}`"])
@@ -312,7 +312,7 @@ def _text_for_report(destination: str, fallback: str) -> tuple[str, bool]:
 
 def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
     """Render text in a bounded scrolling element with a best-effort copy button."""
-    if language == "python":
+    if language is not None:
         # Markdown renderers apply syntax highlighting to fenced blocks, not raw HTML
         # ``<code class=...>`` elements. Keep the copy control adjacent to the fence.
         return [
@@ -335,6 +335,15 @@ def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
         "</div>",
         "</div>",
     ]
+
+
+def _code_language(path: Path) -> str | None:
+    """Return a Markdown code-fence language for common copied source files."""
+    return {
+        ".py": "python",
+        ".sh": "bash",
+        ".bash": "bash",
+    }.get(path.suffix.lower())
 
 
 def _copyable_blockquote(content: str) -> list[str]:
