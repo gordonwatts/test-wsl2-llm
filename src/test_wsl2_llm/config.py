@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,41 @@ from typing import Any
 import yaml
 
 from test_wsl2_llm.models import TestConfig
+
+LOGGER = logging.getLogger(__name__)
+DEFAULT_CONFIG_ENV = "TEST_WSL2_LLM_DEFAULT_CONFIG"
+
+
+def default_config_path() -> Path:
+    """Return the optional user defaults path, allowing an explicit environment override."""
+    override = os.environ.get(DEFAULT_CONFIG_ENV)
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path.home() / ".config" / "test-wsl2-llm" / "config.yaml"
+
+
+def load_default_config() -> dict[str, Any]:
+    """Load user defaults when present and report discovery at INFO level."""
+    path = default_config_path()
+    if not path.is_file():
+        return {}
+    LOGGER.info("Loading default configuration: %s", path)
+    return load_config_file(path)
+
+
+def merge_config_values(
+    base: dict[str, Any], override: dict[str, Any]
+) -> dict[str, Any]:
+    """Merge a higher-precedence partial config, including nested environment fields."""
+    merged = dict(base)
+    for key, value in override.items():
+        if key == "environment" and isinstance(value, dict):
+            environment = dict(merged.get("environment", {}))
+            environment.update(value)
+            merged[key] = environment
+        else:
+            merged[key] = value
+    return merged
 
 
 def load_config_file(path: Path) -> dict[str, Any]:
@@ -23,13 +60,16 @@ def load_config_file(path: Path) -> dict[str, Any]:
             raise ValueError("configuration may contain prompt or prompt_file, not both")
         prompt_path = _resolve_windows_path(str(raw.pop("prompt_file")), base)
         raw["prompt"] = prompt_path.read_text(encoding="utf-8")
-    raw["marketplaces"] = [
-        _normalize_marketplace(str(source), base) for source in raw.get("marketplaces", [])
-    ]
-    raw["copy_files"] = [
-        str(_resolve_windows_path(str(source), base)) for source in raw.get("copy_files", [])
-    ]
-    raw["copy_back"] = [str(source) for source in raw.get("copy_back", [])]
+    if "marketplaces" in raw:
+        raw["marketplaces"] = [
+            _normalize_marketplace(str(source), base) for source in raw["marketplaces"]
+        ]
+    if "copy_files" in raw:
+        raw["copy_files"] = [
+            str(_resolve_windows_path(str(source), base)) for source in raw["copy_files"]
+        ]
+    if "copy_back" in raw:
+        raw["copy_back"] = [str(source) for source in raw["copy_back"]]
     if raw.get("output"):
         raw["output"] = str(_resolve_windows_path(str(raw["output"]), base))
     if raw.get("pricing_file"):

@@ -21,7 +21,14 @@ from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
-from test_wsl2_llm.config import build_config, load_config_file, output_paths, save_config
+from test_wsl2_llm.config import (
+    build_config,
+    load_config_file,
+    load_default_config,
+    merge_config_values,
+    output_paths,
+    save_config,
+)
 from test_wsl2_llm.models import EnvironmentPolicy, TestResult
 from test_wsl2_llm.runner import WslClient
 from test_wsl2_llm.template import (
@@ -188,7 +195,9 @@ def run(
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
-        file_values = load_config_file(config) if config else {}
+        file_values = load_default_config()
+        if config:
+            file_values = merge_config_values(file_values, load_config_file(config))
         cli_values = {
             "prompt": prompt,
             "prompt_file": str(prompt_file) if prompt_file else None,
@@ -440,6 +449,7 @@ def template_run(
     _configure_logging(verbose)
     try:
         batch, shared, _ = load_template_file(config)
+        shared = merge_config_values(load_default_config(), shared)
         if repeat is not None and repeat < 1:
             raise ValueError("repeat must be at least 1")
         if threads is not None and threads < 1:
@@ -815,10 +825,11 @@ def continue_work(
         # ``continuation_of`` is report metadata added to continuation results,
         # not an input accepted by ``TestConfig``. Keep it out of the inherited
         # settings so a continuation can itself be continued.
-        defaults = {
+        previous_values = {
             key: value for key, value in previous.configuration.items() if key != "continuation_of"
         }
-        defaults.update(file_values)
+        defaults = merge_config_values(load_default_config(), previous_values)
+        defaults = merge_config_values(defaults, file_values)
         defaults["prompt"] = prompt or defaults.get("prompt")
         if not defaults.get("model"):
             raise ValueError("the previous result configuration does not contain a model")

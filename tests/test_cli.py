@@ -8,7 +8,7 @@ from typer.testing import CliRunner
 
 import test_wsl2_llm.cli as cli_module
 from test_wsl2_llm.cli import _connect_command, app
-from test_wsl2_llm.config import output_paths
+from test_wsl2_llm.config import DEFAULT_CONFIG_ENV, output_paths
 
 runner = CliRunner()
 
@@ -414,6 +414,50 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
         "path_remove": [r"C:\Program Files\Microsoft Visual Studio"],
     }
     assert not (tmp_path / "out.yaml").exists()
+
+
+def test_explicit_config_composes_with_user_defaults(
+    monkeypatch, tmp_path: Path
+) -> None:
+    defaults = tmp_path / "defaults.yaml"
+    defaults.write_text(
+        "environment:\n"
+        "  unset: [INCLUDE]\n"
+        "  path_remove: ['C:\\Visual Studio']\n",
+        encoding="utf-8",
+    )
+    explicit = tmp_path / "run.yaml"
+    explicit.write_text(
+        "prompt: hello\n"
+        "model: gpt-test\n"
+        "output: out\n"
+        "environment:\n"
+        "  unset: [LIB]\n",
+        encoding="utf-8",
+    )
+    destination = tmp_path / "saved.yaml"
+    monkeypatch.setenv(DEFAULT_CONFIG_ENV, str(defaults))
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--config",
+            str(explicit),
+            "--save-config",
+            str(destination),
+            "--config-only",
+            "-v",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["environment"] == {
+        "unset": ["LIB"],
+        "path_remove": [r"C:\Visual Studio"],
+    }
+    assert "Loading default configuration" in result.output
 
 
 def test_config_only_saves_copy_file_paths(tmp_path: Path) -> None:

@@ -198,6 +198,14 @@ The default Codex policy is `workspace-write` with network access, `on-request` 
 
 ## YAML configuration
 
+Before loading an explicit `--config` file or template, the CLI looks for the optional user
+defaults file `~/.config/test-wsl2-llm/config.yaml`. The path can be overridden with the
+`TEST_WSL2_LLM_DEFAULT_CONFIG` environment variable. The defaults file may be partial; values are
+merged in this order: user defaults, explicit run/template configuration, then CLI options.
+Nested `environment.unset` and `environment.path_remove` fields merge independently, while an
+explicit list replaces the corresponding default list. Finding the defaults file emits an INFO
+message, visible with `-v`.
+
 ```yaml
 prompt: |
   Use $analysis-helper to create answer.txt.
