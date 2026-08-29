@@ -343,6 +343,8 @@ def _code_language(path: Path) -> str | None:
         ".py": "python",
         ".sh": "bash",
         ".bash": "bash",
+        ".yaml": "text",
+        ".yml": "text",
     }.get(path.suffix.lower())
 
 
@@ -368,12 +370,22 @@ def _copy_button(expression: str) -> str:
 
 
 def _activity_section(result: TestResult) -> list[str]:
-    """Show concise progress updates without exposing the raw session trace."""
-    updates: list[str] = []
+    """Show concise progress updates with elapsed times, without raw session traces."""
+    updates: list[tuple[float | None, str]] = []
     seen: set[str] = set()
     final_message = re.sub(r"\s+", " ", result.result.final_message or "").strip()
+    execution_offset = _codex_execution_offset(result)
+    stdout_elapsed = {
+        event.sequence: (
+            event.elapsed_seconds + execution_offset
+            if event.elapsed_seconds is not None
+            else None
+        )
+        for event in result.timing.trace_events
+        if event.source == "stdout_jsonl"
+    }
 
-    def add_update(message: str) -> None:
+    def add_update(message: str, elapsed_seconds: float | None = None) -> None:
         message = re.sub(r"\s+", " ", message).strip()
         if not message or message == final_message or _is_review_decision(message):
             return
@@ -381,9 +393,9 @@ def _activity_section(result: TestResult) -> list[str]:
             message = message[:497].rstrip() + "..."
         if message not in seen:
             seen.add(message)
-            updates.append(message)
+            updates.append((elapsed_seconds, message))
 
-    for line in result.logs.stdout_jsonl.splitlines():
+    for sequence, line in enumerate(result.logs.stdout_jsonl.splitlines(), start=1):
         try:
             event = json.loads(line)
         except json.JSONDecodeError:
@@ -391,15 +403,16 @@ def _activity_section(result: TestResult) -> list[str]:
         item = event.get("item") if isinstance(event, dict) else None
         if event.get("type") != "item.completed" or not isinstance(item, dict):
             continue
+        elapsed = stdout_elapsed.get(sequence)
         if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
-            add_update(item["text"])
+            add_update(item["text"], elapsed)
         elif item.get("type") == "command_execution":
             command = item.get("command")
             if not isinstance(command, str) or not command.strip():
                 continue
             exit_code = item.get("exit_code")
             status = f" (exit {exit_code})" if exit_code is not None else ""
-            add_update(f"Command{status}: {command}")
+            add_update(f"Command{status}: {command}", elapsed)
 
     for trace in result.logs.session_traces:
         for line in trace.content.splitlines():
@@ -413,9 +426,8 @@ def _activity_section(result: TestResult) -> list[str]:
             if payload.get("type") != "agent_message":
                 continue
             message = payload.get("message")
-            if not isinstance(message, str):
-                continue
-            add_update(message)
+            if isinstance(message, str):
+                add_update(message)
 
     lines = [
         "",
@@ -426,11 +438,29 @@ def _activity_section(result: TestResult) -> list[str]:
         "",
     ]
     if updates:
-        lines.extend(f"- {update}" for update in updates)
+        lines.extend(["| Time | Message |", "| --- | --- |"])
+        for elapsed, message in updates:
+            escaped_message = message.replace("|", "\\|")
+            elapsed_text = _compact_duration(elapsed) if elapsed is not None else "--"
+            lines.append(f"| {elapsed_text} | {escaped_message} |")
     else:
         lines.append("No readable progress updates were recorded.")
     lines.extend(["", "</details>"])
     return lines
+
+
+def _codex_execution_offset(result: TestResult) -> float:
+    """Return seconds from run start to Codex execution start when timestamps allow it."""
+    phase = next((item for item in result.timing.phases if item.name == "codex_execution"), None)
+    if phase is None:
+        return 0.0
+    try:
+        offset = (
+            _local_datetime(phase.started_at) - _local_datetime(result.run.started_at)
+        ).total_seconds()
+    except ValueError:
+        return 0.0
+    return max(0.0, offset)
 
 
 def _is_review_decision(message: str) -> bool:

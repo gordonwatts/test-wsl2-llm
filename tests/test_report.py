@@ -289,6 +289,27 @@ def test_report_renders_missing_copy_back_patterns(tmp_path: Path) -> None:
     assert "`missing.txt`" in markdown
 
 
+def test_yaml_text_preview_is_literal_text(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.config.yaml"
+    copied.write_text("items:\n  - name: example\n    enabled: true\n", encoding="utf-8")
+    result.copied_back = [
+        CopiedBackFile(
+            source="config.yaml",
+            destination=str(copied),
+            type="text",
+            size=copied.stat().st_size,
+            text_preview="items:",
+        )
+    ]
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "```text\nitems:" in markdown
+    assert "<pre style=" not in markdown.split("config.yaml", 1)[-1].split("</details>", 1)[0]
+
+
 def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
     result = sample_result()
     copied = tmp_path / "run.script.py"
@@ -432,10 +453,16 @@ def test_activity_summary_reads_current_stdout_jsonl_events(tmp_path: Path) -> N
         '"command":"git status --short","exit_code":0}}\n'
         '{"type":"item.completed","item":{"type":"agent_message","text":"done"}}\n'
     )
+    result.timing.trace_events = [
+        TraceEvent(source="stdout_jsonl", sequence=1, elapsed_seconds=0.4),
+        TraceEvent(source="stdout_jsonl", sequence=2, elapsed_seconds=62.0),
+        TraceEvent(source="stdout_jsonl", sequence=3, elapsed_seconds=63.0),
+    ]
 
     markdown = write_markdown(result, tmp_path / "summary.md").read_text(encoding="utf-8")
 
-    assert "- Inspecting the repository." in markdown
-    assert "- Command (exit 0): git status --short" in markdown
+    assert "| Time | Message |" in markdown
+    assert "| 0s | Inspecting the repository. |" in markdown
+    assert "| 1m 2s | Command (exit 0): git status --short |" in markdown
     assert "No readable progress updates were recorded." not in markdown
     assert "- done" not in markdown

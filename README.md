@@ -75,8 +75,9 @@ a warning tells you to use `--force`. Supplying `--force` reruns existing
 questions and reports that choice in the warning.
 
 The YAML uses a shared `prompt_template` and a list of question mappings. Every
-mapping needs a unique, filename-safe `id`; its other scalar fields are available
-through strict `{{ field }}` substitutions. For example:
+mapping needs a unique, filename-safe `id`; its scalar fields are available through strict
+`{{ field }}` substitutions. A question-level `copy_back` field is a list of files or wildcards,
+not a substitution scalar. For example:
 
 ```yaml
 prompt_template: |
@@ -86,6 +87,9 @@ questions:
   - id: etmiss
     quantity: ETmiss
     dataset: user.example:dataset_a
+    copy_back:
+      - etmiss.root
+      - -ab-output.root
   - id: leading-jet-pt
     quantity: leading-jet pT
     dataset: user.example:dataset_b
@@ -140,7 +144,11 @@ written beside the reports as `<output-stub>.<file-name>` (for example,
 are displayed with PNG previews embedded directly in Markdown, text files show their
 first ten lines, and ROOT files are inspected with
 `uproot` to list their objects plus TTree branches and event counts. The YAML form is
-`copy_back`.
+`copy_back`. Template questions may also provide a `copy_back` list; entries are added to
+that question's shared patterns, while entries beginning with `-` remove an exact shared
+pattern (for example, `-ab-output.root`). A removal must refer to a shared pattern or an
+earlier addition in the same question; otherwise template loading fails with an error and the
+YAML must be corrected before the batch can run.
 
 If a requested copy-back path or glob has no matches, collection continues for the other
 patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
@@ -162,7 +170,7 @@ test-wsl2-llm generate .\results\hello.yaml `
 ```
 
 The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file.
-Workspace inventory, Codex stderr, and model activity are included by default. `--details` also
+Workspace inventory, Codex stderr, and model activity (as an elapsed-time table) are included by default. `--details` also
 includes resolved configuration, raw stdout JSONL, trace timing, session traces, and conversation
 history when available.
 

@@ -87,11 +87,20 @@ def load_template_file(path: Path) -> tuple[TemplateConfig, dict[str, Any], Path
         batch = TemplateConfig.model_validate(batch_values)
     except Exception as exc:
         raise ValueError(f"invalid template configuration '{path}': {exc}") from exc
-    validate_questions(batch.prompt_template, batch.questions)
+    validate_questions(
+        batch.prompt_template,
+        batch.questions,
+        shared_copy_back=values.get("copy_back", []),
+    )
     return batch, values, path
 
 
-def validate_questions(prompt_template: str, questions: list[dict[str, Any]]) -> None:
+def validate_questions(
+    prompt_template: str,
+    questions: list[dict[str, Any]],
+    *,
+    shared_copy_back: list[str] | None = None,
+) -> None:
     """Validate question records and all template fields before execution."""
     seen: set[str] = set()
     for index, question in enumerate(questions, start=1):
@@ -111,11 +120,21 @@ def validate_questions(prompt_template: str, questions: list[dict[str, Any]]) ->
         for key, value in question.items():
             if not isinstance(key, str) or not _NAME.fullmatch(key):
                 raise ValueError(f"question {identifier} field names must be identifiers")
+            if key == "copy_back":
+                if not isinstance(value, list) or any(
+                    not isinstance(pattern, str) or not pattern.strip() for pattern in value
+                ):
+                    raise ValueError(
+                        f"question {identifier} field 'copy_back' must be a list of "
+                        "non-empty strings"
+                    )
+                continue
             if value is None or isinstance(value, (dict, list, tuple)):
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
             if not isinstance(value, (str, int, float, bool)):
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
         render_template(prompt_template, question, identifier)
+        question_copy_back(list(shared_copy_back or []), question)
 
 
 def render_template(template: str, values: dict[str, Any], identifier: str = "question") -> str:
@@ -140,7 +159,7 @@ def render_template(template: str, values: dict[str, Any], identifier: str = "qu
 
 
 def render_questions(batch: TemplateConfig) -> list[tuple[str, str, dict[str, Any]]]:
-    """Return question id, rendered prompt, and source scalar values in YAML order."""
+    """Return question id, rendered prompt, and source values in YAML order."""
     return [
         (
             str(question["id"]),
@@ -149,6 +168,28 @@ def render_questions(batch: TemplateConfig) -> list[tuple[str, str, dict[str, An
         )
         for question in batch.questions
     ]
+
+
+def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]:
+    """Apply a question's copy-back additions and removals to shared patterns."""
+    patterns = list(shared)
+    overrides = question.get("copy_back", [])
+    if not isinstance(overrides, list):
+        return patterns
+    for pattern in overrides:
+        if not isinstance(pattern, str) or not pattern.strip():
+            continue
+        if pattern.startswith("-") and len(pattern) > 1:
+            remove = pattern[1:]
+            if remove not in patterns:
+                raise ValueError(
+                    f"question {question.get('id', 'unknown')} copy_back removal "
+                    f"'-{remove}' has no preceding pattern"
+                )
+            patterns = [existing for existing in patterns if existing != remove]
+        elif pattern not in patterns:
+            patterns.append(pattern)
+    return patterns
 
 
 def template_output(output: str, identifier: str, index: int, repeat: int) -> str:

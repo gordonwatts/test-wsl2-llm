@@ -33,6 +33,7 @@ from test_wsl2_llm.models import EnvironmentPolicy, TestResult
 from test_wsl2_llm.runner import WslClient
 from test_wsl2_llm.template import (
     load_template_file,
+    question_copy_back,
     render_questions,
     resolved_template_values,
     template_output,
@@ -535,7 +536,7 @@ def template_run(
             return
 
         jobs: list[tuple[int, str, int, object]] = []
-        for question_index, (identifier, prompt_text, _values) in enumerate(
+        for question_index, (identifier, prompt_text, question_values) in enumerate(
             rendered_questions, start=1
         ):
             question_jobs: list[tuple[int, str, int, object]] = []
@@ -543,6 +544,9 @@ def template_run(
                 run_values = dict(shared)
                 run_values["prompt"] = prompt_text
                 run_values["output"] = resolved_base.output
+                run_values["copy_back"] = question_copy_back(
+                    list(shared.get("copy_back", [])), question_values
+                )
                 run_config = build_config(run_values, cli_values)
                 run_config = run_config.model_copy(
                     update={
