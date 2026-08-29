@@ -311,6 +311,28 @@ def test_python_text_preview_marks_code_language(tmp_path: Path) -> None:
     assert "navigator.clipboard.writeText" in markdown
 
 
+def test_bash_text_preview_uses_bash_fence(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.script.sh"
+    copied.write_text("#!/usr/bin/env bash\nprintf '%s\\n' \"$HOME\"\n", encoding="utf-8")
+    result.copied_back = [
+        CopiedBackFile(
+            source="script.sh",
+            destination=str(copied),
+            type="text",
+            size=copied.stat().st_size,
+            text_preview="#!/usr/bin/env bash",
+        )
+    ]
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    assert "```bash\n#!/usr/bin/env bash" in markdown
+    assert 'printf \'%s\\n\' "$HOME"' in markdown
+    assert "&quot;" not in markdown
+
+
 def test_invocation_has_compact_copy_button(tmp_path: Path) -> None:
     result = sample_result()
     result.invocation = "test-wsl2-llm run --prompt hello"
