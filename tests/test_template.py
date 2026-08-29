@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import output_paths
 from test_wsl2_llm.template import (
+    question_copy_back,
     render_template,
     template_output,
     validate_questions,
@@ -77,6 +78,26 @@ def test_template_question_validation_rejects_duplicate_ids_and_nested_values() 
         )
     with pytest.raises(ValueError, match="scalar"):
         validate_questions("{{ question }}", [{"id": "one", "question": ["bad"]}])
+
+
+def test_question_copy_back_adds_and_removes_shared_patterns() -> None:
+    assert question_copy_back(
+        ["plot_*.png", "ab-output.root"],
+        {"copy_back": ["script.py", "-ab-output.root", "script.py"]},
+    ) == ["plot_*.png", "script.py"]
+
+
+def test_template_question_validation_accepts_copy_back_list() -> None:
+    validate_questions(
+        "{{ question }}",
+        [{"id": "one", "question": "first", "copy_back": ["plot.png", "-default.root"]}],
+        shared_copy_back=["default.root"],
+    )
+
+
+def test_question_copy_back_rejects_unknown_removal() -> None:
+    with pytest.raises(ValueError, match="no preceding pattern"):
+        question_copy_back([], {"id": "one", "copy_back": ["-missing.root"]})
 
 
 def test_template_output_names_question_and_repetition() -> None:
