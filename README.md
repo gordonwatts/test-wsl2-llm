@@ -107,7 +107,14 @@ threads: 4
 This writes `analysis-etmiss-001.md` and matching YAML and copied-back artifacts,
 then the corresponding files for `leading-jet-pt`. With `repeat: 1`, the numeric
 suffix is omitted. `threads` limits total simultaneous jobs across all questions
-and repetitions. The command accepts the shared `run` options as CLI overrides,
+and repetitions. Each report gets a heading `Question: <id> - <first 30 characters>...` using
+its `question` field, with whitespace collapsed to keep the heading on one line.
+Templates without a `question` field use the rendered prompt instead. The ellipsis
+is included even for short questions. A custom YAML `title` or CLI `--title`
+overrides this automatic heading; the standard saved `# WSL2 Codex test result`
+title is treated as the default.
+
+The command accepts the shared `run` options as CLI overrides,
 including `--model`, `--output`, `--repeat`, `--threads`, and `--force`.
 
 Templates accept the same run configuration keys as a normal saved configuration,

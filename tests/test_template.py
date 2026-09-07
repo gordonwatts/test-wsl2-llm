@@ -10,6 +10,7 @@ from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import output_paths
 from test_wsl2_llm.template import (
     question_copy_back,
+    question_title,
     render_template,
     template_output,
     validate_questions,
@@ -381,3 +382,63 @@ def test_template_run_cli_overrides_and_global_threads(monkeypatch, tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     assert maximum == 2
+
+
+@pytest.mark.parametrize(("question", "prompt", "excerpt"), [
+    (
+        {"question": "123456789012345678901234567890EXTRA"},
+        "wrapper", "123456789012345678901234567890",
+    ),
+    ({"question": "Short"}, "wrapper", "Short"),
+    ({"question": "First line\nsecond\tline"}, "wrapper", "First line second line"),
+    ({"quantity": "jets"}, "Plot jets", "Plot jets"),
+])
+def test_question_title_excerpt(question, prompt, excerpt):
+    assert question_title("q1", question, prompt) == f"# Question: q1 - {excerpt}..."
+
+
+@pytest.mark.parametrize(("saved_title", "cli_title", "expected"), [
+    (None, None, "# Question: q1 - First question..."),
+    ("# WSL2 Codex test result", None, "# Question: q1 - First question..."),
+    ("# Custom YAML title", None, "# Custom YAML title"),
+    ("# Custom YAML title", "# CLI title", "# CLI title"),
+])
+def test_template_report_writes_question_title_and_honors_overrides(
+    monkeypatch, tmp_path, saved_title, cli_title, expected,
+):
+    def fake_run(config, **_kwargs):
+        result = sample_result()
+        result.title = config.title
+        result.configuration = config.model_dump(mode="json")
+        return result
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    values = {
+        "prompt_template": "Do {{ question }}",
+        "questions": [
+            {"id": "q1", "question": "First question"},
+            {"id": "q2", "question": "Second question"},
+        ],
+        "model": "test", "output": "results/title", "repeat": 2,
+    }
+    if saved_title is not None:
+        values["title"] = saved_title
+    config = tmp_path / "batch.yaml"
+    config.write_text(yaml.safe_dump(values), encoding="utf-8")
+    args = ["template", "run", str(config)]
+    if cli_title is not None:
+        args.extend(["--title", cli_title])
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    for identifier in ("q1", "q2"):
+        question_expected = (
+            expected.replace("q1 - First question", "q2 - Second question")
+            if identifier == "q2" else expected
+        )
+        for index in (1, 2):
+            stem = tmp_path / "results" / f"title-{identifier}-{index:03}"
+            markdown, report = output_paths(str(stem))
+            assert markdown.read_text(encoding="utf-8").splitlines()[0] == question_expected
+            saved = yaml.safe_load(report.read_text(encoding="utf-8"))
+            assert saved["title"] == question_expected
+            assert saved["configuration"]["title"] == question_expected

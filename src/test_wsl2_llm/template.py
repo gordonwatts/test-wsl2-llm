@@ -192,6 +192,12 @@ def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]
     return patterns
 
 
+def question_title(identifier: str, question: dict[str, Any], prompt: str) -> str:
+    """Build a one-line report heading from the question text or rendered prompt."""
+    text = " ".join(str(question.get("question", prompt)).split())
+    return f"# Question: {identifier} - {text[:30]}..."
+
+
 def template_output(output: str, identifier: str, index: int, repeat: int) -> str:
     """Build a result stem for one question/repetition."""
     path = Path(output)
