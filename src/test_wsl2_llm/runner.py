@@ -223,8 +223,6 @@ class RunState:
             )
 
 
-
-
 def run_test(
     config: TestConfig,
     *,
