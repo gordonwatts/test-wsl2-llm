@@ -51,6 +51,7 @@ class TestConfig(BaseModel):
     reasoning_effort: ReasoningEffort = "medium"
     marketplaces: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
+    mcp_servers: list[str] = Field(default_factory=list)
     copy_files: list[str] = Field(default_factory=list)
     copy_back: list[str] = Field(default_factory=list)
     validators: list[ValidatorConfig] = Field(default_factory=list)
@@ -97,6 +98,13 @@ class TestConfig(BaseModel):
         if not value.strip():
             raise ValueError("must not be empty")
         return value
+
+    @field_validator("mcp_servers")
+    @classmethod
+    def valid_mcp_names(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("MCP server names must not be empty")
+        return list(dict.fromkeys(values))
 
     @field_validator("progress_lines")
     @classmethod

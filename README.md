@@ -345,6 +345,44 @@ The normal progress display retains only the five most recent lines and prefixes
 
 Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.
 
+## Named MCP servers
+
+Use repeatable `--mcp NAME` on `run`, `template run`, or `continue` to import a
+server from the Windows user's `$CODEX_HOME/config.toml` (default
+`~/.codex/config.toml`) into the isolated WSL Codex configuration:
+
+```powershell
+uv run test-wsl2-llm run --model MODEL --prompt "/mcp" --mcp my-server
+uv run test-wsl2-llm template run batch.yaml --mcp my-server --mcp another-server
+```
+
+YAML input and saved configurations use names only:
+
+```yaml
+mcp_servers:
+  - my-server
+  - another-server
+```
+
+The complete selected `[mcp_servers.NAME]` tables are copied, including nested
+settings, arguments, environment values, timeouts, tool filters, and unknown
+future options. Unselected servers and unrelated local Codex settings are excluded.
+The CLI list replaces the YAML list for fresh runs and templates; `continue`
+inherits the previous list (a YAML override can replace it) and adds CLI names.
+Duplicate names are imported once. Missing names, unreadable files, or invalid
+TOML produce a failure report before a fresh WSL workspace is created.
+
+Definitions are read at execution time; `--save-config` and result configuration
+record only names, not server settings or credentials. `--config-only` saves names
+without reading the local Codex configuration. Each repetition uses the same names.
+Commands, paths, URLs, and environment references are copied unchanged and must
+work from the chosen WSL distro; referenced environment variables and separate
+OAuth login state are not copied. No local Codex configuration is modified.
+
+To check discovery, run with `--prompt "/mcp" --mcp my-server` and inspect the
+response, or connect to a retained workspace and use `/mcp` in the Codex TUI.
+The latter is Codex's interactive server listing command; the batch harness sends
+prompt text through `codex exec`. See the [official MCP configuration documentation](https://developers.openai.com/codex/mcp).
 ### Result validation
 
 Configure checks in run/template YAML. All checks must pass, including repeated names:
