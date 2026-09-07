@@ -345,3 +345,26 @@ Python integrations can call `register_validator(name, ArgumentModel, callable)`
 keyword arguments and returns `(passed, message)`. This includes all logs, workspace
 metadata, and `copied_back` local destinations for reading full returned files. Exceptions
 become failed checks, and remaining validators still run.
+
+Validate a locally returned ROOT tree with:
+
+```yaml
+copy_back: ["result.root"]
+validators:
+  - name: root_tree
+    arguments:
+      file: result.root
+      tree: events
+      must_have: [pt, eta]
+      can_have: [weight]
+      cannot_have: [secret]
+      no_other_leaves: true
+```
+
+`file` must exactly match a copied-back file's recorded source or local destination;
+the validator reads only that local destination with uproot. `tree` may include a ROOT
+directory path. TTree and RNTuple objects are supported. Names are exact recursive branch
+names (including nested branch paths). Required branches must exist, optional branches may
+exist, and forbidden branches must be absent. `no_other_leaves` rejects every branch outside
+`must_have` and `can_have`; by default additional branches are allowed. Missing or unreadable
+files/trees, non-tree objects, and mismatches produce failed checks with diagnostics.
