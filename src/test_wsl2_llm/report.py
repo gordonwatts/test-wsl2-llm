@@ -136,6 +136,12 @@ def render_markdown(
             f"{_local_clock(phase.finished_at)} | {_compact_duration(phase.duration_seconds)} |"
         )
 
+    if result.validation:
+        lines.extend(["", "## Validation", ""])
+        for check in result.validation:
+            status = "PASS" if check.passed else "FAIL"
+            lines.append(f"- **{status}** `{check.name}`: {check.message}")
+
     lines.extend(["", "## Token usage and cost", ""])
     model_information = result.model_information
     lines.extend(

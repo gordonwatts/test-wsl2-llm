@@ -48,7 +48,7 @@ Create a starter batch file, then edit its prompt and questions:
 test-wsl2-llm template init .\questions.yaml
 ```
 
-Run the template with one isolated WSL2 job per question (and per repetition):
+Run the template with one isolated WSL2 job per model, question, and repetition:
 
 ```powershell
 test-wsl2-llm template run .\questions.yaml
@@ -69,10 +69,31 @@ test-wsl2-llm template run .\questions.yaml --question q1 --question q3
 If no IDs are supplied, every question is run. Unknown or duplicate IDs are
 rejected before any WSL job starts.
 
-Template runs are resumable by default. If any Markdown or YAML result already
-exists for a question, that question (including its repetitions) is skipped and
-a warning tells you to use `--force`. Supplying `--force` reruns existing
-questions and reports that choice in the warning.
+Template runs are resumable by default. If a Markdown or YAML result already
+exists for a model/effort, question, and repetition, only that cell is skipped.
+Other models and missing repetitions still run. Supplying `--force` reruns all
+selected cells and overwrites their reports.
+
+Repeat `--model` to compare model/effort combinations (this replaces the YAML
+model selection):
+
+```powershell
+test-wsl2-llm template run .\questions.yaml --model gpt-5.4:high --model gpt-5.4:low
+```
+
+Alternatively, use a YAML list:
+
+```yaml
+models:
+  - gpt-5.4:high
+  - gpt-5.4:low
+```
+
+The existing scalar `model: MODEL:EFFORT` and single `--model MODEL:EFFORT`
+remain supported. `models` takes precedence over a scalar `model` when both are
+present. An omitted effort uses `reasoning_effort` (default `medium`). Empty or
+duplicate model selections are rejected before execution. `--save-config`
+preserves the effective model list for subsequent runs.
 
 The YAML uses a shared `prompt_template` and a list of question mappings. Every
 mapping needs a unique, filename-safe `id`; its scalar fields are available through strict
@@ -104,17 +125,15 @@ repeat: 2
 threads: 4
 ```
 
-This writes `analysis-etmiss-001.md` and matching YAML and copied-back artifacts,
-then the corresponding files for `leading-jet-pt`. With `repeat: 1`, the numeric
-suffix is omitted. `threads` limits total simultaneous jobs across all questions
-and repetitions. Each report gets a heading `Question: <id> - <first 30 characters>...` using
-its `question` field, with whitespace collapsed to keep the heading on one line.
-Templates without a `question` field use the rendered prompt instead. The ellipsis
-is included even for short questions. A custom YAML `title` or CLI `--title`
-overrides this automatic heading; the standard saved `# WSL2 Codex test result`
-title is treated as the default.
-
-The command accepts the shared `run` options as CLI overrides,
+This writes `analysis-etmiss-MODEL%3Ahigh-001.md` and matching YAML and copied-back
+artifacts, then the corresponding files for `leading-jet-pt`. Every report name
+includes the full model/effort selector, including for single-model runs. Selector
+punctuation is percent-encoded for Windows filenames: `gpt-5.4:high` becomes
+`gpt-5%2E4%3Ahigh`. Periods in output stems and question IDs are also encoded to preserve the full
+stem. Existing reports using the older names without a selector are left in place
+and do not mark a matrix cell complete. With `repeat: 1`, the numeric suffix is
+omitted. `threads` limits total simultaneous jobs across all models, questions,
+and repetitions. Each report gets a heading `Question: <id> - <first 30 characters>...` using its `question` field; templates without a `question` field use the rendered prompt. A custom YAML `title` or CLI `--title` overrides this automatic heading. The command accepts the shared `run` options as CLI overrides,
 including `--model`, `--output`, `--repeat`, `--threads`, and `--force`.
 
 Templates accept the same run configuration keys as a normal saved configuration,
@@ -325,3 +344,61 @@ The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records
 The normal progress display retains only the five most recent lines and prefixes each with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
 Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.
+
+### Result validation
+
+Configure checks in run/template YAML. All checks must pass, including repeated names:
+
+```yaml
+validators:
+  - name: require_string
+    arguments:
+      string: "Analysis complete"
+  - name: require_string
+    arguments:
+      string: "events processed"
+```
+
+`require_string` performs a case-sensitive literal search of the current final response,
+captured stdout JSONL, and stderr. Unknown names or invalid arguments are rejected before
+WSL starts. Checks run locally after result/file collection for runs and continuations.
+YAML records each check in `validation`; Markdown shows PASS/FAIL diagnostics. Any failed
+check makes the run fail with a nonzero CLI exit code; an existing execution error is retained.
+With no validators, existing behavior is unchanged.
+
+Python integrations can call `register_validator(name, ArgumentModel, callable)` in
+`test_wsl2_llm.validation`. The callable receives the complete `TestResult` and validated
+keyword arguments and returns `(passed, message)`. This includes all logs, workspace
+metadata, and `copied_back` local destinations for reading full returned files. Exceptions
+become failed checks, and remaining validators still run.
+
+Validate a locally returned ROOT tree with:
+
+```yaml
+copy_back: ["result.root"]
+validators:
+  - name: root_tree
+    arguments:
+      file: result.root
+      tree: events
+      must_have: [pt, eta]
+      can_have: [weight]
+      cannot_have: [secret]
+      no_other_leaves: true
+```
+
+`file` must exactly match a copied-back file's recorded source or local destination;
+the validator reads only that local destination with uproot. `tree` may include a ROOT
+directory path. TTree and RNTuple objects are supported. Names are exact recursive branch
+names (including nested branch paths). Required branches must exist, optional branches may
+exist, and forbidden branches must be absent. `no_other_leaves` rejects every branch outside
+`must_have` and `can_have`; by default additional branches are allowed. Missing or unreadable
+files/trees, non-tree objects, and mismatches produce failed checks with diagnostics.
+Numeric output checks use `name: num_compare` with arguments `var_name`, `number`,
+and `tolerance`, for example `{var_name: efficiency, number: 0.8, tolerance: "5%"}`.
+The validator searches the same output as `require_string` for `var_name=number`,
+allowing whitespace, signs, decimals, and scientific notation. At least one matching
+assignment must agree. Numeric tolerance is an inclusive absolute difference; percentage
+tolerance requires a relative difference strictly below the percentage, using the absolute
+reference value. With a zero reference or zero tolerance, only exact equality passes.
+Tolerances must be finite and nonnegative; expected numbers must be finite.
