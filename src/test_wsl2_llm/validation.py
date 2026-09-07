@@ -51,7 +51,10 @@ def validate_configuration(validators: list[ValidatorConfig]) -> None:
     """Reject unknown names and invalid arguments before starting WSL."""
     for specification in validators:
         if specification.name not in REGISTRY:
-            raise ValueError(f"Unknown validator: {specification.name}")
+            known = ", ".join(sorted(REGISTRY)) or "(none registered)"
+            raise ValueError(
+                f"Unknown validator {specification.name!r}. Known validators: {known}"
+            )
         schema, _ = REGISTRY[specification.name]
         schema.model_validate(specification.arguments)
 
