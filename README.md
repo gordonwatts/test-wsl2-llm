@@ -345,3 +345,12 @@ Python integrations can call `register_validator(name, ArgumentModel, callable)`
 keyword arguments and returns `(passed, message)`. This includes all logs, workspace
 metadata, and `copied_back` local destinations for reading full returned files. Exceptions
 become failed checks, and remaining validators still run.
+
+Numeric output checks use `name: num_compare` with arguments `var_name`, `number`,
+and `tolerance`, for example `{var_name: efficiency, number: 0.8, tolerance: "5%"}`.
+The validator searches the same output as `require_string` for `var_name=number`,
+allowing whitespace, signs, decimals, and scientific notation. At least one matching
+assignment must agree. Numeric tolerance is an inclusive absolute difference; percentage
+tolerance requires a relative difference strictly below the percentage, using the absolute
+reference value. With a zero reference or zero tolerance, only exact equality passes.
+Tolerances must be finite and nonnegative; expected numbers must be finite.
