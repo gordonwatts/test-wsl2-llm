@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -51,6 +52,7 @@ class TemplateConfig(BaseModel):
 
     prompt_template: str
     questions: list[dict[str, Any]] = Field(min_length=1)
+    models: list[str] | None = Field(default=None, min_length=1)
     repeat: int = 1
     threads: int = 1
 
@@ -75,7 +77,7 @@ def load_template_file(path: Path) -> tuple[TemplateConfig, dict[str, Any], Path
     values = load_config_file(path)
     batch_values = {
         key: values.pop(key)
-        for key in ("prompt_template", "questions", "repeat", "threads")
+        for key in ("prompt_template", "questions", "models", "repeat", "threads")
         if key in values
     }
     # ``run --save-config`` writes the resolved single-run prompt. Keep accepting
@@ -192,12 +194,21 @@ def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]
     return patterns
 
 
-def template_output(output: str, identifier: str, index: int, repeat: int) -> str:
+def template_output(
+    output: str, identifier: str, index: int, repeat: int, model_selector: str | None = None,
+) -> str:
     """Build a result stem for one question/repetition."""
     path = Path(output)
     if path.suffix.lower() in {".md", ".yaml", ".yml"}:
         path = path.with_suffix("")
+    # Escape dots as well: output_paths treats the last dot as an extension.
+    # Percent encoding keeps distinct selectors distinct and works on Windows.
+    path = path.with_name(path.name.replace("%", "%25").replace(".", "%2E"))
+    identifier = quote(identifier, safe="-_").replace(".", "%2E").replace("~", "%7E")
     path = path.with_name(f"{path.name}-{identifier}")
+    if model_selector is not None:
+        selector = quote(model_selector, safe="-_").replace(".", "%2E").replace("~", "%7E")
+        path = path.with_name(f"{path.name}-{selector}")
     if repeat > 1:
         width = max(3, len(str(repeat)))
         path = path.with_name(f"{path.name}-{index:0{width}d}")
@@ -227,6 +238,8 @@ def resolved_template_values(
     values["questions"] = batch.questions
     values["repeat"] = batch.repeat if repeat is None else repeat
     values["threads"] = batch.threads if threads is None else threads
+    if batch.models is not None:
+        values["models"] = batch.models
     if output is not None:
         values["output"] = output
     return values

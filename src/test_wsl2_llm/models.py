@@ -54,6 +54,11 @@ class TestConfig(BaseModel):
     max_copy_back_files: int = 100
     cleanup: bool = False
 
+    @property
+    def model_selector(self) -> str:
+        """Canonical model and effort identity, retaining the runner's separate fields."""
+        return f"{self.model}:{self.reasoning_effort}"
+
     @model_validator(mode="before")
     @classmethod
     def split_model_and_effort(cls, value: Any) -> Any:

@@ -330,8 +330,8 @@ def template_run(
         typer.Argument(help="Optional question IDs to run; omit to run every question."),
     ] = None,
     model: Annotated[
-        str | None,
-        typer.Option(help="Codex model as MODEL[:EFFORT]; defaults to the template value."),
+        list[str] | None,
+        typer.Option(help="Codex MODEL[:EFFORT]; repeatable; replaces template model(s)."),
     ] = None,
     marketplace: Annotated[
         list[str] | None,
@@ -457,7 +457,7 @@ def template_run(
         ),
     ] = 0,
 ) -> None:
-    """Run a prompt template once for every question and repetition."""
+    """Run a prompt template for every model, question, and repetition."""
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
@@ -489,7 +489,6 @@ def template_run(
                 entry for entry in rendered_questions if entry[0] in selected
             ]
         cli_values = {
-            "model": model,
             "marketplaces": marketplace,
             "plugins": plugin,
             "copy_files": copy_file,
@@ -515,7 +514,16 @@ def template_run(
         }
         base_values = dict(shared)
         base_values["prompt"] = rendered_questions[0][1]
-        resolved_base = build_config(base_values, cli_values)
+        selectors = model if model is not None else batch.models
+        if selectors is None:
+            selectors = [shared.get("model")]
+        resolved_models = [
+            build_config(base_values, {**cli_values, "model": selector}) for selector in selectors
+        ]
+        identities = [entry.model_selector for entry in resolved_models]
+        if len(set(identity.casefold() for identity in identities)) != len(identities):
+            raise ValueError("model selectors may not be repeated (including equivalent efforts)")
+        resolved_base = resolved_models[0]
         if config_only and not save_config_path:
             raise ValueError("--config-only requires --save-config")
         if save_config_path:
@@ -526,6 +534,10 @@ def template_run(
                 repeat=effective_repeat,
                 threads=effective_threads,
             )
+            if batch.models is not None or model is not None:
+                saved.pop("model", None)
+                saved.pop("reasoning_effort", None)
+                saved["models"] = identities
             save_config_path = save_config_path.resolve()
             save_config_path.parent.mkdir(parents=True, exist_ok=True)
             save_config_path.write_text(
@@ -536,49 +548,51 @@ def template_run(
             return
 
         jobs: list[tuple[int, str, int, object]] = []
-        for question_index, (identifier, prompt_text, question_values) in enumerate(
-            rendered_questions, start=1
-        ):
-            question_jobs: list[tuple[int, str, int, object]] = []
-            for repetition in range(1, effective_repeat + 1):
-                run_values = dict(shared)
-                run_values["prompt"] = prompt_text
-                run_values["output"] = resolved_base.output
-                run_values["copy_back"] = question_copy_back(
-                    list(shared.get("copy_back", [])), question_values
-                )
-                run_config = build_config(run_values, cli_values)
-                run_config = run_config.model_copy(
-                    update={
-                        "output": template_output(
-                            run_config.output, identifier, repetition, effective_repeat
+        destinations: set[str] = set()
+        for model_index, model_config in enumerate(resolved_models):
+            for question_index, (identifier, prompt_text, question_values) in enumerate(
+                rendered_questions, start=1
+            ):
+                for repetition in range(1, effective_repeat + 1):
+                    run_values = dict(shared)
+                    run_values["prompt"] = prompt_text
+                    run_values["output"] = resolved_base.output
+                    run_values["copy_back"] = question_copy_back(
+                        list(shared.get("copy_back", [])), question_values
+                    )
+                    run_config = build_config(
+                        run_values, {**cli_values, "model": model_config.model_selector}
+                    )
+                    run_config = run_config.model_copy(
+                        update={
+                            "output": template_output(
+                                run_config.output, identifier, repetition, effective_repeat,
+                                run_config.model_selector,
+                            )
+                        }
+                    )
+                    paths = output_paths(run_config.output)
+                    destination_key = str(paths[0]).casefold()
+                    if destination_key in destinations:
+                        raise ValueError(f"duplicate result destination: {paths[0]}")
+                    destinations.add(destination_key)
+                    existing = [path for path in paths if path.exists()]
+                    label = f"{identifier} [{run_config.model_selector}] repeat {repetition}"
+                    if existing and not resolved_base.overwrite:
+                        logger.warning(
+                            "Skipping %s; results exist in %s. Use --force to rerun.",
+                            label, paths[0].parent,
                         )
-                    }
-                )
-                question_jobs.append((question_index, identifier, repetition, run_config))
-
-            existing = [
-                path
-                for _question_index, _identifier, _repetition, run_config in question_jobs
-                for path in output_paths(run_config.output)
-                if path.exists()
-            ]
-            if existing and not resolved_base.overwrite:
-                destination = Path(question_jobs[0][3].output).parent
-                logger.warning(
-                    "Skipping %s; results exist in %s. Use --force to rerun.",
-                    identifier,
-                    destination,
-                )
-                continue
-            if existing:
-                destination = Path(question_jobs[0][3].output).parent
-                logger.info(
-                    "Rerunning %s; results exist in %s (--force).",
-                    identifier,
-                    destination,
-                )
-            jobs.extend(question_jobs)
+                        continue
+                    if existing:
+                        logger.info(
+                            "Rerunning %s; results exist in %s (--force).",
+                            label, paths[0].parent,
+                        )
+                    jobs.append((
+                        model_index * len(rendered_questions) + question_index,
+                        label, repetition, run_config,
+                    ))
 
         if not jobs:
             console.print("No questions to run.")

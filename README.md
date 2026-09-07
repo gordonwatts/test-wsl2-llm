@@ -48,7 +48,7 @@ Create a starter batch file, then edit its prompt and questions:
 test-wsl2-llm template init .\questions.yaml
 ```
 
-Run the template with one isolated WSL2 job per question (and per repetition):
+Run the template with one isolated WSL2 job per model, question, and repetition:
 
 ```powershell
 test-wsl2-llm template run .\questions.yaml
@@ -69,10 +69,31 @@ test-wsl2-llm template run .\questions.yaml --question q1 --question q3
 If no IDs are supplied, every question is run. Unknown or duplicate IDs are
 rejected before any WSL job starts.
 
-Template runs are resumable by default. If any Markdown or YAML result already
-exists for a question, that question (including its repetitions) is skipped and
-a warning tells you to use `--force`. Supplying `--force` reruns existing
-questions and reports that choice in the warning.
+Template runs are resumable by default. If a Markdown or YAML result already
+exists for a model/effort, question, and repetition, only that cell is skipped.
+Other models and missing repetitions still run. Supplying `--force` reruns all
+selected cells and overwrites their reports.
+
+Repeat `--model` to compare model/effort combinations (this replaces the YAML
+model selection):
+
+```powershell
+test-wsl2-llm template run .\questions.yaml --model gpt-5.4:high --model gpt-5.4:low
+```
+
+Alternatively, use a YAML list:
+
+```yaml
+models:
+  - gpt-5.4:high
+  - gpt-5.4:low
+```
+
+The existing scalar `model: MODEL:EFFORT` and single `--model MODEL:EFFORT`
+remain supported. `models` takes precedence over a scalar `model` when both are
+present. An omitted effort uses `reasoning_effort` (default `medium`). Empty or
+duplicate model selections are rejected before execution. `--save-config`
+preserves the effective model list for subsequent runs.
 
 The YAML uses a shared `prompt_template` and a list of question mappings. Every
 mapping needs a unique, filename-safe `id`; its scalar fields are available through strict
@@ -104,9 +125,14 @@ repeat: 2
 threads: 4
 ```
 
-This writes `analysis-etmiss-001.md` and matching YAML and copied-back artifacts,
-then the corresponding files for `leading-jet-pt`. With `repeat: 1`, the numeric
-suffix is omitted. `threads` limits total simultaneous jobs across all questions
+This writes `analysis-etmiss-MODEL%3Ahigh-001.md` and matching YAML and copied-back
+artifacts, then the corresponding files for `leading-jet-pt`. Every report name
+includes the full model/effort selector, including for single-model runs. Selector
+punctuation is percent-encoded for Windows filenames: `gpt-5.4:high` becomes
+`gpt-5%2E4%3Ahigh`. Periods in output stems and question IDs are also encoded to preserve the full
+stem. Existing reports using the older names without a selector are left in place
+and do not mark a matrix cell complete. With `repeat: 1`, the numeric suffix is
+omitted. `threads` limits total simultaneous jobs across all models, questions,
 and repetitions. The command accepts the shared `run` options as CLI overrides,
 including `--model`, `--output`, `--repeat`, `--threads`, and `--force`.
 
