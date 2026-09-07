@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 
 from .models import TestResult, ValidationResult, ValidatorConfig
+from .validation_numeric import NumCompareArguments, num_compare
 
 
 class RequireStringArguments(BaseModel):
@@ -33,6 +34,7 @@ def require_string(result: TestResult, *, string: str) -> tuple[bool, str]:
 
 REGISTRY: dict[str, tuple[type[BaseModel], Callable[..., tuple[bool, str]]]] = {
     "require_string": (RequireStringArguments, require_string),
+    "num_compare": (NumCompareArguments, num_compare),
 }
 
 
