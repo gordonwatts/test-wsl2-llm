@@ -142,7 +142,10 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
     assert result.exit_code == 0, result.output
     assert sorted(output for output, _prompt in calls) == sorted(
         str(tmp_path / "results" / name)
-        for name in ("run-etmiss-001", "run-etmiss-002", "run-jets-001", "run-jets-002")
+        for name in (
+            "run-etmiss-gpt-test%3Amedium-001", "run-etmiss-gpt-test%3Amedium-002",
+            "run-jets-gpt-test%3Amedium-001", "run-jets-gpt-test%3Amedium-002",
+        )
     )
     assert {prompt for _output, prompt in calls} == {"Do ETmiss for a", "Do jets for b"}
 
@@ -233,7 +236,7 @@ def test_template_run_skips_questions_with_existing_results_by_default(
         "model: test-model\noutput: results/run\n",
         encoding="utf-8",
     )
-    existing = tmp_path / "results" / "run-q1.yaml"
+    existing = tmp_path / "results" / "run-q1-test-model%3Amedium.yaml"
     existing.parent.mkdir()
     existing.write_text("existing", encoding="utf-8")
 
@@ -267,7 +270,7 @@ def test_template_run_force_reruns_questions_with_existing_results(
         "model: test-model\noutput: results/run\noverwrite: true\n",
         encoding="utf-8",
     )
-    existing = tmp_path / "results" / "run-q1.md"
+    existing = tmp_path / "results" / "run-q1-test-model%3Amedium.md"
     existing.parent.mkdir()
     existing.write_text("existing", encoding="utf-8")
 
@@ -381,3 +384,121 @@ def test_template_run_cli_overrides_and_global_threads(monkeypatch, tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     assert maximum == 2
+
+
+@pytest.mark.parametrize("from_cli", [False, True])
+def test_model_matrix_expands_and_resumes_individual_cells(monkeypatch, tmp_path, from_cli):
+    calls = []
+    written = []
+
+    def fake_run(config, **_kwargs):
+        calls.append(config)
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        paths = output_paths(output)
+        for path in paths:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("completed", encoding="utf-8")
+        written.append((paths, overwrite))
+        return paths
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+    selectors = ["gpt-5.4:high", "gpt-5.4:low", "gpt-5.5:high"]
+    values = {
+        "prompt_template": "Do {{ question }}",
+        "questions": [{"id": "q1", "question": "first"}, {"id": "q2", "question": "second"}],
+        "output": "results/run", "repeat": 2,
+        "models": ["unused:medium"] if from_cli else selectors,
+    }
+    config = tmp_path / "matrix.yaml"
+    config.write_text(yaml.safe_dump(values), encoding="utf-8")
+    args = ["template", "run", str(config)]
+    if from_cli:
+        for selector in selectors:
+            args.extend(["--model", selector])
+    existing = output_paths(template_output(
+        str(tmp_path / "results/run"), "q1", 1, 2, selectors[0]
+    ))[1]
+    existing.parent.mkdir()
+    existing.write_text("already completed", encoding="utf-8")
+
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    expected = {
+        (selector, prompt, repetition)
+        for selector in selectors for prompt in ["Do first", "Do second"]
+        for repetition in [1, 2]
+    } - {(selectors[0], "Do first", 1)}
+    assert {(c.model_selector, c.prompt, int(c.output[-3:])) for c in calls} == expected
+    assert len({paths[0] for paths, _ in written}) == 11
+    assert all(not overwrite for _, overwrite in written)
+    assert existing.read_text(encoding="utf-8") == "already completed"
+    calls.clear()
+    resumed = runner.invoke(app, args)
+    assert resumed.exit_code == 0, resumed.output
+    assert not calls
+    assert "No questions to run" in resumed.output
+
+    forced = runner.invoke(app, [*args, "--force"])
+    assert forced.exit_code == 0, forced.output
+    assert len(calls) == 12
+    assert all(overwrite for _, overwrite in written[-12:])
+
+
+def test_matrix_save_config_round_trip_and_single_model_override(monkeypatch, tmp_path):
+    config = tmp_path / "matrix.yaml"
+    config.write_text(yaml.safe_dump({
+        "prompt_template": "{{ question }}",
+        "questions": [{"id": "q1", "question": "first"}],
+        "model": "legacy:low", "models": ["test:high", "test:low"],
+        "output": "results/run",
+    }), encoding="utf-8")
+    saved = tmp_path / "saved.yaml"
+    result = runner.invoke(app, [
+        "template", "run", str(config), "--save-config", str(saved), "--config-only",
+    ])
+    assert result.exit_code == 0, result.output
+    values = yaml.safe_load(saved.read_text(encoding="utf-8"))
+    assert values["models"] == ["test:high", "test:low"]
+    assert "model" not in values
+    calls = []
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", lambda c, **kw: (
+        calls.append(c) or sample_result()
+    ))
+    monkeypatch.setattr(
+        "test_wsl2_llm.report.write_reports", lambda r, o, overwrite: output_paths(o)
+    )
+    result = runner.invoke(app, ["template", "run", str(saved)])
+    assert result.exit_code == 0, result.output
+    assert [c.model_selector for c in calls] == ["test:high", "test:low"]
+    calls.clear()
+    result = runner.invoke(app, ["template", "run", str(saved), "--model", "override:xhigh"])
+    assert result.exit_code == 0, result.output
+    assert [c.model_selector for c in calls] == ["override:xhigh"]
+
+
+@pytest.mark.parametrize("models", [[], [""], ["test:invalid"], ["test", "test:medium"]])
+def test_matrix_rejects_invalid_models_before_execution(monkeypatch, tmp_path, models):
+    calls = []
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", lambda *a, **kw: calls.append(a))
+    config = tmp_path / "invalid.yaml"
+    config.write_text(yaml.safe_dump({
+        "prompt_template": "{{ question }}",
+        "questions": [{"id": "q1", "question": "first"}],
+        "models": models,
+    }), encoding="utf-8")
+    result = runner.invoke(app, ["template", "run", str(config)])
+    assert result.exit_code == 2, result.output
+    assert not calls
+
+
+def test_template_names_keep_entire_selector_and_dotted_question_id():
+    stems = [template_output("run.v1", "q.1", 1, 1, selector) for selector in [
+        "gpt-5.4:high", "gpt-5.4:low", "gpt-5.5:high", "org/model:high", "org%2Fmodel:high",
+    ]]
+    paths = [output_paths(stem)[0] for stem in stems]
+    assert len(set(paths)) == len(stems)
+    assert all(path.stem == stem for path, stem in zip(paths, stems, strict=True))
+    assert "gpt-5%2E4%3Ahigh" in stems[0]
