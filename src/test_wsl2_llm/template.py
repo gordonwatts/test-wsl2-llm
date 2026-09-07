@@ -32,6 +32,7 @@ questions:
 model: MODEL:medium
 marketplaces: []
 plugins: []
+mcp_servers: []
 copy_files: []
 copy_back:
   - plot_*.png

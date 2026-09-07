@@ -80,6 +80,10 @@ def run(
         list[str] | None,
         typer.Option("--plugin", help="Plugin selector such as NAME@MARKETPLACE; repeatable."),
     ] = None,
+    mcp: Annotated[
+        list[str] | None,
+        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+    ] = None,
     copy_file: Annotated[
         list[str] | None,
         typer.Option(
@@ -211,6 +215,7 @@ def run(
             "model": model,
             "marketplaces": marketplace,
             "plugins": plugin,
+            "mcp_servers": mcp,
             "copy_files": copy_file,
             "copy_back": copy_back,
             "environment": _environment_cli_values(unset_env, path_remove),
@@ -343,6 +348,10 @@ def template_run(
     plugin: Annotated[
         list[str] | None,
         typer.Option("--plugin", help="Plugin selector such as NAME@MARKETPLACE; repeatable."),
+    ] = None,
+    mcp: Annotated[
+        list[str] | None,
+        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
     ] = None,
     copy_file: Annotated[
         list[str] | None,
@@ -492,6 +501,7 @@ def template_run(
             "model": model,
             "marketplaces": marketplace,
             "plugins": plugin,
+            "mcp_servers": mcp,
             "copy_files": copy_file,
             "copy_back": copy_back,
             "environment": _environment_cli_values(unset_env, path_remove),
@@ -761,6 +771,10 @@ def continue_work(
         list[str] | None,
         typer.Option("--plugin", help="New plugin selector; repeatable."),
     ] = None,
+    mcp: Annotated[
+        list[str] | None,
+        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+    ] = None,
     copy_file: Annotated[
         list[str] | None,
         typer.Option(
@@ -889,6 +903,10 @@ def continue_work(
             file_values.get("plugins", []),
             plugin or [],
         )
+        defaults["mcp_servers"] = _merge_strings(
+            defaults.get("mcp_servers", []),
+            mcp or [],
+        )
         defaults["copy_files"] = _merge_strings(
             previous.configuration.get("copy_files", []),
             file_values.get("copy_files", []),
@@ -907,6 +925,7 @@ def continue_work(
             "model": model,
             "marketplaces": defaults["marketplaces"],
             "plugins": defaults["plugins"],
+            "mcp_servers": defaults["mcp_servers"],
             "copy_files": defaults["copy_files"],
             "copy_back": defaults["copy_back"],
             "environment": _environment_cli_values(unset_env, path_remove),

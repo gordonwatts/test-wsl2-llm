@@ -14,6 +14,7 @@ dependencies = [
   "pydantic>=2.10",
   "pyyaml>=6.0",
   "rich>=13.9",
+  "tomli-w>=1.2",
   "typer>=0.15",
   "uproot>=5.0",
 ]

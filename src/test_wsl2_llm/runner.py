@@ -13,6 +13,7 @@ import re
 import subprocess
 import threading
 import time
+import tomllib
 from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -20,6 +21,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any, TextIO
 from urllib.parse import urlparse
 
+import tomli_w
 import uproot
 import yaml
 from rich.console import Console
@@ -262,6 +264,7 @@ def run_test(
     pricing_valid = False
 
     try:
+        codex_configuration = _codex_config(config)
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
@@ -293,7 +296,7 @@ def run_test(
                 codex_home,
                 resolved_auth,
             )
-            _write_wsl_file(client, f"{codex_home}/config.toml", _codex_config(config))
+            _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
             installed_plugin_roots: list[str] = []
@@ -489,6 +492,7 @@ def continue_test(
     pricing_valid = False
 
     try:
+        codex_configuration = _codex_config(config)
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
@@ -522,7 +526,7 @@ def continue_test(
                 codex_home,
                 resolved_auth,
             )
-            _write_wsl_file(client, f"{codex_home}/config.toml", _codex_config(config))
+            _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
             installed_plugin_roots: list[str] = []
@@ -953,7 +957,7 @@ def _installed_paths_from_json(output: str) -> list[str]:
 
 
 def _codex_config(config: TestConfig) -> str:
-    return "\n".join(
+    content = "\n".join(
         [
             f"model = {json.dumps(config.model)}",
             f"model_reasoning_effort = {json.dumps(config.reasoning_effort)}",
@@ -966,6 +970,36 @@ def _codex_config(config: TestConfig) -> str:
             "",
         ]
     )
+
+    servers = _load_mcp_servers(config.mcp_servers)
+    if servers:
+        content += "\n" + tomli_w.dumps({"mcp_servers": servers})
+    return content
+
+
+def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
+    """Import selected Windows Codex server tables without recording their contents."""
+    if not names:
+        return {}
+    local_home = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex").expanduser()
+    source = local_home / "config.toml"
+    try:
+        with source.open("rb") as stream:
+            document = tomllib.load(stream)
+    except (OSError, ValueError):
+        # TOML errors can contain source fragments, including credentials.
+        raise ValueError(f"Cannot read local Codex MCP configuration '{source}' "
+                         "as TOML; check that the file exists and is valid.") from None
+    servers = document.get("mcp_servers", {})
+    selected: dict[str, Any] = {}
+    for name in names:
+        if not isinstance(servers, dict) or name not in servers:
+            raise ValueError(f"MCP server '{name}' was not found in '{source}' "
+                             "under [mcp_servers].")
+        if not isinstance(servers[name], dict):
+            raise ValueError(f"MCP server '{name}' in '{source}' must be a TOML table.")
+        selected[name] = servers[name]
+    return selected
 
 
 def _write_wsl_file(client: WslClient, path: str, content: str) -> None:
