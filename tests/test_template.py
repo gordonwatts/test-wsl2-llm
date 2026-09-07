@@ -461,7 +461,7 @@ def test_model_matrix_expands_and_resumes_individual_cells(monkeypatch, tmp_path
     } - {(selectors[0], "Do first", 1)}
     assert {(c.model_selector, c.prompt, int(c.output[-3:])) for c in calls} == expected
     assert len({paths[0] for paths, _ in written}) == 11
-    assert all(not overwrite for _, overwrite in written)
+    assert all(overwrite for _, overwrite in written)
     assert existing.read_text(encoding="utf-8") == "already completed"
     calls.clear()
     resumed = runner.invoke(app, args)

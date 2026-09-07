@@ -180,7 +180,9 @@ def run(
     ] = None,
     cleanup: Annotated[
         bool | None,
-        typer.Option("--cleanup/--keep-workspace", help="Remove WSL run root after collection."),
+        typer.Option(
+            "--cleanup/--keep-workspace", help="Remove run root after collection (default)."
+        ),
     ] = None,
     config: Annotated[Path | None, typer.Option(help="Input YAML configuration file.")] = None,
     save_config_path: Annotated[
@@ -274,8 +276,11 @@ def run(
                 live_progress=repeat_display is None,
                 log_callback=repeat_display.log if repeat_display is not None else None,
                 invocation=sys.argv,
+                report_callback=lambda collected: write_reports(
+                    collected, run_output, resolved.overwrite
+                ),
             )
-            markdown_path, yaml_path = write_reports(result, run_output, resolved.overwrite)
+            markdown_path, yaml_path = write_reports(result, run_output, True)
             return index, markdown_path, yaml_path, result.run.exit_code
 
         exit_codes: list[int] = []
@@ -444,7 +449,7 @@ def template_run(
     cleanup: Annotated[
         bool | None,
         typer.Option(
-            "--cleanup/--keep-workspace", help="Remove WSL run roots after collection."
+            "--cleanup/--keep-workspace", help="Remove run roots after collection (default)."
         ),
     ] = None,
     save_config_path: Annotated[
@@ -632,9 +637,12 @@ def template_run(
                 live_progress=repeat_display is None,
                 log_callback=repeat_display.log if repeat_display is not None else None,
                 invocation=sys.argv,
+                report_callback=lambda collected: write_reports(
+                    collected, run_config.output, resolved_base.overwrite
+                ),
             )
             markdown_path, yaml_path = write_reports(
-                result, run_config.output, resolved_base.overwrite
+                result, run_config.output, True
             )
             return (
                 question_index,
@@ -751,9 +759,9 @@ def connect(
         result = _load_result_yaml(input_yaml)
         workspace = result.run.workspace_path
         if not workspace:
-            raise ValueError("the result does not contain a retained workspace path")
+            raise ValueError("no retained workspace path; rerun with --keep-workspace")
         if not result.run.workspace_retained:
-            raise ValueError("the result workspace was not retained; rerun without --cleanup")
+            raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
 
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
         client = WslClient(result.run.distro, policy)
@@ -898,7 +906,7 @@ def continue_work(
     try:
         previous = _load_result_yaml(input_yaml)
         if not previous.run.workspace_path or not previous.run.workspace_retained:
-            raise ValueError("the result workspace was not retained; rerun without --cleanup")
+            raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
         file_values = load_config_file(config) if config else {}
         has_new_prompt = prompt is not None or prompt_file is not None or "prompt" in file_values
         # ``continuation_of`` is report metadata added to continuation results,
@@ -1015,7 +1023,7 @@ def _connect_command(
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path
     if not workspace:
-        raise ValueError("the result does not contain a retained workspace path")
+        raise ValueError("no retained workspace path; rerun with --keep-workspace")
     client = client or WslClient(result.run.distro)
     if access == "shell":
         if resume:

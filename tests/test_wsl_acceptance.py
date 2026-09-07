@@ -85,6 +85,7 @@ def test_atlas_al9_hello_world(tmp_path: Path, pytestconfig: pytest.Config) -> N
             app,
             [
                 "run",
+                "--keep-workspace",
                 "--distro",
                 distro,
                 "--model",
@@ -151,6 +152,7 @@ def test_atlas_al9_transfers_and_uses_skill(tmp_path: Path, pytestconfig: pytest
             app,
             [
                 "run",
+                "--keep-workspace",
                 "--config",
                 str(input_config),
                 "--marketplace",
@@ -199,6 +201,7 @@ def test_atlas_al9_clones_and_uses_git_marketplace(
             app,
             [
                 "run",
+                "--keep-workspace",
                 "--distro",
                 distro,
                 "--model",

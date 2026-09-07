@@ -98,6 +98,9 @@ def render_markdown(
     )
 
     run = result.run
+    workspace_label = "(removed)" if any(
+        phase.name == "workspace_cleanup" for phase in result.timing.phases
+    ) else "(not created)"
     lines.extend(
         [
             "",
@@ -114,7 +117,7 @@ def render_markdown(
             f"| Exit code | {run.exit_code} |",
             f"| Distribution | {run.distro or '(default)'} |",
             f"| Codex version | {run.codex_version or '(unavailable)'} |",
-            f"| Workspace | {run.workspace_path or '(not created)'} |",
+            f"| Workspace | {run.workspace_path or workspace_label} |",
             f"| Workspace retained | {run.workspace_retained} |",
         ]
     )

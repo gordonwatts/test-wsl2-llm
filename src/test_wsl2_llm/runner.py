@@ -233,6 +233,7 @@ def run_test(
     live_progress: bool = True,
     log_callback: Callable[[str], None] | None = None,
     invocation: list[str] | None = None,
+    report_callback: Callable[[TestResult], None] | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
@@ -254,6 +255,7 @@ def run_test(
     exit_code = 1
     error: str | None = None
     retained = False
+    files: list[WorkspaceFile] = []
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
     runtime_marketplaces: list[str] = []
@@ -375,40 +377,48 @@ def run_test(
             session_traces, session_events = _session_traces(client, codex_home)
             trace_events.extend(session_events)
 
-        retained = not config.cleanup
-        if config.cleanup:
-            client.bash('rm -rf -- "$1"', run_root)
-            workspace_path = None
-    except Exception as exc:  # A failure report is part of the public contract.
-        error = str(exc)
+    except (Exception, KeyboardInterrupt) as exc:  # Preserve a report even on interruption.
+        error = str(exc) or "Run interrupted by keyboard interrupt"
         LOGGER.exception("WSL Codex test failed")
-        files = []
-        copied_back = []
-        exit_code = exit_code or 1
+        exit_code = 130 if isinstance(exc, KeyboardInterrupt) else (exit_code or 1)
         if workspace_path and run_root:
-            try:
-                with state.phase("workspace_inventory"):
-                    files = _inventory(client, workspace_path)
-                with state.phase("session_trace_collection"):
-                    traces, session_events = _session_traces(client, codex_home)
-                    session_traces.extend(traces)
-                    trace_events.extend(session_events)
-                retained = not config.cleanup
-                if config.cleanup:
-                    client.bash('rm -rf -- "$1"', run_root)
-                    workspace_path = None
-            except Exception as collection_error:
-                error = f"{error}; result collection failed: {collection_error}"
+            for name, collect in (
+                ("workspace_inventory", lambda: _inventory(client, workspace_path)),
+                ("copy_back", lambda: _copy_back_files(
+                    client, config.copy_back, workspace_path, config.output,
+                    max_files=config.max_copy_back_files, missing=missing_copy_back,
+                )),
+                ("session_trace_collection", lambda: _session_traces(client, codex_home)),
+            ):
+                try:
+                    with state.phase(name):
+                        collected = collect()
+                    if name == "workspace_inventory":
+                        files = collected
+                    elif name == "copy_back":
+                        copied_back = collected
+                    else:
+                        traces, session_events = collected
+                        session_traces.extend(traces)
+                        trace_events.extend(session_events)
+                except (Exception, KeyboardInterrupt) as collection_error:
+                    error = f"{error}; {name} failed: {collection_error}"
     finally:
+        # Collection failures must never prevent cleanup or hide the original error.
+        retained = run_root is not None
         if codex_home:
-            client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
+            try:
+                client.bash('rm -f -- "$1/auth.json"', codex_home)
+            except (Exception, KeyboardInterrupt) as auth_error:
+                error = f"{error + '; ' if error else ''}auth cleanup failed: {auth_error}"
+                exit_code = exit_code or 1
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
     if pricing_valid:
         model_information = load_and_calculate_costs(usage, config.pricing_file)
     final_message = final_message_from_events(parsed_events)
-    report = TestResult(
+    result = TestResult(
         prompt=config.prompt,
         title=config.title,
         invocation=_display_argv(invocation or []),
@@ -446,7 +456,30 @@ def run_test(
             session_traces=session_traces,
         ),
     )
-    return apply_validators(report, config.validators)
+    result = apply_validators(result, config.validators)
+
+    # Persist collected evidence before deleting the only WSL copy. A report-write
+    # failure leaves the workspace available for recovery.
+    if report_callback is not None:
+        report_callback(result)
+    if run_root and config.cleanup:
+        try:
+            with state.phase("workspace_cleanup"):
+                client.bash('rm -rf -- "$1"', run_root)
+            result.run.workspace_path = None
+            result.run.workspace_retained = False
+        except (Exception, KeyboardInterrupt) as cleanup_error:
+            previous_error = result.run.error
+            result.run.error = (
+                f"{previous_error + '; ' if previous_error else ''}"
+                f"workspace cleanup failed: {cleanup_error}"
+            )
+            result.run.exit_code = result.run.exit_code or 1
+            result.run.status = "failed"
+        result.timing.phases = state.phases
+        result.run.finished_at = utc_now()
+        result.run.total_duration_seconds = time.perf_counter() - state.started_monotonic
+    return result
 
 
 def continue_test(
@@ -629,7 +662,7 @@ def continue_test(
     conversation = [*history, ConversationTurn(prompt=prompt, final_response=final_message)]
     continuation_config = config.model_dump(mode="json")
     continuation_config["continuation_of"] = workspace_path
-    report = TestResult(
+    result = TestResult(
         prompt=prompt,
         title=config.title,
         invocation=_display_argv(invocation or []),
@@ -668,8 +701,8 @@ def continue_test(
             session_traces=session_traces,
         ),
     )
-    return apply_validators(report, config.validators)
-
+    result = apply_validators(result, config.validators)
+    return result
 
 def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
     """Prefix a new prompt with the self-contained prompt/response chain."""
