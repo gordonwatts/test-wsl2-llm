@@ -25,6 +25,21 @@ class EnvironmentPolicy(BaseModel):
         return values
 
 
+class ValidatorConfig(BaseModel):
+    """A named validator and its keyword arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidationResult(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    passed: bool
+    message: str
+
+
 class TestConfig(BaseModel):
     """All behavior-affecting settings for one WSL Codex test."""
 
@@ -39,6 +54,7 @@ class TestConfig(BaseModel):
     mcp_servers: list[str] = Field(default_factory=list)
     copy_files: list[str] = Field(default_factory=list)
     copy_back: list[str] = Field(default_factory=list)
+    validators: list[ValidatorConfig] = Field(default_factory=list)
     environment: EnvironmentPolicy = Field(default_factory=EnvironmentPolicy)
     distro: str | None = None
     wsl_parent: str = "/tmp"
@@ -54,6 +70,11 @@ class TestConfig(BaseModel):
     timeout_seconds: float | None = 1800.0
     max_copy_back_files: int = 100
     cleanup: bool = False
+
+    @property
+    def model_selector(self) -> str:
+        """Canonical model and effort identity, retaining the runner's separate fields."""
+        return f"{self.model}:{self.reasoning_effort}"
 
     @model_validator(mode="before")
     @classmethod
@@ -259,3 +280,4 @@ class TestResult(BaseModel):
     missing_copy_back: list[str] = Field(default_factory=list)
     command: CommandResult
     logs: LogsResult
+    validation: list[ValidationResult] = Field(default_factory=list)
