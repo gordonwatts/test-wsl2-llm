@@ -1,6 +1,7 @@
 """Compare named numeric output with absolute or relative tolerance."""
 import math
 import re
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -48,16 +49,18 @@ def num_compare(
 
     numeric = r"[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?"
     pattern = rf"(?<!\w){re.escape(var_name)}\s*=\s*({numeric})(?![\w.])"
-    matches = [float(m.group(1)) for m in re.finditer(pattern, output_text(result))]
+    matches = [Decimal(m.group(1)) for m in re.finditer(pattern, output_text(result))]
     if not matches:
         return False, f"No numeric assignment for {var_name!r} found."
     relative = isinstance(tolerance, str)
-    limit = abs(number) * float(tolerance[:-1]) / 100 if relative else tolerance
+    expected = Decimal(str(number))
+    limit = (abs(expected) * Decimal(tolerance[:-1]) / 100
+             if relative else Decimal(str(tolerance)))
     # A zero reference permits only exact zero for percentage tolerance.
     passed = any(
-        math.isfinite(value) and (
-            value == number if limit == 0 else
-            abs(value - number) < limit if relative else abs(value - number) <= limit
+        value.is_finite() and (
+            value == expected if limit == 0 else
+            abs(value - expected) < limit if relative else abs(value - expected) <= limit
         ) for value in matches
     )
     return passed, f"{var_name}: observed {matches}; expected {number}, tolerance {tolerance}."

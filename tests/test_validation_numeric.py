@@ -6,6 +6,7 @@ from test_wsl2_llm.validation import apply_validators, validate_configuration
 
 
 @pytest.mark.parametrize("text,number,tolerance,passed", [
+    ("x=1.1", 1.0, 0.1, True),
     ("x=1.1", 1.0, 0.2, True), ("x=1.3", 1.0, 0.2, False),
     ("x = -1.02e2", -100.0, "5%", True), ("x=105", 100.0, "5%", False),
     ("x=0", 0.0, "5%", True), ("x=.1", 0.0, "5%", False),
