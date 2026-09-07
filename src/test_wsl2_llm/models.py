@@ -52,7 +52,7 @@ class TestConfig(BaseModel):
     progress_lines: int = 5
     timeout_seconds: float | None = 1800.0
     max_copy_back_files: int = 100
-    cleanup: bool = False
+    cleanup: bool = True
 
     @model_validator(mode="before")
     @classmethod

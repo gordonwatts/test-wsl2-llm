@@ -193,7 +193,7 @@ test-wsl2-llm connect .\results\hello.yaml --access shell
 
 The `--resume` form launches
 `codex resume --last --cd <workspace>`, selecting the newest session in that run's retained
-isolated Codex home. The run must have been created without `--cleanup`.
+isolated Codex home. The run must have been created with `--keep-workspace` (or YAML `cleanup: false`).
 
 Start a fresh, non-resumed conversation in the same retained workspace with a new prompt:
 
@@ -318,3 +318,18 @@ The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records
 The normal progress display retains only the five most recent lines and prefixes each with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
 Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.
+
+### Workspace lifetime
+
+`run` and `template run` remove each temporary WSL run root by default after
+writing reports and collecting copied-back artifacts, including failed, timed-out,
+and interrupted runs. Reports record `workspace_retained: false` and no workspace
+path after successful removal. Use `--keep-workspace` for interactive `connect`
+or `continue` work. The existing YAML setting `cleanup: false` is the equivalent
+opt-out; `cleanup: true` is now the default and is written by `--save-config`.
+Older configurations with an explicit `cleanup: false` still retain workspaces.
+`continue` always retains its new workspace, so another continuation is possible.
+Cleanup failures are included in the report and leave the workspace marked retained.
+
+If report writing fails, the workspace is preserved for recovery. Reports are then
+updated after cleanup to record whether removal succeeded.
