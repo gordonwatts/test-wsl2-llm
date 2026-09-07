@@ -48,6 +48,8 @@ def root_tree(
             if not getattr(obj, "classname", "").startswith(("TTree", "ROOT::RNTuple")):
                 return False, f"ROOT object {tree!r} is not a tree."
             leaves = set(obj.keys(recursive=True))
+            if not leaves:
+                return False, f"ROOT tree {tree!r} has no branches."
     except Exception as error:
         return False, f"Cannot read ROOT tree {tree!r}: {error}"
     missing = set(must_have) - leaves

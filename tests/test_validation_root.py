@@ -57,3 +57,41 @@ def test_invalid_local_root_file(tmp_path):
     })]).validation[0]
     assert not check.passed
     assert "Cannot read" in check.message
+
+
+def test_rntuple(tmp_path):
+    path = tmp_path / "tuple.root"
+    with uproot.recreate(path) as root:
+        root["events"] = {"pt": np.array([1.0])}
+    result = sample_result()
+    result.copied_back = [CopiedBackFile(
+        source="tuple.root", destination=str(path), type="file", size=path.stat().st_size,
+    )]
+    check = apply_validators(result, [ValidatorConfig(name="root_tree", arguments={
+        "file": "tuple.root", "tree": "events", "must_have": ["pt"],
+        "no_other_leaves": True,
+    })]).validation[0]
+    assert check.passed
+
+
+def test_empty_tree_rejected(tmp_path, monkeypatch):
+    from unittest.mock import MagicMock
+
+    path = tmp_path / "empty.root"
+    path.touch()
+    root = MagicMock()
+    root.__contains__.return_value = True
+    root.__getitem__.return_value.classname = "TTree"
+    root.__getitem__.return_value.keys.return_value = []
+    context = MagicMock()
+    context.__enter__.return_value = root
+    monkeypatch.setattr(uproot, "open", lambda _: context)
+    result = sample_result()
+    result.copied_back = [CopiedBackFile(
+        source="empty.root", destination=str(path), type="file", size=0,
+    )]
+    check = apply_validators(result, [ValidatorConfig(name="root_tree", arguments={
+        "file": "empty.root", "tree": "events",
+    })]).validation[0]
+    assert not check.passed
+    assert "no branches" in check.message
