@@ -25,6 +25,21 @@ class EnvironmentPolicy(BaseModel):
         return values
 
 
+class ValidatorConfig(BaseModel):
+    """A named validator and its keyword arguments."""
+
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1)
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ValidationResult(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    passed: bool
+    message: str
+
+
 class TestConfig(BaseModel):
     """All behavior-affecting settings for one WSL Codex test."""
 
@@ -36,8 +51,10 @@ class TestConfig(BaseModel):
     reasoning_effort: ReasoningEffort = "medium"
     marketplaces: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
+    mcp_servers: list[str] = Field(default_factory=list)
     copy_files: list[str] = Field(default_factory=list)
     copy_back: list[str] = Field(default_factory=list)
+    validators: list[ValidatorConfig] = Field(default_factory=list)
     environment: EnvironmentPolicy = Field(default_factory=EnvironmentPolicy)
     distro: str | None = None
     wsl_parent: str = "/tmp"
@@ -53,6 +70,11 @@ class TestConfig(BaseModel):
     timeout_seconds: float | None = 1800.0
     max_copy_back_files: int = 100
     cleanup: bool = True
+
+    @property
+    def model_selector(self) -> str:
+        """Canonical model and effort identity, retaining the runner's separate fields."""
+        return f"{self.model}:{self.reasoning_effort}"
 
     @model_validator(mode="before")
     @classmethod
@@ -76,6 +98,13 @@ class TestConfig(BaseModel):
         if not value.strip():
             raise ValueError("must not be empty")
         return value
+
+    @field_validator("mcp_servers")
+    @classmethod
+    def valid_mcp_names(cls, values: list[str]) -> list[str]:
+        if any(not value.strip() for value in values):
+            raise ValueError("MCP server names must not be empty")
+        return list(dict.fromkeys(values))
 
     @field_validator("progress_lines")
     @classmethod
@@ -251,3 +280,4 @@ class TestResult(BaseModel):
     missing_copy_back: list[str] = Field(default_factory=list)
     command: CommandResult
     logs: LogsResult
+    validation: list[ValidationResult] = Field(default_factory=list)
