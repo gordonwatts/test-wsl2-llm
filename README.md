@@ -346,6 +346,28 @@ keyword arguments and returns `(passed, message)`. This includes all logs, works
 metadata, and `copied_back` local destinations for reading full returned files. Exceptions
 become failed checks, and remaining validators still run.
 
+Validate a locally returned ROOT tree with:
+
+```yaml
+copy_back: ["result.root"]
+validators:
+  - name: root_tree
+    arguments:
+      file: result.root
+      tree: events
+      must_have: [pt, eta]
+      can_have: [weight]
+      cannot_have: [secret]
+      no_other_leaves: true
+```
+
+`file` must exactly match a copied-back file's recorded source or local destination;
+the validator reads only that local destination with uproot. `tree` may include a ROOT
+directory path. TTree and RNTuple objects are supported. Names are exact recursive branch
+names (including nested branch paths). Required branches must exist, optional branches may
+exist, and forbidden branches must be absent. `no_other_leaves` rejects every branch outside
+`must_have` and `can_have`; by default additional branches are allowed. Missing or unreadable
+files/trees, non-tree objects, and mismatches produce failed checks with diagnostics.
 Numeric output checks use `name: num_compare` with arguments `var_name`, `number`,
 and `tolerance`, for example `{var_name: efficiency, number: 0.8, tolerance: "5%"}`.
 The validator searches the same output as `require_string` for `var_name=number`,
