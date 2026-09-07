@@ -34,6 +34,7 @@ from test_wsl2_llm.runner import WslClient
 from test_wsl2_llm.template import (
     load_template_file,
     question_copy_back,
+    question_title,
     render_questions,
     resolved_template_values,
     template_output,
@@ -556,6 +557,12 @@ def template_run(
                 for repetition in range(1, effective_repeat + 1):
                     run_values = dict(shared)
                     run_values["prompt"] = prompt_text
+                    if title is None and shared.get("title", "# WSL2 Codex test result") == (
+                        "# WSL2 Codex test result"
+                    ):
+                        run_values["title"] = question_title(
+                            identifier, question_values, prompt_text
+                        )
                     run_values["output"] = resolved_base.output
                     run_values["copy_back"] = question_copy_back(
                         list(shared.get("copy_back", [])), question_values

@@ -133,7 +133,7 @@ punctuation is percent-encoded for Windows filenames: `gpt-5.4:high` becomes
 stem. Existing reports using the older names without a selector are left in place
 and do not mark a matrix cell complete. With `repeat: 1`, the numeric suffix is
 omitted. `threads` limits total simultaneous jobs across all models, questions,
-and repetitions. The command accepts the shared `run` options as CLI overrides,
+and repetitions. Each report gets a heading `Question: <id> - <first 30 characters>...` using its `question` field; templates without a `question` field use the rendered prompt. A custom YAML `title` or CLI `--title` overrides this automatic heading. The command accepts the shared `run` options as CLI overrides,
 including `--model`, `--output`, `--repeat`, `--threads`, and `--force`.
 
 Templates accept the same run configuration keys as a normal saved configuration,
