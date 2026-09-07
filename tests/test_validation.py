@@ -38,6 +38,11 @@ def test_invalid_configuration(spec):
         validate_configuration([spec])
 
 
+def test_unknown_validator_lists_known_names():
+    with pytest.raises(ValueError, match=r"Unknown validator 'rquire_string'.*require_string"):
+        validate_configuration([ValidatorConfig(name="rquire_string")])
+
+
 def test_complete_result_access_exception_and_remaining_checks(monkeypatch):
     from test_wsl2_llm.validation import RequireStringArguments
 

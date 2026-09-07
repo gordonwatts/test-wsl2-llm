@@ -368,3 +368,11 @@ names (including nested branch paths). Required branches must exist, optional br
 exist, and forbidden branches must be absent. `no_other_leaves` rejects every branch outside
 `must_have` and `can_have`; by default additional branches are allowed. Missing or unreadable
 files/trees, non-tree objects, and mismatches produce failed checks with diagnostics.
+Numeric output checks use `name: num_compare` with arguments `var_name`, `number`,
+and `tolerance`, for example `{var_name: efficiency, number: 0.8, tolerance: "5%"}`.
+The validator searches the same output as `require_string` for `var_name=number`,
+allowing whitespace, signs, decimals, and scientific notation. At least one matching
+assignment must agree. Numeric tolerance is an inclusive absolute difference; percentage
+tolerance requires a relative difference strictly below the percentage, using the absolute
+reference value. With a zero reference or zero tolerance, only exact equality passes.
+Tolerances must be finite and nonnegative; expected numbers must be finite.
