@@ -318,3 +318,30 @@ The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records
 The normal progress display retains only the five most recent lines and prefixes each with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
 Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.
+
+### Result validation
+
+Configure checks in run/template YAML. All checks must pass, including repeated names:
+
+```yaml
+validators:
+  - name: require_string
+    arguments:
+      string: "Analysis complete"
+  - name: require_string
+    arguments:
+      string: "events processed"
+```
+
+`require_string` performs a case-sensitive literal search of the current final response,
+captured stdout JSONL, and stderr. Unknown names or invalid arguments are rejected before
+WSL starts. Checks run locally after result/file collection for runs and continuations.
+YAML records each check in `validation`; Markdown shows PASS/FAIL diagnostics. Any failed
+check makes the run fail with a nonzero CLI exit code; an existing execution error is retained.
+With no validators, existing behavior is unchanged.
+
+Python integrations can call `register_validator(name, ArgumentModel, callable)` in
+`test_wsl2_llm.validation`. The callable receives the complete `TestResult` and validated
+keyword arguments and returns `(passed, message)`. This includes all logs, workspace
+metadata, and `copied_back` local destinations for reading full returned files. Exceptions
+become failed checks, and remaining validators still run.

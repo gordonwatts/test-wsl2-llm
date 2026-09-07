@@ -52,6 +52,7 @@ from test_wsl2_llm.traces import (
     trace_event_from_json,
     usage_from_events,
 )
+from test_wsl2_llm.validation import apply_validators, validate_configuration
 
 LOGGER = logging.getLogger(__name__)
 
@@ -222,6 +223,8 @@ class RunState:
             )
 
 
+
+
 def run_test(
     config: TestConfig,
     *,
@@ -232,6 +235,7 @@ def run_test(
     invocation: list[str] | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
+    validate_configuration(config.validators)
     console = console or Console(stderr=True)
     client = WslClient(config.distro, config.environment)
     state = RunState()
@@ -403,7 +407,7 @@ def run_test(
     if pricing_valid:
         model_information = load_and_calculate_costs(usage, config.pricing_file)
     final_message = final_message_from_events(parsed_events)
-    return TestResult(
+    report = TestResult(
         prompt=config.prompt,
         title=config.title,
         invocation=_display_argv(invocation or []),
@@ -441,6 +445,7 @@ def run_test(
             session_traces=session_traces,
         ),
     )
+    return apply_validators(report, config.validators)
 
 
 def continue_test(
@@ -459,6 +464,7 @@ def continue_test(
     if not previous.run.workspace_retained:
         raise ValueError("the result workspace was not retained; rerun without --cleanup")
 
+    validate_configuration(config.validators)
     console = console or Console(stderr=True)
     client = WslClient(config.distro or previous.run.distro, config.environment)
     run_root = workspace_path.rsplit("/", 1)[0]
@@ -621,7 +627,7 @@ def continue_test(
     conversation = [*history, ConversationTurn(prompt=prompt, final_response=final_message)]
     continuation_config = config.model_dump(mode="json")
     continuation_config["continuation_of"] = workspace_path
-    return TestResult(
+    report = TestResult(
         prompt=prompt,
         title=config.title,
         invocation=_display_argv(invocation or []),
@@ -660,6 +666,7 @@ def continue_test(
             session_traces=session_traces,
         ),
     )
+    return apply_validators(report, config.validators)
 
 
 def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
