@@ -4,6 +4,9 @@
 
 ## Install and Run
 
+Python 3.11 or newer is required. Install the package with the [uv tool](https://docs.astral.sh/uv/),
+which creates or uses an appropriate Python environment automatically:
+
 ```powershell
 uvx test-wsl2-llm run `
   --distro atlas_al9 `

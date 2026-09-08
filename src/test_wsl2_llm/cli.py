@@ -1,7 +1,5 @@
 """Typer command-line interface."""
 
-from __future__ import annotations
-
 import logging
 import posixpath
 import subprocess
@@ -10,7 +8,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from threading import Lock
-from typing import Annotated, Literal
+from typing import Annotated, Literal, Self
 
 import typer
 import yaml
@@ -1111,7 +1109,7 @@ class _RepeatDisplay:
             self._render(), console=console, refresh_per_second=8, transient=True
         )
 
-    def __enter__(self) -> _RepeatDisplay:
+    def __enter__(self) -> Self:
         self._live.start(refresh=True)
         return self
 

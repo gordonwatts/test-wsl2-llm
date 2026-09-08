@@ -1,7 +1,5 @@
 """Load model token prices and calculate usage costs."""
 
-from __future__ import annotations
-
 from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Any
