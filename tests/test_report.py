@@ -57,7 +57,7 @@ def sample_result() -> WslTestResult:
             ],
             trace_events=[TraceEvent(source="stdout_jsonl", sequence=1, event_type="turn.started")],
         ),
-        configuration={"model": "gpt-test"},
+        configuration={"model": "gpt-test", "mcp_servers": ["filesystem", "servicex"]},
         usage=[
             UsageRecord(
                 model="gpt-test",
@@ -120,6 +120,7 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     for expected in (
         result.prompt,
         result.skills.plugins[0],
+        "- MCP servers:\n  - `filesystem`\n  - `servicex`",
         "Inspecting the saved workspace.",
         "<summary>Workspace inventory</summary>",
         "file\t6\thello.txt",
