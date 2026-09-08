@@ -1,7 +1,5 @@
 """Parse Codex JSONL, usage, final messages, and timing evidence."""
 
-from __future__ import annotations
-
 import json
 from collections.abc import Iterator
 from typing import Any

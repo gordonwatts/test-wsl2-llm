@@ -1,7 +1,5 @@
 """Windows-side orchestration of isolated Codex runs inside WSL2."""
 
-from __future__ import annotations
-
 import base64
 import fnmatch
 import json

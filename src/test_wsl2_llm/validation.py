@@ -1,7 +1,5 @@
 """Named, extensible validators operating on the complete collected result."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any
 
