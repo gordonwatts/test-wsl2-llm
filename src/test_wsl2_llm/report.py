@@ -282,6 +282,14 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
                     )
             else:
                 lines.extend(["", "ROOT file contains no listed objects."])
+        elif file.type == "markdown" and file.text_preview is not None:
+            text, source_available = _text_for_report(file.destination, file.text_preview)
+            label = (
+                "Markdown contents (rendered inline):"
+                if source_available
+                else "Markdown preview (source file unavailable):"
+            )
+            lines.extend(["", label, "", _blockquote(text)])
         elif file.type == "text" and file.text_preview is not None:
             text, source_available = _text_for_report(file.destination, file.text_preview)
             label = (

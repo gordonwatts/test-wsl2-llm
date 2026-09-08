@@ -489,3 +489,31 @@ def test_timeout_reports_are_unmistakable_in_markdown_and_yaml(tmp_path: Path) -
     assert saved["run"]["timed_out"] is True
     assert saved["result"]["timed_out"] is True
     assert saved["timing"]["phases"][0]["timed_out"] is True
+
+
+def test_report_renders_copied_back_markdown_inline_and_nested(tmp_path: Path) -> None:
+    result = sample_result()
+    copied = tmp_path / "run.notes.md"
+    copied.write_text(
+        "# Notes\n\nA paragraph with **emphasis**.\n\n- first\n- second\n",
+        encoding="utf-8",
+    )
+    copied_file = CopiedBackFile(
+        source="notes.md",
+        destination=str(copied),
+        type="markdown",
+        size=copied.stat().st_size,
+        text_preview="# Notes\n\nA paragraph with **emphasis**.",
+    )
+    result.copied_back.append(copied_file)
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+
+    section = markdown.split("## Copied-back files", 1)[1].split(
+        "<summary>Complete Codex stderr</summary>", 1
+    )[0]
+    assert "Markdown contents (rendered inline):" in section
+    assert "> # Notes" in section
+    assert "> A paragraph with **emphasis**." in section
+    assert "> - first" in section

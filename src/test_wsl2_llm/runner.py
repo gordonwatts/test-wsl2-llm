@@ -912,14 +912,16 @@ def _describe_copied_back(source: str, destination: Path) -> CopiedBackFile:
                 size=size,
                 error=str(exc),
             )
-    if _is_image(destination):
+    if suffix in {".md", ".markdown"}:
+        file_type = "markdown"
+    elif _is_image(destination):
         file_type = "image"
     elif _is_text_file(destination):
         file_type = "text"
     else:
         file_type = "file"
     preview = None
-    if file_type == "text":
+    if file_type in {"text", "markdown"}:
         preview = "\n".join(
             destination.read_text(encoding="utf-8", errors="replace").splitlines()[:10]
         )
