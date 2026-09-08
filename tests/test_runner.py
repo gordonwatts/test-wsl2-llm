@@ -20,6 +20,7 @@ from test_wsl2_llm.runner import (
     _describe_copied_back,
     _installed_paths_from_json,
     _is_git_marketplace_source,
+    _is_timeout,
     _progress_description,
     _root_contents,
     _stream_codex,
@@ -205,6 +206,12 @@ def test_codex_keyboard_interrupt_stops_process_and_keeps_partial_logs(monkeypat
     assert "interrupted by keyboard interrupt" in stderr
     assert process.stopped
 
+
+def test_timeout_marker_requires_harness_timeout_evidence() -> None:
+    marker = "[test-wsl2-llm] Codex timed out after 5 seconds."
+    assert _is_timeout(124, marker) is True
+    assert _is_timeout(124, "Codex exited with status 124") is False
+    assert _is_timeout(1, marker) is False
 
 def test_progress_description_is_human_readable_and_bounded() -> None:
     description = _progress_description(

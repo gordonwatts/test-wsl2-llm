@@ -466,3 +466,26 @@ def test_activity_summary_reads_current_stdout_jsonl_events(tmp_path: Path) -> N
     assert "| 1m 2s | Command (exit 0): git status --short |" in markdown
     assert "No readable progress updates were recorded." not in markdown
     assert "- done" not in markdown
+
+
+def test_timeout_reports_are_unmistakable_in_markdown_and_yaml(tmp_path: Path) -> None:
+    result = sample_result()
+    result.run.status = "failed"
+    result.run.exit_code = 124
+    result.run.error = "Codex timed out after 5 seconds"
+    result.run.timed_out = True
+    result.result.timed_out = True
+    result.timing.phases[0].timed_out = True
+
+    markdown_path, yaml_path = write_reports(result, str(tmp_path / "timeout"))
+    markdown = markdown_path.read_text(encoding="utf-8")
+    saved = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+
+    final_section = markdown.split("## Final response", 1)[1].split("## Skills", 1)[0]
+    phase_section = markdown.split("## Phase timing", 1)[1].split("## Token usage", 1)[0]
+    assert "> **TIMEOUT:** Codex execution reached the configured timeout." in final_section
+    assert "codex_execution [TIMED OUT]" in phase_section
+    assert "| Timed out | True |" in markdown
+    assert saved["run"]["timed_out"] is True
+    assert saved["result"]["timed_out"] is True
+    assert saved["timing"]["phases"][0]["timed_out"] is True

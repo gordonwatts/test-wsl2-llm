@@ -85,8 +85,16 @@ def render_markdown(
         "",
         "## Final response",
         "",
-        _blockquote(result.result.final_message or ""),
     ]
+    if result.result.timed_out:
+        lines.extend(
+            [
+                "> **TIMEOUT:** Codex execution reached the configured timeout. "
+                "The model output below may be incomplete.",
+                "",
+            ]
+        )
+    lines.append(_blockquote(result.result.final_message or ""))
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
@@ -115,6 +123,7 @@ def render_markdown(
             f"| Codex execution | {_duration(run.codex_execution_seconds)} |",
             f"| Status | {run.status} |",
             f"| Exit code | {run.exit_code} |",
+            f"| Timed out | {run.timed_out} |",
             f"| Distribution | {run.distro or '(default)'} |",
             f"| Codex version | {run.codex_version or '(unavailable)'} |",
             f"| Workspace | {run.workspace_path or workspace_label} |",
@@ -134,8 +143,9 @@ def render_markdown(
         ]
     )
     for phase in result.timing.phases:
+        phase_name = f"{phase.name} [TIMED OUT]" if phase.timed_out else phase.name
         lines.append(
-            f"| {phase.name} | {_local_clock(phase.started_at)} | "
+            f"| {phase_name} | {_local_clock(phase.started_at)} | "
             f"{_local_clock(phase.finished_at)} | {_compact_duration(phase.duration_seconds)} |"
         )
 
