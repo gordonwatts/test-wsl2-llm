@@ -96,6 +96,7 @@ def render_markdown(
     lines.extend(["", "## Skills and marketplaces", ""])
     lines.extend(_bullets("Marketplaces", result.skills.marketplaces))
     lines.extend(_bullets("Plugins", result.skills.plugins))
+    lines.extend(_bullets("MCP servers", result.configuration.get("mcp_servers", [])))
     lines.extend(
         _bullets(
             "Skill directories",

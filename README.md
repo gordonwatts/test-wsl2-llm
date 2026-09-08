@@ -17,7 +17,7 @@ uvx test-wsl2-llm run `
   --output .\results\hello
 ```
 
-This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
+This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
 
 Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
 YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
