@@ -55,6 +55,7 @@ from test_wsl2_llm.traces import (
 from test_wsl2_llm.validation import apply_validators, validate_configuration
 
 LOGGER = logging.getLogger(__name__)
+TIMEOUT_ERROR_PREFIX = "[test-wsl2-llm] Codex timed out after "
 
 
 def utc_now() -> str:
@@ -252,6 +253,7 @@ def run_test(
     codex_seconds = 0.0
     exit_code = 1
     error: str | None = None
+    timed_out = False
     retained = False
     files: list[WorkspaceFile] = []
     copied_back: list[CopiedBackFile] = []
@@ -355,8 +357,14 @@ def run_test(
                 log_callback=log_callback,
             )
             codex_seconds = time.perf_counter() - codex_started
-            if exit_code:
+            timed_out = _is_timeout(exit_code, stderr)
+            if timed_out:
+                error = _timeout_error(stderr)
+            elif exit_code:
                 error = f"Codex exited with status {exit_code}"
+
+            if timed_out and state.phases and state.phases[-1].name == "codex_execution":
+                state.phases[-1].timed_out = True
 
         with state.phase("workspace_inventory"):
             files = _inventory(client, workspace_path)
@@ -437,12 +445,13 @@ def run_test(
             workspace_retained=retained,
             codex_version=codex_version,
             error=error,
+            timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=config.model_dump(mode="json"),
         usage=usage,
         model_information=model_information,
-        result=FinalResult(final_message=final_message),
+        result=FinalResult(final_message=final_message, timed_out=timed_out),
         conversation=[ConversationTurn(prompt=config.prompt, final_response=final_message)],
         workspace=WorkspaceResult(files=files),
         copied_back=copied_back,
@@ -519,6 +528,7 @@ def continue_test(
     codex_seconds = 0.0
     exit_code = 1
     error: str | None = None
+    timed_out = False
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
     model_information = ModelInformation(
@@ -614,8 +624,14 @@ def continue_test(
                 console=console,
             )
             codex_seconds = time.perf_counter() - codex_started
-            if exit_code:
+            timed_out = _is_timeout(exit_code, stderr)
+            if timed_out:
+                error = _timeout_error(stderr)
+            elif exit_code:
                 error = f"Codex exited with status {exit_code}"
+
+            if timed_out and state.phases and state.phases[-1].name == "codex_execution":
+                state.phases[-1].timed_out = True
 
         with state.phase("workspace_inventory"):
             files = _inventory(client, workspace_path)
@@ -682,12 +698,13 @@ def continue_test(
             workspace_retained=True,
             codex_version=codex_version or previous.run.codex_version,
             error=error,
+            timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=continuation_config,
         usage=usage,
         model_information=model_information,
-        result=FinalResult(final_message=final_message),
+        result=FinalResult(final_message=final_message, timed_out=timed_out),
         conversation=conversation,
         workspace=WorkspaceResult(files=files),
         copied_back=copied_back,
@@ -1227,7 +1244,7 @@ def _stream_codex(
     if timed_out:
         exit_code = 124
         raw["stderr"].append(
-            f"[test-wsl2-llm] Codex timed out after {timeout_seconds:g} seconds.\n"
+            f"{TIMEOUT_ERROR_PREFIX}{timeout_seconds:g} seconds.\n"
         )
     elif interrupted:
         exit_code = 130
@@ -1239,6 +1256,19 @@ def _stream_codex(
         trace_events,
         parsed_events,
     )
+
+
+def _is_timeout(exit_code: int, stderr: str) -> bool:
+    """Recognize a timeout without treating an unrelated exit 124 as one."""
+    return exit_code == 124 and TIMEOUT_ERROR_PREFIX in stderr
+
+
+def _timeout_error(stderr: str) -> str:
+    """Return the concise timeout error while retaining the configured duration."""
+    for line in stderr.splitlines():
+        if line.startswith(TIMEOUT_ERROR_PREFIX):
+            return line.removeprefix("[test-wsl2-llm] ").rstrip(".")
+    return "Codex execution timed out"
 
 
 def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:

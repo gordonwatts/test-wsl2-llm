@@ -131,6 +131,7 @@ class PhaseTiming(BaseModel):
     started_at: str
     finished_at: str
     duration_seconds: float
+    timed_out: bool = False
 
 
 class TimingField(BaseModel):
@@ -215,6 +216,7 @@ class RunResult(BaseModel):
     workspace_retained: bool
     codex_version: str | None
     error: str | None = None
+    timed_out: bool = False
 
 
 class TimingResult(BaseModel):
@@ -224,6 +226,7 @@ class TimingResult(BaseModel):
 
 class FinalResult(BaseModel):
     final_message: str | None = None
+    timed_out: bool = False
 
 
 class ConversationTurn(BaseModel):
