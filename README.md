@@ -457,3 +457,5 @@ assignment must agree. Numeric tolerance is an inclusive absolute difference; pe
 tolerance requires a relative difference strictly below the percentage, using the absolute
 reference value. With a zero reference or zero tolerance, only exact equality passes.
 Tolerances must be finite and nonnegative; expected numbers must be finite.
+Markdown files are rendered inline as indented Markdown content in the report; other text files
+remain available as a compact first-ten-lines preview.

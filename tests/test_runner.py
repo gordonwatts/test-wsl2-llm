@@ -481,3 +481,11 @@ def test_continuation_prompt_contains_prior_chain_and_new_prompt() -> None:
     assert "Prompt 1:\nCreate a file" in prompt
     assert "Final Response:\nCreated it." in prompt
     assert prompt.endswith("New prompt:\nNow inspect the file.")
+def test_describe_copied_back_markdown_as_markdown(tmp_path: Path) -> None:
+    markdown = tmp_path / "README.md"
+    markdown.write_text("# Heading\n\n- item\n", encoding="utf-8")
+
+    described = _describe_copied_back("README.md", markdown)
+
+    assert described.type == "markdown"
+    assert described.text_preview == "# Heading\n\n- item"
