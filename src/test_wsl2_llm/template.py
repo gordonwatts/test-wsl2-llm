@@ -212,7 +212,8 @@ def template_output(
     identifier = quote(identifier, safe="-_").replace(".", "%2E").replace("~", "%7E")
     path = path.with_name(f"{path.name}-{identifier}")
     if model_selector is not None:
-        selector = quote(model_selector, safe="-_").replace(".", "%2E").replace("~", "%7E")
+        filename_selector = model_selector.replace(":", "-")
+        selector = quote(filename_selector, safe="-_").replace(".", "%2E").replace("~", "%7E")
         path = path.with_name(f"{path.name}-{selector}")
     if repeat > 1:
         width = max(3, len(str(repeat)))

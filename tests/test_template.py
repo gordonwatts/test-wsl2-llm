@@ -144,10 +144,10 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
     assert sorted(output for output, _prompt in calls) == sorted(
         str(tmp_path / "results" / name)
         for name in (
-            "run-etmiss-gpt-test%3Amedium-001",
-            "run-etmiss-gpt-test%3Amedium-002",
-            "run-jets-gpt-test%3Amedium-001",
-            "run-jets-gpt-test%3Amedium-002",
+            "run-etmiss-gpt-test-medium-001",
+            "run-etmiss-gpt-test-medium-002",
+            "run-jets-gpt-test-medium-001",
+            "run-jets-gpt-test-medium-002",
         )
     )
     assert {prompt for _output, prompt in calls} == {"Do ETmiss for a", "Do jets for b"}
@@ -227,7 +227,7 @@ def test_template_run_skips_questions_with_existing_results_by_default(
         "model: test-model\noutput: results/run\n",
         encoding="utf-8",
     )
-    existing = tmp_path / "results" / "run-q1-test-model%3Amedium.yaml"
+    existing = tmp_path / "results" / "run-q1-test-model-medium.yaml"
     existing.parent.mkdir()
     existing.write_text("existing", encoding="utf-8")
 
@@ -257,7 +257,7 @@ def test_template_run_force_reruns_questions_with_existing_results(
         "model: test-model\noutput: results/run\noverwrite: true\n",
         encoding="utf-8",
     )
-    existing = tmp_path / "results" / "run-q1-test-model%3Amedium.md"
+    existing = tmp_path / "results" / "run-q1-test-model-medium.md"
     existing.parent.mkdir()
     existing.write_text("existing", encoding="utf-8")
 
@@ -552,4 +552,5 @@ def test_template_names_keep_entire_selector_and_dotted_question_id():
     paths = [output_paths(stem)[0] for stem in stems]
     assert len(set(paths)) == len(stems)
     assert all(path.stem == stem for path, stem in zip(paths, stems, strict=True))
-    assert "gpt-5%2E4%3Ahigh" in stems[0]
+    assert "gpt-5%2E4-high" in stems[0]
+    assert all(":" not in stem and "%3A" not in stem for stem in stems)
