@@ -130,10 +130,10 @@ threads: 4
 
 This writes `analysis-etmiss-MODEL-high-001.md` and matching YAML and copied-back
 artifacts, then the corresponding files for `leading-jet-pt`. Every report name
-includes the full model/effort selector, including for single-model runs. The model and
-effort are separated with a hyphen, and other selector punctuation is percent-encoded
-for Windows filenames: `gpt-5.4:high` becomes `gpt-5%2E4-high`. Periods in output
-stems and question IDs are also encoded to preserve the full stem. Existing reports using the older names without a selector are left in place
+includes the full model/effort selector, including for single-model runs. Punctuation
+in the selector is normalized to hyphens for portable Windows filenames: `gpt-5.4:high`
+becomes `gpt-5-4-high`. Periods in output stems and question IDs are normalized the
+same way. Existing reports using the older names without a selector are left in place
 and do not mark a matrix cell complete. With `repeat: 1`, the numeric suffix is
 omitted. `threads` limits total simultaneous jobs across all models, questions,
 and repetitions. Each report gets a heading `Question: <id> - <first 30 characters>...` using its `question` field; templates without a `question` field use the rendered prompt. A custom YAML `title` or CLI `--title` overrides this automatic heading. The command accepts the shared `run` options as CLI overrides,
