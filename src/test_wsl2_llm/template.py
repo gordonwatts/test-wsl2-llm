@@ -3,7 +3,6 @@
 import re
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -199,6 +198,10 @@ def question_title(identifier: str, question: dict[str, Any], prompt: str) -> st
     return f"# Question: {identifier} - {text[:30]}..."
 
 
+def _filename_component(value: str) -> str:
+    """Return a portable report-name component with punctuation as hyphens."""
+    return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
+
 def template_output(
     output: str, identifier: str, index: int, repeat: int, model_selector: str | None = None,
 ) -> str:
@@ -206,15 +209,12 @@ def template_output(
     path = Path(output)
     if path.suffix.lower() in {".md", ".yaml", ".yml"}:
         path = path.with_suffix("")
-    # Escape dots as well: output_paths treats the last dot as an extension.
-    # Percent encoding keeps distinct selectors distinct and works on Windows.
-    path = path.with_name(path.name.replace("%", "%25").replace(".", "%2E"))
-    identifier = quote(identifier, safe="-_").replace(".", "%2E").replace("~", "%7E")
-    path = path.with_name(f"{path.name}-{identifier}")
+    # Normalize every filename component to portable ASCII separators. In
+    # particular, do not leave percent-encoded dots or colons in report names.
+    path = path.with_name(_filename_component(path.name))
+    path = path.with_name(f"{path.name}-{_filename_component(identifier)}")
     if model_selector is not None:
-        filename_selector = model_selector.replace(":", "-")
-        selector = quote(filename_selector, safe="-_").replace(".", "%2E").replace("~", "%7E")
-        path = path.with_name(f"{path.name}-{selector}")
+        path = path.with_name(f"{path.name}-{_filename_component(model_selector)}")
     if repeat > 1:
         width = max(3, len(str(repeat)))
         path = path.with_name(f"{path.name}-{index:0{width}d}")

@@ -552,5 +552,5 @@ def test_template_names_keep_entire_selector_and_dotted_question_id():
     paths = [output_paths(stem)[0] for stem in stems]
     assert len(set(paths)) == len(stems)
     assert all(path.stem == stem for path, stem in zip(paths, stems, strict=True))
-    assert "gpt-5%2E4-high" in stems[0]
-    assert all(":" not in stem and "%3A" not in stem for stem in stems)
+    assert "gpt-5-4-high" in stems[0]
+    assert all("%" not in stem and ":" not in stem for stem in stems)
