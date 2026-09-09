@@ -202,6 +202,7 @@ def _filename_component(value: str) -> str:
     """Return a portable report-name component with punctuation as hyphens."""
     return re.sub(r"[^A-Za-z0-9_-]+", "-", value).strip("-")
 
+
 def template_output(
     output: str, identifier: str, index: int, repeat: int, model_selector: str | None = None,
 ) -> str:
