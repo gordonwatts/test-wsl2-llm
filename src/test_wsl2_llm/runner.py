@@ -46,6 +46,7 @@ from test_wsl2_llm.models import (
     WorkspaceResult,
 )
 from test_wsl2_llm.pricing import load_and_calculate_costs
+from test_wsl2_llm.target import ExecutionTarget
 from test_wsl2_llm.traces import (
     final_message_from_events,
     parse_json_line,
@@ -200,6 +201,115 @@ class WslClient:
     def text(self, completed: subprocess.CompletedProcess[bytes]) -> str:
         return completed.stdout.decode("utf-8", errors="replace")
 
+    def start_process(
+        self,
+        command: list[str],
+        *,
+        stdin: int = subprocess.PIPE,
+        stdout: int = subprocess.PIPE,
+        stderr: int = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
+        """Start a target process with the target's sanitized environment."""
+        return subprocess.Popen(
+            command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=self.environment,
+        )
+
+    def stop_process(self, process: subprocess.Popen[str]) -> None:
+        """Stop a streamed process and its children on Windows."""
+        if getattr(process, "poll", lambda: None)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if os.name == "nt" and isinstance(pid, int):
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            terminate = getattr(process, "terminate", None)
+            if not callable(terminate):
+                return
+            terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        except TypeError:
+            process.wait()
+
+    def to_target_path(self, host_path: str) -> str:
+        """Convert a host path to an absolute path understood by WSL."""
+        return self.text(self.bash('wslpath -a "$1"', host_path)).strip()
+
+    def copy_to_target(
+        self, host_path: str, target_directory: str, *, recursive: bool = False
+    ) -> None:
+        """Copy one host file or directory into a target directory."""
+        if recursive:
+            self.bash(
+                'mkdir -p "$1" && cp -a -- "$2"/. "$1"/',
+                target_directory,
+                self.to_target_path(host_path),
+            )
+        else:
+            self.bash(
+                'cp -- "$2" "$1/"',
+                target_directory,
+                self.to_target_path(host_path),
+            )
+
+    def copy_from_target(self, target_path: str, host_path: str) -> None:
+        """Copy one target file to a host path."""
+        self.bash('cp -- "$1" "$2"', target_path, self.to_target_path(host_path))
+
+    def create_workspace(self, parent: str) -> str:
+        """Create and initialize a per-run target workspace root."""
+        run_root = self.text(
+            self.bash('mktemp -d -p "$1" test-wsl2-llm-XXXXXXXX', parent)
+        ).strip()
+        self.bash(
+            'mkdir -p "$1" "$2"',
+            f"{run_root}/workspace",
+            f"{run_root}/.harness/inputs",
+        )
+        return run_root
+
+    def cleanup_workspace(self, run_root: str) -> None:
+        """Remove a per-run workspace root from the target."""
+        self.bash('rm -rf -- "$1"', run_root)
+
+
+def create_execution_target(
+    distro: str | None = None,
+    environment_policy: EnvironmentPolicy | None = None,
+    *,
+    source_environment: Mapping[str, str] | None = None,
+) -> ExecutionTarget:
+    """Select the configured execution target.
+
+    WSL is the only supported target today. Keeping selection behind this
+    function gives run, continue, and connect one seam for future targets.
+    """
+    if source_environment is None:
+        return WslClient(distro, environment_policy)
+    return WslClient(
+        distro,
+        environment_policy,
+        source_environment=source_environment,
+    )
+
+
+# Descriptive name for callers that do not need the historical WslClient name.
+WslExecutionTarget = WslClient
+
 
 class RunState:
     def __init__(self) -> None:
@@ -233,11 +343,14 @@ def run_test(
     log_callback: Callable[[str], None] | None = None,
     invocation: list[str] | None = None,
     report_callback: Callable[[TestResult], None] | None = None,
+    target: ExecutionTarget | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
     console = console or Console(stderr=True)
-    client = WslClient(config.distro, config.environment)
+    client = (
+        target if target is not None else create_execution_target(config.distro, config.environment)
+    )
     state = RunState()
     codex_version: str | None = None
     workspace_path: str | None = None
@@ -278,12 +391,9 @@ def run_test(
             resolved_auth = _resolve_wsl_path(client, config.auth_source)
 
         with state.phase("workspace_creation"):
-            run_root = client.text(
-                client.bash('mktemp -d -p "$1" test-wsl2-llm-XXXXXXXX', resolved_parent)
-            ).strip()
+            run_root = client.create_workspace(resolved_parent)
             workspace_path = f"{run_root}/workspace"
             codex_home = f"{run_root}/.harness/codex-home"
-            client.bash('mkdir -p "$1" "$2"', workspace_path, f"{run_root}/.harness/inputs")
 
         with state.phase("input_transfer"):
             _write_wsl_file(client, f"{run_root}/.harness/inputs/prompt.md", config.prompt)
@@ -348,6 +458,7 @@ def run_test(
             ) = _stream_codex(
                 command_argv,
                 config.prompt,
+                target=client,
                 environment=client.environment,
                 progress_lines=config.progress_lines,
                 timeout_seconds=config.timeout_seconds,
@@ -472,7 +583,7 @@ def run_test(
     if run_root and config.cleanup:
         try:
             with state.phase("workspace_cleanup"):
-                client.bash('rm -rf -- "$1"', run_root)
+                client.cleanup_workspace(run_root)
             result.run.workspace_path = None
             result.run.workspace_retained = False
         except (Exception, KeyboardInterrupt) as cleanup_error:
@@ -497,6 +608,7 @@ def continue_test(
     verbosity: int = 0,
     console: Console | None = None,
     invocation: list[str] | None = None,
+    target: ExecutionTarget | None = None,
 ) -> TestResult:
     """Run a fresh Codex conversation in a retained result workspace."""
     workspace_path = previous.run.workspace_path
@@ -507,7 +619,11 @@ def continue_test(
 
     validate_configuration(config.validators)
     console = console or Console(stderr=True)
-    client = WslClient(config.distro or previous.run.distro, config.environment)
+    client = (
+        target
+        if target is not None
+        else create_execution_target(config.distro or previous.run.distro, config.environment)
+    )
     run_root = workspace_path.rsplit("/", 1)[0]
     codex_home = f"{run_root}/.harness/codex-home"
     state = RunState()
@@ -617,6 +733,7 @@ def continue_test(
             ) = _stream_codex(
                 command_argv,
                 effective_prompt,
+                target=client,
                 environment=client.environment,
                 progress_lines=config.progress_lines,
                 timeout_seconds=config.timeout_seconds,
@@ -742,7 +859,7 @@ def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
 
 
 def _skill_directories(
-    client: WslClient, codex_home: str, installed_plugin_roots: list[str]
+    client: ExecutionTarget, codex_home: str, installed_plugin_roots: list[str]
 ) -> list[str]:
     roots = _unique([codex_home, *installed_plugin_roots])
     found: list[str] = []
@@ -759,8 +876,52 @@ def _unique(values: list[str]) -> list[str]:
     return list(dict.fromkeys(values))
 
 
+def _to_target_path(client: ExecutionTarget, host_path: str) -> str:
+    """Convert a host path through the target, with legacy-client compatibility."""
+    converter = getattr(client, "to_target_path", None)
+    if callable(converter):
+        return converter(host_path)
+    return client.text(client.bash('wslpath -a "$1"', host_path)).strip()
+
+
+def _copy_to_target(
+    client: ExecutionTarget,
+    host_path: str,
+    target_directory: str,
+    *,
+    directory: bool = False,
+) -> None:
+    copier = getattr(client, "copy_to_target", None)
+    if callable(copier):
+        try:
+            copier(host_path, target_directory, recursive=directory)
+        except TypeError:
+            # Preserve compatibility with pre-interface test doubles.
+            if directory:
+                mounted = _to_target_path(client, host_path)
+                client.bash(
+                    'mkdir -p "$1" && cp -a -- "$2"/. "$1"/',
+                    target_directory,
+                    mounted,
+                )
+            else:
+                copier(host_path, target_directory)
+        return
+    mounted = _to_target_path(client, host_path)
+    command = 'mkdir -p "$1" && cp -a -- "$2"/. "$1"/' if directory else 'cp -- "$2" "$1/"'
+    client.bash(command, target_directory, mounted)
+
+
+def _copy_from_target(client: ExecutionTarget, target_path: str, host_path: str) -> None:
+    copier = getattr(client, "copy_from_target", None)
+    if callable(copier):
+        copier(target_path, host_path)
+        return
+    client.bash('cp -- "$1" "$2"', target_path, _to_target_path(client, host_path))
+
+
 def _transfer_marketplaces(
-    client: WslClient, sources: list[str], run_root: str, *, append: bool = False
+    client: ExecutionTarget, sources: list[str], run_root: str, *, append: bool = False
 ) -> list[str]:
     runtime: list[str] = []
     marketplace_root = f"{run_root}/.harness/inputs/marketplaces"
@@ -782,10 +943,12 @@ def _transfer_marketplaces(
         windows_path = Path(source)
         if windows_path.exists():
             destination = f"{marketplace_root}/marketplace-{index:03d}"
-            mounted = client.text(
-                client.bash('wslpath -a "$1"', str(windows_path.resolve()))
-            ).strip()
-            client.bash('mkdir -p "$1" && cp -a -- "$2"/. "$1"/', destination, mounted)
+            _copy_to_target(
+                client,
+                str(windows_path.resolve()),
+                destination,
+                directory=True,
+            )
             runtime.append(destination)
         elif _is_git_marketplace_source(source):
             destination = f"{marketplace_root}/marketplace-{index:03d}"
@@ -807,18 +970,17 @@ def _transfer_marketplaces(
     return runtime
 
 
-def _transfer_files(client: WslClient, sources: list[str], workspace: str) -> None:
+def _transfer_files(client: ExecutionTarget, sources: list[str], workspace: str) -> None:
     """Copy Windows files into the root of the WSL workspace before execution."""
     for source in sources:
         windows_path = Path(source)
         if not windows_path.is_file():
             raise FileNotFoundError(f"copy file does not exist: {source}")
-        mounted = client.text(client.bash("wslpath -a \"$1\"", str(windows_path.resolve()))).strip()
-        client.bash('cp -- "$2" "$1/"', workspace, mounted)
+        _copy_to_target(client, str(windows_path.resolve()), workspace)
 
 
 def _copy_back_files(
-    client: WslClient,
+    client: ExecutionTarget,
     sources: list[str],
     workspace: str,
     output: str,
@@ -860,16 +1022,13 @@ def _copy_back_files(
             if not filename or filename in {".", ".."}:
                 raise ValueError(f"copy-back path must name a file: {workspace_source}")
             destination = output_stub.parent / f"{output_stub.name}.{filename}"
-            mounted_destination = client.text(
-                client.bash("wslpath -a \"$1\"", str(destination.resolve()))
-            ).strip()
-            client.bash('cp -- "$1" "$2"', workspace_source, mounted_destination)
+            _copy_from_target(client, workspace_source, str(destination.resolve()))
             source_name = workspace_source.removeprefix(f"{workspace}/")
             copied.append(_describe_copied_back(source_name, destination))
     return copied
 
 
-def _expand_copy_back_pattern(client: WslClient, pattern: str, workspace: str) -> list[str]:
+def _expand_copy_back_pattern(client: ExecutionTarget, pattern: str, workspace: str) -> list[str]:
     """Expand a workspace-relative glob in WSL and retain regular files only."""
     completed = client.bash(
         """
@@ -1084,11 +1243,13 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
     return selected
 
 
-def _write_wsl_file(client: WslClient, path: str, content: str) -> None:
+def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:
     client.bash('mkdir -p "$(dirname "$1")" && cat > "$1"', path, input_bytes=content.encode())
 
 
-def _resolve_wsl_path(client: WslClient, path: str, *, require_directory: bool = False) -> str:
+def _resolve_wsl_path(
+    client: ExecutionTarget, path: str, *, require_directory: bool = False
+) -> str:
     test = "test -d" if require_directory else "test -r"
     script = (
         'value="$1"; case "$value" in "~/"*) value="$HOME/${value:2}";; esac; '
@@ -1101,6 +1262,7 @@ def _stream_codex(
     command: list[str],
     prompt: str,
     *,
+    target: ExecutionTarget | None = None,
     environment: Mapping[str, str] | None = None,
     progress_lines: int,
     timeout_seconds: float | None = 1800.0,
@@ -1109,17 +1271,25 @@ def _stream_codex(
     live_progress: bool = True,
     log_callback: Callable[[str], None] | None = None,
 ) -> tuple[int, str, str, list[TraceEvent], list[dict[str, Any]]]:
-    process = subprocess.Popen(
-        command,
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        bufsize=1,
-        env=environment,
-    )
+    if target is not None:
+        process = target.start_process(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+    else:
+        process = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=environment,
+        )
     assert process.stdin is not None and process.stdout is not None and process.stderr is not None
     process.stdin.write(prompt)
     process.stdin.close()
@@ -1156,22 +1326,15 @@ def _stream_codex(
         nonlocal stopped_at
         if stopped_at is None:
             stopped_at = time.perf_counter()
+        if target is not None:
+            target.stop_process(process)
+            return
         if getattr(process, "poll", lambda: None)() is not None:
             return
-        pid = getattr(process, "pid", None)
-        if os.name == "nt" and isinstance(pid, int):
-            # wsl.exe can leave the Linux child holding stdout/stderr open after
-            # the wrapper exits; terminate the complete process tree on Windows.
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                check=False,
-                capture_output=True,
-            )
-        else:
-            terminate = getattr(process, "terminate", None)
-            if not callable(terminate):
-                return
-            terminate()
+        terminate = getattr(process, "terminate", None)
+        if not callable(terminate):
+            return
+        terminate()
         try:
             process.wait(timeout=5)
         except subprocess.TimeoutExpired:
@@ -1355,7 +1518,7 @@ def _progress_panel(recent: list[str], latest_meaningful: str | None) -> Panel:
         title="Codex progress",
     )
 
-def _inventory(client: WslClient, workspace: str) -> list[WorkspaceFile]:
+def _inventory(client: ExecutionTarget, workspace: str) -> list[WorkspaceFile]:
     completed = client.bash(
         'if test -d "$1"; then find "$1" -mindepth 1 -printf \'%y\\0%s\\0%P\\0%l\\0\'; fi',
         workspace,
@@ -1382,7 +1545,7 @@ def _inventory(client: WslClient, workspace: str) -> list[WorkspaceFile]:
 
 
 def _session_traces(
-    client: WslClient, codex_home: str | None
+    client: ExecutionTarget, codex_home: str | None
 ) -> tuple[list[SessionTrace], list[TraceEvent]]:
     if not codex_home:
         return [], []
