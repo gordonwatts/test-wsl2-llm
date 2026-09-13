@@ -20,6 +20,7 @@ from rich.logging import RichHandler
 from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
+from test_wsl2_llm.agents import get_agent_adapter
 from test_wsl2_llm.config import (
     build_config,
     load_config_file,
@@ -74,6 +75,7 @@ def application() -> None:
 
 @app.command()
 def run(
+    agent: Annotated[str | None, typer.Option(help="Agent adapter; defaults to codex.")] = None,
     prompt: Annotated[str | None, typer.Option(help="Prompt text sent to Codex.")] = None,
     prompt_file: Annotated[
         Path | None, typer.Option(help="Windows UTF-8 file containing the prompt.")
@@ -227,6 +229,7 @@ def run(
         cli_values = {
             "prompt": prompt,
             "prompt_file": str(prompt_file) if prompt_file else None,
+            "agent": agent,
             "model": model,
             "marketplaces": marketplace,
             "plugins": plugin,
@@ -396,6 +399,7 @@ def template_init(
 @template_app.command("run")
 def template_run(
     config: Annotated[Path, typer.Argument(help="Input template YAML configuration file.")],
+    agent: Annotated[str | None, typer.Option(help="Agent adapter; defaults to codex.")] = None,
     question_ids: Annotated[
         list[str] | None,
         typer.Argument(help="Optional question IDs to run; omit to run every question."),
@@ -572,6 +576,7 @@ def template_run(
             selected = set(requested_questions)
             rendered_questions = [entry for entry in rendered_questions if entry[0] in selected]
         cli_values = {
+            "agent": agent,
             "marketplaces": marketplace,
             "plugins": plugin,
             "mcp_servers": mcp,
@@ -940,6 +945,10 @@ def connect(
         if not result.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
 
+        agent_name = str(result.configuration.get("agent") or result.run.agent or "codex")
+        agent_adapter = get_agent_adapter(agent_name)
+        if not agent_adapter.capabilities.interactive_follow_up:
+            raise ValueError("agent does not support interactive follow-up: " + agent_name)
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
         client = create_execution_target(result.run.distro, policy)
         if access == "shell" and resume:
@@ -958,6 +967,9 @@ def connect(
 @app.command("continue")
 def continue_work(
     input_yaml: Annotated[Path, typer.Argument(help="YAML result report from the previous step.")],
+    agent: Annotated[
+        str | None, typer.Option(help="Agent adapter; defaults to the previous run.")
+    ] = None,
     prompt: Annotated[str | None, typer.Option(help="New prompt text sent to Codex.")] = None,
     prompt_file: Annotated[
         Path | None, typer.Option(help="Windows UTF-8 file containing the new prompt.")
@@ -1131,6 +1143,7 @@ def continue_work(
         cli_values = {
             "prompt": prompt,
             "prompt_file": str(prompt_file) if prompt_file else None,
+            "agent": agent,
             "model": model,
             "marketplaces": defaults["marketplaces"],
             "plugins": defaults["plugins"],

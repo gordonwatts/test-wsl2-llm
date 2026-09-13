@@ -111,6 +111,11 @@ def render_markdown(
     workspace_label = "(removed)" if any(
         phase.name == "workspace_cleanup" for phase in result.timing.phases
     ) else "(not created)"
+    agent_execution_seconds = (
+        run.agent_execution_seconds
+        if run.agent_execution_seconds is not None
+        else run.codex_execution_seconds
+    )
     lines.extend(
         [
             "",
@@ -119,15 +124,19 @@ def render_markdown(
             "| Field | Value |",
             "| --- | --- |",
             f"| Run date | {_local_date(run.started_at)} |",
+            f"| Agent | {run.agent} |",
             f"| Started | {_local_clock(run.started_at)} |",
             f"| Finished | {_local_clock(run.finished_at)} |",
             f"| Total duration | {_duration(run.total_duration_seconds)} |",
             f"| Codex execution | {_duration(run.codex_execution_seconds)} |",
+            f"| {run.agent.title()} execution | "
+            f"{_duration(agent_execution_seconds)} |",
             f"| Status | {run.status} |",
             f"| Exit code | {run.exit_code} |",
             f"| Timed out | {run.timed_out} |",
             f"| Distribution | {run.distro or '(default)'} |",
             f"| Codex version | {run.codex_version or '(unavailable)'} |",
+            f"| Agent version | {run.agent_version or run.codex_version or '(unavailable)'} |",
             f"| Workspace | {run.workspace_path or workspace_label} |",
             f"| Workspace retained | {run.workspace_retained} |",
         ]
