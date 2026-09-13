@@ -21,7 +21,9 @@ from test_wsl2_llm.runner import (
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _is_timeout,
+    _is_uninformative_progress,
     _progress_description,
+    _progress_panel,
     _root_contents,
     _stream_codex,
     _transfer_files,
@@ -229,6 +231,29 @@ def test_progress_description_is_human_readable_and_bounded() -> None:
     assert len(description) <= 120
     assert "item.completed" not in description
 
+
+def test_mcp_polling_does_not_replace_latest_meaningful_progress() -> None:
+    assert _is_uninformative_progress("Started mcp tool call")
+    assert _is_uninformative_progress("Completed MCP tool call")
+    assert not _is_uninformative_progress("Completed command: uv run pytest")
+
+    panel = _progress_panel(
+        ["10:51:22 [stdout] Started mcp tool call"],
+        "10:50:24 [stdout] Started command: uv run pytest",
+    )
+
+    rendered = str(panel.renderable)
+    assert (
+        "Latest meaningful activity: 10:50:24 [stdout] Started command: uv run pytest"
+        in rendered
+    )
+    assert "10:51:22 [stdout] Started mcp tool call" in rendered
+
+
+def test_progress_panel_explains_when_no_meaningful_activity_has_arrived() -> None:
+    rendered = str(_progress_panel([], None).renderable)
+    assert "Latest meaningful activity: No meaningful activity yet." in rendered
+    assert "Starting Codex..." in rendered
 
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:
     config = WslTestConfig(
