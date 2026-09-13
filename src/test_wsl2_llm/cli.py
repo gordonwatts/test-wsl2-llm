@@ -40,6 +40,7 @@ from test_wsl2_llm.template import (
     question_distro,
     question_plugins,
     question_title,
+    question_validators,
     render_questions,
     resolved_template_values,
     template_output,
@@ -590,6 +591,9 @@ def template_run(
                     )
                     run_values["plugins"] = question_plugins(
                         list(shared.get("plugins", [])), question_values
+                    )
+                    run_values["validators"] = question_validators(
+                        list(shared.get("validators", [])), question_values
                     )
                     run_config = build_config(
                         run_values, {**cli_values, "model": model_config.model_selector}

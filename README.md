@@ -104,7 +104,9 @@ mapping needs a unique, filename-safe `id`; its scalar fields are available thro
 mapping with `{{question-id}}` (including IDs with periods or hyphens). References may be
 nested, but cycles and references to a question without text are rejected before execution.
 Question-level `copy_back` and `plugins` fields are lists of files/wildcards and plugin
-selectors, respectively, not substitution scalars. For example:
+selectors, respectively, not substitution scalars. A question-level `validators` list replaces the
+shared checks for that question; omit it to inherit shared checks or use `[]` to disable them.
+A question-level `distro` selects a different WSL distribution. For example:
 
 ```yaml
 prompt_template: |
@@ -151,7 +153,7 @@ threads: 4
 [`template.schema.json`](template.schema.json) is the canonical machine-readable JSON Schema for
 template files. It describes the batch fields, the single-run settings that can be
 shared by every job, question value types, and the built-in validators. The schema is
-also useful as a quick reference: in a question, `id` and `copy_back` are reserved;
+also useful as a quick reference: in a question, `id`, `copy_back`, `plugins`, `distro`, and `validators` are reserved;
 every other key must be an identifier and its value must be a scalar string, number, or
 boolean. Those scalar keys are the only values that can be substituted in
 `prompt_template` with `{{ field }}`. A question `id` must be unique, and every

@@ -8,6 +8,8 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from test_wsl2_llm.config import load_config_file
+from test_wsl2_llm.models import ValidatorConfig
+from test_wsl2_llm.validation import validate_configuration
 
 _FIELD = re.compile(r"{{\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*}}")
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -32,6 +34,7 @@ questions:
   - id: example
     question: Replace this with the question to run.
     # plugins: [question-specific@marketplace, -shared@marketplace]
+    # validators: [{name: require_string, arguments: {string: "expected text"}}]
 
 model: MODEL:medium
 marketplaces: []
@@ -99,6 +102,7 @@ def load_template_file(path: Path) -> tuple[TemplateConfig, dict[str, Any], Path
         batch.questions,
         shared_copy_back=values.get("copy_back", []),
         shared_plugins=values.get("plugins", []),
+        shared_validators=values.get("validators", []),
     )
     return batch, values, path
 
@@ -109,6 +113,7 @@ def validate_questions(
     *,
     shared_copy_back: list[str] | None = None,
     shared_plugins: list[str] | None = None,
+    shared_validators: list[ValidatorConfig | dict[str, Any]] | None = None,
 ) -> None:
     """Validate question records and all template fields before execution."""
     seen: set[str] = set()
@@ -153,6 +158,19 @@ def validate_questions(
                         "non-empty strings"
                     )
                 continue
+            if key == "validators":
+                if not isinstance(value, list):
+                    raise ValueError(
+                        f"question {identifier} field 'validators' must be a list"
+                    )
+                try:
+                    specifications = [ValidatorConfig.model_validate(item) for item in value]
+                except Exception as exc:
+                    raise ValueError(
+                        f"question {identifier} field 'validators' contains an invalid check: {exc}"
+                    ) from exc
+                validate_configuration(specifications)
+                continue
             if value is None or isinstance(value, (dict, list, tuple)):
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
             if not isinstance(value, (str, int, float, bool)):
@@ -174,6 +192,19 @@ def validate_questions(
         render_template(prompt_template, values, identifier, question_texts=question_texts)
         question_copy_back(list(shared_copy_back or []), question)
         question_plugins(list(shared_plugins or []), question)
+        effective_validators = list(shared_validators or [])
+        if "validators" in question:
+            effective_validators = question_validators(effective_validators, question)
+        try:
+            specifications = [
+                item if isinstance(item, ValidatorConfig) else ValidatorConfig.model_validate(item)
+                for item in effective_validators
+            ]
+            validate_configuration(specifications)
+        except Exception as exc:
+            raise ValueError(
+                f"question {identifier} has invalid validators: {exc}"
+            ) from exc
 
 
 def render_template(
@@ -355,6 +386,19 @@ def question_plugins(shared: list[str], question: dict[str, Any]) -> list[str]:
             plugins.append(plugin)
     return plugins
 
+
+def question_validators(
+    shared: list[ValidatorConfig | dict[str, Any]], question: dict[str, Any]
+) -> list[ValidatorConfig | dict[str, Any]]:
+    """Return question validators, replacing shared checks when supplied."""
+    if "validators" not in question:
+        return list(shared)
+    overrides = question["validators"]
+    if not isinstance(overrides, list):
+        raise ValueError(
+            f"question {question.get('id', 'unknown')} field 'validators' must be a list"
+        )
+    return list(overrides)
 
 def question_title(identifier: str, question: dict[str, Any], prompt: str) -> str:
     """Build a one-line report heading from the question text or rendered prompt."""

@@ -166,7 +166,7 @@
   "definitions": {
     "question": {
       "type": "object",
-      "description": "One question's scalar substitution values. Besides id and copy_back, property names must be identifier-shaped and values must be strings, numbers, or booleans. A question field may reuse another question's complete text with {{question-id}}.",
+      "description": "One question's scalar substitution values and optional per-question settings. Besides id, copy_back, plugins, distro, and validators, property names must be identifier-shaped and values must be strings, numbers, or booleans. A question field may reuse another question's complete text with {{question-id}}.",
       "required": ["id"],
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$|^id$|^copy_back$" },
       "properties": {
@@ -179,6 +179,21 @@
           "type": "array",
           "description": "Question-specific copy-back additions. A string beginning with '-' removes a matching shared pattern or earlier addition.",
           "items": { "type": "string", "minLength": 1 }
+        },
+        "plugins": {
+          "type": "array",
+          "description": "Question-specific plugin additions and removals. A string beginning with '-' removes a matching shared selector or earlier addition.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "distro": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Question-specific WSL distribution override."
+        },
+        "validators": {
+          "type": "array",
+          "description": "Question-specific post-run checks. When supplied, this replaces shared validators; an empty list disables checks.",
+          "items": { "$ref": "#/definitions/validator" }
         }
       },
       "additionalProperties": {
