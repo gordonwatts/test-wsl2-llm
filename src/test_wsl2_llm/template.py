@@ -12,7 +12,8 @@ _FIELD = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-TEMPLATE_STARTER = """# Template-driven WSL2 Codex batch configuration
+TEMPLATE_STARTER = """# yaml-language-server: $schema=./template.schema.json
+# Template-driven WSL2 Codex batch configuration
 prompt_template: |
   Please write a stand-alone Python file that uv can run and auto-install
   dependencies for. It must do the following:
