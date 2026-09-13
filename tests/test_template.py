@@ -7,16 +7,19 @@ from test_report import sample_result
 from typer.testing import CliRunner
 
 from test_wsl2_llm.cli import app
-from test_wsl2_llm.config import output_paths
+from test_wsl2_llm.config import build_config, output_paths
+from test_wsl2_llm.report import write_reports
 from test_wsl2_llm.template import (
     TEMPLATE_SCHEMA_NAME,
     TemplateConfig,
+    inspect_template_result,
     question_copy_back,
     question_plugins,
     question_title,
     question_validators,
     render_questions,
     render_template,
+    template_cell_metadata,
     template_output,
     validate_questions,
 )
@@ -56,9 +59,7 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
 def test_template_run_repairs_adjacent_schema_and_absolute_header(
     monkeypatch, tmp_path: Path
 ) -> None:
-    monkeypatch.setattr(
-        "test_wsl2_llm.runner.run_test", lambda _config, **_kwargs: sample_result()
-    )
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", lambda _config, **_kwargs: sample_result())
     config = tmp_path / "nested" / "batch.yaml"
     config.parent.mkdir()
     config.write_text(
@@ -127,11 +128,14 @@ def test_template_question_text_can_reuse_another_question() -> None:
 
 
 def test_template_question_text_reuse_supports_dotted_and_hyphenated_ids() -> None:
-    assert render_template(
-        "{{base-question}} / {{shared.v1}}",
-        {},
-        question_texts={"base-question": "base", "shared.v1": "shared"},
-    ) == "base / shared"
+    assert (
+        render_template(
+            "{{base-question}} / {{shared.v1}}",
+            {},
+            question_texts={"base-question": "base", "shared.v1": "shared"},
+        )
+        == "base / shared"
+    )
 
 
 def test_template_question_text_reuse_rejects_missing_and_circular_references() -> None:
@@ -266,8 +270,6 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
     }
 
 
-
-
 def test_template_run_applies_question_distro_override(monkeypatch, tmp_path: Path) -> None:
     distros: list[str | None] = []
 
@@ -298,6 +300,7 @@ def test_template_run_applies_question_distro_override(monkeypatch, tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     assert distros == ["ubuntu", "atlas_al9"]
+
 
 def test_template_run_selects_questions_by_positional_id(monkeypatch, tmp_path: Path) -> None:
     prompts: list[str] = []
@@ -383,7 +386,11 @@ def test_template_run_skips_questions_with_existing_results_by_default(
     assert prompts == ["Do second"]
     assert "Skipping q1" in result.output
     assert str(existing.parent) in "".join(result.output.split())
-    assert "Use --force to rerun" in result.output
+    assert "incomplete" in result.output
+    prompts.clear()
+    retried = runner.invoke(app, ["template", "run", str(config), "--retry", "incomplete"])
+    assert retried.exit_code == 0, retried.output
+    assert prompts == ["Do first"]
 
 
 def test_template_run_force_reruns_questions_with_existing_results(
@@ -571,7 +578,12 @@ def test_model_matrix_expands_and_resumes_individual_cells(monkeypatch, tmp_path
         paths = output_paths(output)
         for path in paths:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("completed", encoding="utf-8")
+            path.write_text(
+                yaml.safe_dump(result.model_dump(mode="json"))
+                if path.suffix == ".yaml"
+                else "completed",
+                encoding="utf-8",
+            )
         written.append((paths, overwrite))
         return paths
 
@@ -591,12 +603,6 @@ def test_model_matrix_expands_and_resumes_individual_cells(monkeypatch, tmp_path
     if from_cli:
         for selector in selectors:
             args.extend(["--model", selector])
-    existing = output_paths(
-        template_output(str(tmp_path / "results/run"), "q1", 1, 2, selectors[0])
-    )[1]
-    existing.parent.mkdir()
-    existing.write_text("already completed", encoding="utf-8")
-
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
     expected = {
@@ -604,11 +610,10 @@ def test_model_matrix_expands_and_resumes_individual_cells(monkeypatch, tmp_path
         for selector in selectors
         for prompt in ["Do first", "Do second"]
         for repetition in [1, 2]
-    } - {(selectors[0], "Do first", 1)}
+    }
     assert {(c.model_selector, c.prompt, int(c.output[-3:])) for c in calls} == expected
-    assert len({paths[0] for paths, _ in written}) == 11
+    assert len({paths[0] for paths, _ in written}) == 12
     assert all(overwrite for _, overwrite in written)
-    assert existing.read_text(encoding="utf-8") == "already completed"
     calls.clear()
     resumed = runner.invoke(app, args)
     assert resumed.exit_code == 0, resumed.output
@@ -822,3 +827,33 @@ def test_question_validators_survive_saved_template_round_trip(tmp_path: Path) -
         {"name": "require_string", "arguments": {"string": "shared"}}
     ]
     assert values["questions"][0]["validators"] == question_validators_value
+def test_template_result_validation_requires_matching_complete_pair(tmp_path: Path) -> None:
+    output = str(tmp_path / "result")
+    config = build_config({"prompt": "Do first", "model": "test-model", "output": output}, {})
+    result = sample_result()
+    result.template_cell = template_cell_metadata("q1", 1, config)
+    write_reports(result, output, overwrite=True)
+    markdown, yaml_path = output_paths(output)
+    expected = result.template_cell
+    assert inspect_template_result(markdown, yaml_path, expected).state == "succeeded"
+
+    yaml_path.write_text("not: [canonical", encoding="utf-8")
+    assert inspect_template_result(markdown, yaml_path, expected).state == "incomplete"
+
+
+def test_template_result_validation_detects_stale_and_failed_cells(tmp_path: Path) -> None:
+    output = str(tmp_path / "result")
+    config = build_config({"prompt": "Do first", "model": "test-model", "output": output}, {})
+    result = sample_result()
+    result.template_cell = template_cell_metadata("q1", 1, config)
+    write_reports(result, output, overwrite=True)
+    markdown, yaml_path = output_paths(output)
+    changed = build_config({"prompt": "Do changed", "model": "test-model", "output": output}, {})
+    assert (
+        inspect_template_result(markdown, yaml_path, template_cell_metadata("q1", 1, changed)).state
+        == "stale"
+    )
+
+    result.run.status = "failed"
+    write_reports(result, output, overwrite=True)
+    assert inspect_template_result(markdown, yaml_path, result.template_cell).state == "failed"

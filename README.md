@@ -72,11 +72,17 @@ test-wsl2-llm template run .\questions.yaml --question q1 --question q3
 If no IDs are supplied, every question is run. Unknown or duplicate IDs are
 rejected before any WSL job starts.
 
-Template runs are resumable by default. If a Markdown or YAML result already
-exists for a model/effort, question, and repetition, only that cell is skipped.
-Other models and missing repetitions still run. Supplying `--force` reruns all
-selected cells and overwrites their reports.
-
+Template runs are resumable by default. Each saved YAML report contains the
+question/model/repetition identity and a fingerprint of the effective prompt and
+run settings. A cell is skipped only when both reports exist, the YAML is a
+readable canonical result, and that identity and fingerprint match. Missing,
+partial, corrupt, or stale reports are reported and skipped. A matching
+successful result is skipped; matching failed results remain skipped to preserve
+resume behavior, and can be retried explicitly with `--retry failed`. Use
+`--retry incomplete` to retry saved reports that are missing a pair, invalid, or
+missing cell metadata. Stale reports are regenerated because their effective
+prompt or settings no longer match. Supplying `--force` reruns all selected cells
+and overwrites their reports.
 Repeat `--model` to compare model/effort combinations (this replaces the YAML
 model selection):
 

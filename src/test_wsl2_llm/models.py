@@ -258,6 +258,14 @@ class FinalResult(BaseModel):
     timed_out: bool = False
 
 
+class TemplateCell(BaseModel):
+    """Identity and effective-settings fingerprint for a template batch cell."""
+
+    question_id: str
+    model_selector: str
+    repetition: int
+    fingerprint: str
+
 class ConversationTurn(BaseModel):
     """One prompt and the response produced while working in a workspace."""
 
@@ -295,6 +303,7 @@ class TestResult(BaseModel):
     schema_version: Literal[2] = 2
     prompt: str
     title: str = "# WSL2 Codex test result"
+    template_cell: TemplateCell | None = None
     invocation: str = ""
     continued_from: str | None = None
     skills: SkillsResult

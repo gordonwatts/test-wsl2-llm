@@ -27,7 +27,7 @@ from test_wsl2_llm.config import (
     output_paths,
     save_config,
 )
-from test_wsl2_llm.models import EnvironmentPolicy, TestResult
+from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     WslClient,
     _is_uninformative_progress,
@@ -35,6 +35,7 @@ from test_wsl2_llm.runner import (
 )
 from test_wsl2_llm.template import (
     ensure_template_schema,
+    inspect_template_result,
     load_template_file,
     question_copy_back,
     question_distro,
@@ -43,6 +44,7 @@ from test_wsl2_llm.template import (
     question_validators,
     render_questions,
     resolved_template_values,
+    template_cell_metadata,
     template_output,
     write_template,
     write_template_config,
@@ -340,9 +342,7 @@ def template_init(
 
 @template_app.command("run")
 def template_run(
-    config: Annotated[
-        Path, typer.Argument(help="Input template YAML configuration file.")
-    ],
+    config: Annotated[Path, typer.Argument(help="Input template YAML configuration file.")],
     question_ids: Annotated[
         list[str] | None,
         typer.Argument(help="Optional question IDs to run; omit to run every question."),
@@ -418,6 +418,13 @@ def template_run(
     force: Annotated[
         bool, typer.Option("--force", help="Overwrite existing Markdown/YAML result pairs.")
     ] = False,
+    retry: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--retry",
+            help=("Retry saved failed or incomplete cells; repeat for each category."),
+        ),
+    ] = None,
     title: Annotated[
         str | None, typer.Option(help="Title written as the first line of each Markdown report.")
     ] = None,
@@ -439,9 +446,7 @@ def template_run(
         str | None,
         typer.Option(help="Readable WSL Codex auth file copied into isolated CODEX_HOME."),
     ] = None,
-    pricing_file: Annotated[
-        Path | None, typer.Option(help="Model token pricing YAML.")
-    ] = None,
+    pricing_file: Annotated[Path | None, typer.Option(help="Model token pricing YAML.")] = None,
     progress_lines: Annotated[
         int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
     ] = None,
@@ -486,6 +491,10 @@ def template_run(
         ensure_template_schema(config)
         batch, shared, _ = load_template_file(config)
         shared = merge_config_values(load_default_config(), shared)
+        retry_categories = set(retry or [])
+        unsupported_retry = retry_categories - {"failed", "incomplete"}
+        if unsupported_retry:
+            raise ValueError("--retry accepts only failed or incomplete")
         if repeat is not None and repeat < 1:
             raise ValueError("repeat must be at least 1")
         if threads is not None and threads < 1:
@@ -508,9 +517,7 @@ def template_run(
                     f"available IDs: {', '.join(available)}"
                 )
             selected = set(requested_questions)
-            rendered_questions = [
-                entry for entry in rendered_questions if entry[0] in selected
-            ]
+            rendered_questions = [entry for entry in rendered_questions if entry[0] in selected]
         cli_values = {
             "marketplaces": marketplace,
             "plugins": plugin,
@@ -586,9 +593,7 @@ def template_run(
                     run_values["copy_back"] = question_copy_back(
                         list(shared.get("copy_back", [])), question_values
                     )
-                    run_values["distro"] = question_distro(
-                        shared.get("distro"), question_values
-                    )
+                    run_values["distro"] = question_distro(shared.get("distro"), question_values)
                     run_values["plugins"] = question_plugins(
                         list(shared.get("plugins", [])), question_values
                     )
@@ -601,7 +606,10 @@ def template_run(
                     run_config = run_config.model_copy(
                         update={
                             "output": template_output(
-                                run_config.output, identifier, repetition, effective_repeat,
+                                run_config.output,
+                                identifier,
+                                repetition,
+                                effective_repeat,
                                 run_config.model_selector,
                             )
                         }
@@ -611,23 +619,61 @@ def template_run(
                     if destination_key in destinations:
                         raise ValueError(f"duplicate result destination: {paths[0]}")
                     destinations.add(destination_key)
-                    existing = [path for path in paths if path.exists()]
+                    cell = template_cell_metadata(identifier, repetition, run_config)
+                    check = inspect_template_result(paths[0], paths[1], cell)
                     label = f"{identifier} [{run_config.model_selector}] repeat {repetition}"
-                    if existing and not resolved_base.overwrite:
-                        logger.warning(
-                            "Skipping %s; results exist in %s. Use --force to rerun.",
-                            label, paths[0].parent,
+                    if not resolved_base.overwrite and check.state == "succeeded":
+                        logger.info(
+                            "Skipping %s; prior result succeeded and matches the current cell.",
+                            label,
                         )
                         continue
-                    if existing:
+                    if (
+                        not resolved_base.overwrite
+                        and check.state == "failed"
+                        and "failed" not in retry_categories
+                    ):
+                        logger.warning(
+                            "Skipping %s; prior result failed "
+                            "(use --retry failed or --force to rerun).",
+                            label,
+                        )
+                        continue
+                    if (
+                        not resolved_base.overwrite
+                        and check.state == "incomplete"
+                        and "incomplete" not in retry_categories
+                    ):
+                        logger.warning(
+                            "Skipping %s; prior result is incomplete "
+                            "(use --retry incomplete or --force to rerun).",
+                            label,
+                        )
+                        continue
+                    if resolved_base.overwrite and check.state != "missing":
                         logger.info(
                             "Rerunning %s; results exist in %s (--force).",
-                            label, paths[0].parent,
+                            label,
+                            paths[0].parent,
                         )
-                    jobs.append((
-                        model_index * len(rendered_questions) + question_index,
-                        label, repetition, run_config,
-                    ))
+                    elif check.state == "stale":
+                        logger.info("Rerunning %s; saved result is stale: %s.", label, check.reason)
+                    elif check.state == "incomplete":
+                        logger.warning(
+                            "Rerunning %s; saved result is incomplete: %s.",
+                            label,
+                            check.reason,
+                        )
+                    elif check.state == "failed":
+                        logger.info("Rerunning %s; prior result failed (--retry failed).", label)
+                    jobs.append(
+                        (
+                            model_index * len(rendered_questions) + question_index,
+                            identifier,
+                            repetition,
+                            run_config,
+                        )
+                    )
 
         if not jobs:
             console.print("No questions to run.")
@@ -640,9 +686,13 @@ def template_run(
             question_index: int,
             identifier: str,
             repetition: int,
-            run_config: object,
+            run_config: TestConfig,
             repeat_display: _RepeatDisplay | None,
         ) -> tuple[int, str, int, Path, Path, int]:
+            def persist(collected: TestResult) -> None:
+                collected.template_cell = template_cell_metadata(identifier, repetition, run_config)
+                write_reports(collected, run_config.output, resolved_base.overwrite)
+
             result = run_test(
                 run_config,
                 verbosity=verbose,
@@ -650,13 +700,10 @@ def template_run(
                 live_progress=repeat_display is None,
                 log_callback=repeat_display.log if repeat_display is not None else None,
                 invocation=sys.argv,
-                report_callback=lambda collected: write_reports(
-                    collected, run_config.output, resolved_base.overwrite
-                ),
+                report_callback=persist,
             )
-            markdown_path, yaml_path = write_reports(
-                result, run_config.output, True
-            )
+            result.template_cell = template_cell_metadata(identifier, repetition, run_config)
+            markdown_path, yaml_path = write_reports(result, run_config.output, True)
             return (
                 question_index,
                 identifier,
@@ -730,9 +777,7 @@ def generate_markdown(
         destination = output or input_yaml.with_suffix(".md")
         from test_wsl2_llm.report import write_markdown
 
-        written = write_markdown(
-            result, destination, overwrite=force, include_details=details
-        )
+        written = write_markdown(result, destination, overwrite=force, include_details=details)
         console.print(f"Markdown result: {written}")
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
@@ -759,9 +804,7 @@ def connect(
             "-v",
             "--verbose",
             count=True,
-            help=(
-                "-v shows removed PATH entries; -vv reports when no PATH entries matched."
-            ),
+            help=("-v shows removed PATH entries; -vv reports when no PATH entries matched."),
         ),
     ] = 0,
 ) -> None:
@@ -1042,9 +1085,7 @@ def _connect_command(
         if resume:
             raise ValueError("--resume is only supported with --access codex")
         script = 'workspace="$1"\ncd -- "$workspace"\nexec bash -li'
-        return client.command(
-            client.shell_command(script, workspace, interactive_login=True)
-        )
+        return client.command(client.shell_command(script, workspace, interactive_login=True))
     run_root = posixpath.dirname(workspace)
     codex_home = posixpath.join(run_root, ".harness", "codex-home")
     auth_source = str(result.configuration.get("auth_source") or "~/.codex/auth.json")
@@ -1121,9 +1162,7 @@ class _RepeatDisplay:
             auto_refresh=False,
         )
         self._task_id = self._progress.add_task("", total=total)
-        self._live = Live(
-            self._render(), console=console, refresh_per_second=8, transient=True
-        )
+        self._live = Live(self._render(), console=console, refresh_per_second=8, transient=True)
 
     def __enter__(self) -> Self:
         self._live.start(refresh=True)
