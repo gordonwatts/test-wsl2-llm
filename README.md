@@ -254,8 +254,8 @@ after Codex finishes. Relative paths and shell-style wildcards such as `plot_*.p
 resolved from the workspace root. Each matching file is
 written beside the reports as `<output-stub>.<file-name>` (for example,
 `results\hello.output.png`), and the Markdown report links to every copied file. Images
-are displayed with PNG previews embedded directly in Markdown, text files show their
-first ten lines, and ROOT files are inspected with
+are displayed with PNG previews embedded directly in Markdown and also have an ordinary
+file link, text files show their first ten lines, and ROOT files are inspected with
 `uproot` to list their objects plus TTree branches and event counts. The YAML form is
 `copy_back`. Template questions may also provide a `copy_back` list; entries are added to
 that question's shared patterns, while entries beginning with `-` remove an exact shared
@@ -292,6 +292,17 @@ test-wsl2-llm generate .\results\hello.yaml `
 ```
 
 The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file.
+### Portable Markdown viewing
+
+Reports keep the outcome, prompt, final response, validation diagnostics, and artifact
+links in ordinary Markdown so they remain readable in GitHub, VS Code, and other viewers
+without JavaScript. The copy buttons and bounded HTML preview controls are best-effort
+enhancements; disabling scripts removes those controls but does not remove the fenced
+code, indented Markdown, or ordinary relative links. GitHub may sanitize embedded PNG data
+URIs, so use the visible **Open file** link when an image preview is unavailable. Relative
+artifact links work when the Markdown report remains beside its copied-back files; moving
+only the report breaks those links. Viewer-specific styling, image previews, and HTML
+details disclosure are not guaranteed across Markdown renderers.
 Workspace inventory, Codex stderr, and model activity (as an elapsed-time table) are included by default. `--details` also
 includes resolved configuration, raw stdout JSONL, trace timing, session traces, and conversation
 history when available.
@@ -448,7 +459,7 @@ Override the acceptance model with `--wsl-model MODEL` or `TEST_WSL2_LLM_MODEL`.
 
 ## Model pricing
 
-The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown cost table rounds USD amounts to the nearest cent.
+The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown costs preserve useful precision for positive sub-cent totals (and display unavailable separately from $0.00).
 
 The normal progress display keeps a persistent `Latest meaningful activity` line above the five most recent events. Routine MCP polling entries remain in that bounded detail log without replacing the summary, and each event is prefixed with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 

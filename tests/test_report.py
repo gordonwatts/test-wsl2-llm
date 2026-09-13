@@ -19,6 +19,7 @@ from test_wsl2_llm.models import (
     TimingResult,
     TraceEvent,
     UsageRecord,
+    ValidationResult,
     WorkspaceFile,
     WorkspaceResult,
 )
@@ -127,7 +128,7 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         "<summary>Complete Codex stderr</summary>",
         "progress",
         "0h 0m 2s",
-        "$0.00",
+        "$0.000028",
     ):
         assert expected in markdown
     assert "Complete Codex stdout JSONL" not in markdown
@@ -167,7 +168,7 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     assert "Input rate / 1M" not in token_section
     amounts = re.findall(r"\$\d+\.\d+", token_section)
     assert amounts
-    assert all(re.fullmatch(r"\$\d+\.\d{2}", amount) for amount in amounts)
+    assert "$0.000028" in token_section
     assert "base64-encoded WSL transport arguments" in markdown
     assert "not credentials or API tokens" in markdown
     assert markdown.index("not credentials or API tokens") < markdown.index(
@@ -518,3 +519,52 @@ def test_report_renders_copied_back_markdown_inline_and_nested(tmp_path: Path) -
     assert "> # Notes" in section
     assert "> A paragraph with **emphasis**." in section
     assert "> - first" in section
+
+@pytest.mark.parametrize(
+    ("fixture", "scenario"),
+    [
+        ("success.md", "success"),
+        ("validation-failure.md", "validation"),
+        ("timeout.md", "timeout"),
+        ("missing-artifact.md", "missing"),
+    ],
+)
+def test_outcome_summary_matches_golden_fixture(
+    tmp_path: Path, fixture: str, scenario: str
+) -> None:
+    result = sample_result()
+    if scenario == "validation":
+        result.run.status = "failed"
+        result.run.exit_code = 1
+        result.run.error = "Validation failed: require_string"
+        result.validation = [
+            ValidationResult(
+                name="require_string", arguments={"string": "done"}, passed=False, message="missing"
+            )
+        ]
+    elif scenario == "timeout":
+        result.run.status = "failed"
+        result.run.exit_code = 124
+        result.run.error = "Codex timed out after 5 seconds"
+        result.run.timed_out = True
+        result.result.timed_out = True
+    elif scenario == "missing":
+        result.missing_copy_back = ["result.txt"]
+
+    markdown = write_markdown(result, tmp_path / "summary.md", overwrite=True).read_text(
+        encoding="utf-8"
+    )
+    expected = (
+        Path(__file__).parent / "fixtures" / "report" / fixture
+    ).read_text(encoding="utf-8").strip()
+    assert expected in markdown
+    assert markdown.index("## Outcome") < markdown.index("## Prompt")
+
+
+def test_money_distinguishes_zero_unavailable_and_sub_cent_values() -> None:
+    from test_wsl2_llm.report import _money
+
+    assert _money(0) == "$0.00"
+    assert _money(None) == "unavailable"
+    assert _money(0.000028) == "$0.000028"
+    assert _money(0.000000001) == "$1.00e-09"
