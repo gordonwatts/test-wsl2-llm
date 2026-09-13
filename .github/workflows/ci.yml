@@ -38,7 +38,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       NO_COLOR: "1"
-      FORCE_COLOR: "0"
+      TTY_COMPATIBLE: "0"
     strategy:
       fail-fast: false
       matrix:
