@@ -59,6 +59,61 @@ from test_wsl2_llm.validation import apply_validators, validate_configuration
 
 LOGGER = logging.getLogger(__name__)
 TIMEOUT_ERROR_PREFIX = "[test-wsl2-llm] Codex timed out after "
+CANCELLATION_GRACE_SECONDS = 5.0
+
+
+class CancellationCoordinator:
+    """Coordinate admission and interruption of one or more test runs."""
+
+    def __init__(self, *, grace_seconds: float = CANCELLATION_GRACE_SECONDS) -> None:
+        self._cancelled = threading.Event()
+        self._lock = threading.Lock()
+        self._active: dict[str, Callable[[], None]] = {}
+        self._started: set[str] = set()
+        self.grace_seconds = max(0.1, grace_seconds)
+
+    @property
+    def cancelled(self) -> bool:
+        return self._cancelled.is_set()
+
+    def claim(self, job_id: str) -> bool:
+        """Claim a job if cancellation has not yet been requested."""
+        with self._lock:
+            if self._cancelled.is_set():
+                return False
+            self._started.add(job_id)
+            return True
+
+    def register_process(self, job_id: str, stop: Callable[[], None]) -> None:
+        """Register an active process, stopping it immediately if already cancelled."""
+        with self._lock:
+            if self._cancelled.is_set():
+                should_stop = True
+            else:
+                self._active[job_id] = stop
+                should_stop = False
+        if should_stop:
+            stop()
+
+    def unregister_process(self, job_id: str) -> None:
+        with self._lock:
+            self._active.pop(job_id, None)
+
+    def cancel(self) -> None:
+        """Signal cancellation and stop active processes within a grace period."""
+        self._cancelled.set()
+        with self._lock:
+            callbacks = list(self._active.values())
+        workers = [threading.Thread(target=callback, daemon=True) for callback in callbacks]
+        for worker in workers:
+            worker.start()
+        deadline = time.monotonic() + self.grace_seconds
+        for worker in workers:
+            worker.join(max(0.0, deadline - time.monotonic()))
+
+    def started_jobs(self) -> set[str]:
+        with self._lock:
+            return set(self._started)
 
 
 def utc_now() -> str:
@@ -437,6 +492,8 @@ def run_test(
     invocation: list[str] | None = None,
     report_callback: Callable[[TestResult], None] | None = None,
     target: ExecutionTarget | None = None,
+    cancellation: CancellationCoordinator | None = None,
+    job_id: str = "single",
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
@@ -529,6 +586,8 @@ def run_test(
             skill_directories = sorted(set(skill_directories))
 
         with state.phase("codex_execution"):
+            if cancellation is not None and cancellation.cancelled:
+                raise KeyboardInterrupt
             codex_started = time.perf_counter()
             command_argv = client.command(
                 client.shell_command(
@@ -559,6 +618,8 @@ def run_test(
                 console=console,
                 live_progress=live_progress,
                 log_callback=log_callback,
+                cancellation=cancellation,
+                job_id=job_id,
             )
             codex_seconds = time.perf_counter() - codex_started
             timed_out = _is_timeout(exit_code, stderr)
@@ -1394,6 +1455,8 @@ def _stream_codex(
     console: Console,
     live_progress: bool = True,
     log_callback: Callable[[str], None] | None = None,
+    cancellation: CancellationCoordinator | None = None,
+    job_id: str = "single",
 ) -> tuple[int, str, str, list[TraceEvent], list[dict[str, Any]]]:
     if target is not None:
         process = target.start_process(
@@ -1415,6 +1478,8 @@ def _stream_codex(
             env=environment,
         )
     assert process.stdin is not None and process.stdout is not None and process.stderr is not None
+    stop_lock = threading.Lock()
+    process_registered = False
     process.stdin.write(prompt)
     process.stdin.close()
     messages: queue.Queue[tuple[str, str, str, float] | tuple[str, None, None, None]] = (
@@ -1448,23 +1513,28 @@ def _stream_codex(
 
     def stop_process() -> None:
         nonlocal stopped_at
-        if stopped_at is None:
-            stopped_at = time.perf_counter()
-        if target is not None:
-            target.stop_process(process)
-            return
-        if getattr(process, "poll", lambda: None)() is not None:
-            return
-        terminate = getattr(process, "terminate", None)
-        if not callable(terminate):
-            return
-        terminate()
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill()
-        except TypeError:
-            process.wait()
+        with stop_lock:
+            if stopped_at is None:
+                stopped_at = time.perf_counter()
+            if target is not None:
+                target.stop_process(process)
+                return
+            if getattr(process, "poll", lambda: None)() is not None:
+                return
+            terminate = getattr(process, "terminate", None)
+            if not callable(terminate):
+                return
+            terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+            except TypeError:
+                process.wait()
+
+    if cancellation is not None:
+        cancellation.register_process(job_id, stop_process)
+        process_registered = True
 
     def consume(live: Live | None) -> None:
         nonlocal completed_streams, interrupted, timed_out, latest_meaningful
@@ -1479,6 +1549,9 @@ def _stream_codex(
                     stop_process()
                 stream, line, received_at, elapsed = messages.get(timeout=0.25)
             except queue.Empty:
+                if cancellation is not None and cancellation.cancelled:
+                    interrupted = True
+                    stop_process()
                 if stopped_at is not None and time.perf_counter() - stopped_at > 5:
                     break
                 continue
@@ -1545,6 +1618,9 @@ def _stream_codex(
             consume(live)
     for thread in threads:
         thread.join(timeout=5)
+    if cancellation is not None and cancellation.cancelled:
+        interrupted = True
+        stop_process()
     try:
         exit_code = process.wait(timeout=5)
     except TypeError:
@@ -1569,6 +1645,8 @@ def _stream_codex(
     elif interrupted:
         exit_code = 130
         raw["stderr"].append("[test-wsl2-llm] Codex run interrupted by keyboard interrupt.\n")
+    if cancellation is not None and process_registered:
+        cancellation.unregister_process(job_id)
     return (
         exit_code,
         "".join(raw["stdout"]),

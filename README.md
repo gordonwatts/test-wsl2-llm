@@ -163,6 +163,11 @@ Single runs keep the live Codex progress panel and do not show the aggregate bar
 Status updates are condensed to one line and truncated when an event contains a long
 command or message.
 
+Press Ctrl-C during a repeated or template batch to cancel queued jobs before they start
+and stop active Codex processes within a bounded grace period. Started jobs keep their
+partial logs and reports; the console identifies jobs that were not started. Any worker
+or report-write failures are reported together so completed result paths remain visible.
+
 Each run has a 30-minute Codex execution timeout by default. Use `--timeout SECONDS`
 to choose a different limit. A timed-out run is stopped, its partial logs and workspace
 inventory are still collected, and the report is marked failed. Pressing Ctrl-C has the

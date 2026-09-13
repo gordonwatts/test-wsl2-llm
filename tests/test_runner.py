@@ -13,6 +13,7 @@ from rich.console import Console
 from test_wsl2_llm.models import ConversationTurn, CopiedBackFile, EnvironmentPolicy
 from test_wsl2_llm.models import TestConfig as WslTestConfig
 from test_wsl2_llm.runner import (
+    CancellationCoordinator,
     WslClient,
     _codex_config,
     _console_time,
@@ -33,6 +34,21 @@ from test_wsl2_llm.runner import (
     continuation_prompt,
     sanitized_windows_environment,
 )
+
+
+def test_cancellation_coordinator_stops_active_and_rejects_queued_jobs() -> None:
+    coordinator = CancellationCoordinator(grace_seconds=0.2)
+    stopped = []
+
+    assert coordinator.claim("active")
+    coordinator.register_process("active", lambda: stopped.append("active"))
+
+    coordinator.cancel()
+
+    assert stopped == ["active"]
+    assert coordinator.cancelled
+    assert not coordinator.claim("queued")
+    assert coordinator.started_jobs() == {"active"}
 
 
 def test_wsl_command_keeps_values_as_separate_arguments() -> None:
