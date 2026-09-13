@@ -574,3 +574,117 @@ def test_describe_copied_back_markdown_as_markdown(tmp_path: Path) -> None:
 
     assert described.type == "markdown"
     assert described.text_preview == "# Heading\n\n- item"
+
+
+def test_transfer_files_rejects_colliding_basenames_before_copying(tmp_path: Path) -> None:
+    first = tmp_path / "first" / "settings.yaml"
+    second = tmp_path / "second" / "settings.yaml"
+    first.parent.mkdir()
+    second.parent.mkdir()
+    first.write_text("first", encoding="utf-8")
+    second.write_text("second", encoding="utf-8")
+
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append((script, arguments))
+            return subprocess.CompletedProcess([], 0, b"/mnt/c/settings.yaml\n", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    client = RecordingClient()
+    with pytest.raises(ValueError, match="colliding basenames"):
+        _transfer_files(client, [str(first), str(second)], "/tmp/run/workspace")
+    assert client.calls == []
+
+
+def test_copy_back_collision_mapping_is_distinct_and_stable(monkeypatch, tmp_path: Path) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append((script, arguments))
+            if "compgen -G" in script:
+                return subprocess.CompletedProcess(
+                    [],
+                    0,
+                    b"/tmp/run/workspace/left/plot.png\0"
+                    b"/tmp/run/workspace/right/plot.png\0",
+                    b"",
+                )
+            if script == 'wslpath -a "$1"':
+                destination = arguments[0].replace("\\", "/").rsplit("/", 1)[-1]
+                return subprocess.CompletedProcess(
+                    [], 0, f"/mnt/c/results/{destination}\n".encode(), b""
+                )
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner._describe_copied_back",
+        lambda source, path: CopiedBackFile(
+            source=source, destination=str(path), type="file", size=1
+        ),
+    )
+    first = _copy_back_files(
+        RecordingClient(),
+        ["**/*.png"],
+        "/tmp/run/workspace",
+        str(tmp_path / "run"),
+    )
+    second = _copy_back_files(
+        RecordingClient(),
+        ["**/*.png"],
+        "/tmp/run/workspace",
+        str(tmp_path / "run"),
+    )
+
+    first_names = [Path(item.destination).name for item in first]
+    second_names = [Path(item.destination).name for item in second]
+    assert first_names == ["run.left__plot.png", "run.right__plot.png"]
+    assert second_names == first_names
+    assert [item.source for item in first] == ["left/plot.png", "right/plot.png"]
+
+
+def test_copy_back_deduplicates_overlapping_patterns_before_file_limit(
+    monkeypatch, tmp_path: Path
+) -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.pattern_index = 0
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            if "compgen -G" in script:
+                matches = [
+                    b"/tmp/run/workspace/one.png\0/tmp/run/workspace/two.png\0",
+                    b"/tmp/run/workspace/two.png\0/tmp/run/workspace/three.png\0",
+                ][self.pattern_index]
+                self.pattern_index += 1
+                return subprocess.CompletedProcess([], 0, matches, b"")
+            if script == 'wslpath -a "$1"':
+                return subprocess.CompletedProcess([], 0, b"/mnt/c/result\n", b"")
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def text(self, completed) -> str:
+            return completed.stdout.decode()
+
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner._describe_copied_back",
+        lambda source, path: CopiedBackFile(
+            source=source, destination=str(path), type="file", size=1
+        ),
+    )
+    copied = _copy_back_files(
+        RecordingClient(),
+        ["*.png", "t*.png"],
+        "/tmp/run/workspace",
+        str(tmp_path / "run"),
+        max_files=3,
+    )
+    assert [item.source for item in copied] == ["one.png", "two.png", "three.png"]
