@@ -100,8 +100,8 @@ preserves the effective model list for subsequent runs.
 
 The YAML uses a shared `prompt_template` and a list of question mappings. Every
 mapping needs a unique, filename-safe `id`; its scalar fields are available through strict
-`{{ field }}` substitutions. A question-level `copy_back` field is a list of files or wildcards,
-not a substitution scalar. For example:
+`{{ field }}` substitutions. Question-level `copy_back` and `plugins` fields are lists of
+files/wildcards and plugin selectors, respectively, not substitution scalars. For example:
 
 ```yaml
 prompt_template: |
@@ -114,10 +114,17 @@ questions:
     copy_back:
       - etmiss.root
       - -ab-output.root
+    plugins:
+      - etmiss-tools@my-marketplace
+      - -shared-tools@my-marketplace
   - id: leading-jet-pt
     quantity: leading-jet pT
     dataset: user.example:dataset_b
 model: MODEL:high
+marketplaces:
+  - https://github.com/example/my-marketplace.git
+plugins:
+  - shared-tools@my-marketplace
 copy_files:
   - .\servicex.yaml
 copy_back:
@@ -177,7 +184,11 @@ first ten lines, and ROOT files are inspected with
 that question's shared patterns, while entries beginning with `-` remove an exact shared
 pattern (for example, `-ab-output.root`). A removal must refer to a shared pattern or an
 earlier addition in the same question; otherwise template loading fails with an error and the
-YAML must be corrected before the batch can run.
+YAML must be corrected before the batch can run. Template questions may also provide a
+`plugins` list; entries are added to that question's shared plugin selectors, while entries
+beginning with `-` remove an exact shared selector (for example, `-shared-tools@my-marketplace`).
+A plugin removal must refer to a shared selector or an earlier addition in the same question.
+This lets each question use a different plugin set while sharing the same marketplaces.
 
 If a requested copy-back path or glob has no matches, collection continues for the other
 patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
