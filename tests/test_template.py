@@ -10,6 +10,7 @@ from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import output_paths
 from test_wsl2_llm.template import (
     question_copy_back,
+    question_plugins,
     question_title,
     render_template,
     template_output,
@@ -25,6 +26,7 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
 
     assert result.exit_code == 0, result.output
     content = destination.read_text(encoding="utf-8")
+    assert content.startswith("# yaml-language-server: $schema=./template.schema.json\n")
     assert "prompt_template: |" in content
     assert "{{ question }}" in content
     assert "questions:" in content
@@ -96,6 +98,32 @@ def test_template_question_validation_accepts_copy_back_list() -> None:
     )
 
 
+def test_question_plugins_adds_and_removes_shared_plugins() -> None:
+    assert question_plugins(
+        ["base@marketplace", "shared@marketplace"],
+        {"plugins": ["question@marketplace", "-shared@marketplace", "question@marketplace"]},
+    ) == ["base@marketplace", "question@marketplace"]
+
+
+def test_template_question_validation_accepts_plugins_list() -> None:
+    validate_questions(
+        "{{ question }}",
+        [
+            {
+                "id": "one",
+                "question": "first",
+                "plugins": ["question@marketplace", "-default@marketplace"],
+            }
+        ],
+        shared_plugins=["default@marketplace"],
+    )
+
+
+def test_question_plugins_rejects_unknown_removal() -> None:
+    with pytest.raises(ValueError, match="no preceding plugin"):
+        question_plugins([], {"id": "one", "plugins": ["-missing@marketplace"]})
+
+
 def test_question_copy_back_rejects_unknown_removal() -> None:
     with pytest.raises(ValueError, match="no preceding pattern"):
         question_copy_back([], {"id": "one", "copy_back": ["-missing.root"]})
@@ -107,10 +135,10 @@ def test_template_output_names_question_and_repetition() -> None:
 
 
 def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: Path) -> None:
-    calls: list[tuple[str, str]] = []
+    calls: list[tuple[str, str, list[str]]] = []
 
     def fake_run(config, **_kwargs):
-        calls.append((config.output, config.prompt))
+        calls.append((config.output, config.prompt, config.plugins))
         return sample_result()
 
     def fake_write(result, output, overwrite=False):
@@ -126,9 +154,15 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
                 "prompt_template": "Do {{ question }} for {{ dataset }}",
                 "questions": [
                     {"id": "etmiss", "question": "ETmiss", "dataset": "a"},
-                    {"id": "jets", "question": "jets", "dataset": "b"},
+                    {
+                        "id": "jets",
+                        "question": "jets",
+                        "dataset": "b",
+                        "plugins": ["question@marketplace", "-shared@marketplace"],
+                    },
                 ],
                 "model": "gpt-test",
+                "plugins": ["shared@marketplace"],
                 "output": "results/run",
                 "repeat": 2,
                 "threads": 1,
@@ -141,7 +175,7 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
     result = runner.invoke(app, ["template", "run", str(config)])
 
     assert result.exit_code == 0, result.output
-    assert sorted(output for output, _prompt in calls) == sorted(
+    assert sorted(output for output, _prompt, _plugins in calls) == sorted(
         str(tmp_path / "results" / name)
         for name in (
             "run-etmiss-gpt-test-medium-001",
@@ -150,7 +184,11 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
             "run-jets-gpt-test-medium-002",
         )
     )
-    assert {prompt for _output, prompt in calls} == {"Do ETmiss for a", "Do jets for b"}
+    assert {prompt for _output, prompt, _plugins in calls} == {"Do ETmiss for a", "Do jets for b"}
+    assert {prompt: plugins for _output, prompt, plugins in calls} == {
+        "Do ETmiss for a": ["shared@marketplace"],
+        "Do jets for b": ["question@marketplace"],
+    }
 
 
 

@@ -12,7 +12,8 @@ _FIELD = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
-TEMPLATE_STARTER = """# Template-driven WSL2 Codex batch configuration
+TEMPLATE_STARTER = """# yaml-language-server: $schema=./template.schema.json
+# Template-driven WSL2 Codex batch configuration
 prompt_template: |
   Please write a stand-alone Python file that uv can run and auto-install
   dependencies for. It must do the following:
@@ -26,6 +27,7 @@ prompt_template: |
 questions:
   - id: example
     question: Replace this with the question to run.
+    # plugins: [question-specific@marketplace, -shared@marketplace]
 
 model: MODEL:medium
 marketplaces: []
@@ -92,6 +94,7 @@ def load_template_file(path: Path) -> tuple[TemplateConfig, dict[str, Any], Path
         batch.prompt_template,
         batch.questions,
         shared_copy_back=values.get("copy_back", []),
+        shared_plugins=values.get("plugins", []),
     )
     return batch, values, path
 
@@ -101,6 +104,7 @@ def validate_questions(
     questions: list[dict[str, Any]],
     *,
     shared_copy_back: list[str] | None = None,
+    shared_plugins: list[str] | None = None,
 ) -> None:
     """Validate question records and all template fields before execution."""
     seen: set[str] = set()
@@ -130,10 +134,13 @@ def validate_questions(
                         "non-empty strings"
                     )
                 continue
-            if key == "distro":
-                if not isinstance(value, str) or not value.strip():
+            if key == "plugins":
+                if not isinstance(value, list) or any(
+                    not isinstance(plugin, str) or not plugin.strip() for plugin in value
+                ):
                     raise ValueError(
-                        f"question {identifier} field 'distro' must be a non-empty string"
+                        f"question {identifier} field 'plugins' must be a list of "
+                        "non-empty strings"
                     )
                 continue
             if value is None or isinstance(value, (dict, list, tuple)):
@@ -142,6 +149,7 @@ def validate_questions(
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
         render_template(prompt_template, question, identifier)
         question_copy_back(list(shared_copy_back or []), question)
+        question_plugins(list(shared_plugins or []), question)
 
 
 def render_template(template: str, values: dict[str, Any], identifier: str = "question") -> str:
@@ -199,17 +207,27 @@ def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]
     return patterns
 
 
-def question_distro(shared: str | None, question: dict[str, Any]) -> str | None:
-    """Return a question's distribution override, or the shared distribution."""
-    if "distro" not in question:
-        return shared
-    override = question["distro"]
-    if not isinstance(override, str) or not override.strip():
-        raise ValueError(
-            f"question {question.get('id', 'unknown')} field 'distro' must be a "
-            "non-empty string"
-        )
-    return override
+def question_plugins(shared: list[str], question: dict[str, Any]) -> list[str]:
+    """Apply a question's plugin additions and removals to shared plugins."""
+    plugins = list(shared)
+    overrides = question.get("plugins", [])
+    if not isinstance(overrides, list):
+        return plugins
+    for plugin in overrides:
+        if not isinstance(plugin, str) or not plugin.strip():
+            continue
+        if plugin.startswith("-") and len(plugin) > 1:
+            remove = plugin[1:]
+            if remove not in plugins:
+                raise ValueError(
+                    f"question {question.get('id', 'unknown')} plugins removal "
+                    f"'-{remove}' has no preceding plugin"
+                )
+            plugins = [existing for existing in plugins if existing != remove]
+        elif plugin not in plugins:
+            plugins.append(plugin)
+    return plugins
+
 
 def question_title(identifier: str, question: dict[str, Any], prompt: str) -> str:
     """Build a one-line report heading from the question text or rendered prompt."""

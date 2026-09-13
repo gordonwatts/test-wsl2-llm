@@ -21,7 +21,10 @@ from test_wsl2_llm.runner import (
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _is_timeout,
+    _is_uninformative_progress,
+    _parse_git_marketplace_source,
     _progress_description,
+    _progress_panel,
     _root_contents,
     _stream_codex,
     _transfer_files,
@@ -230,6 +233,29 @@ def test_progress_description_is_human_readable_and_bounded() -> None:
     assert "item.completed" not in description
 
 
+def test_mcp_polling_does_not_replace_latest_meaningful_progress() -> None:
+    assert _is_uninformative_progress("Started mcp tool call")
+    assert _is_uninformative_progress("Completed MCP tool call")
+    assert not _is_uninformative_progress("Completed command: uv run pytest")
+
+    panel = _progress_panel(
+        ["10:51:22 [stdout] Started mcp tool call"],
+        "10:50:24 [stdout] Started command: uv run pytest",
+    )
+
+    rendered = str(panel.renderable)
+    assert (
+        "Latest meaningful activity: 10:50:24 [stdout] Started command: uv run pytest"
+        in rendered
+    )
+    assert "10:51:22 [stdout] Started mcp tool call" in rendered
+
+
+def test_progress_panel_explains_when_no_meaningful_activity_has_arrived() -> None:
+    rendered = str(_progress_panel([], None).renderable)
+    assert "Latest meaningful activity: No meaningful activity yet." in rendered
+    assert "Starting Codex..." in rendered
+
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:
     config = WslTestConfig(
         prompt="hello",
@@ -285,6 +311,37 @@ def test_git_marketplace_source_recognition(source: str) -> None:
     assert _is_git_marketplace_source(source)
 
 
+@pytest.mark.parametrize(
+    ("source", "repository", "branch"),
+    [
+        (
+            "https://github.com/example/marketplace.git@feature/branch",
+            "https://github.com/example/marketplace.git",
+            "feature/branch",
+        ),
+        (
+            "ssh://git@github.com/example/marketplace.git@release",
+            "ssh://git@github.com/example/marketplace.git",
+            "release",
+        ),
+        (
+            "git@github.com:example/marketplace.git@main",
+            "git@github.com:example/marketplace.git",
+            "main",
+        ),
+    ],
+)
+def test_git_marketplace_source_branch_selector(
+    source: str, repository: str, branch: str
+) -> None:
+    assert _parse_git_marketplace_source(source) == (repository, branch)
+
+
+def test_git_marketplace_source_without_branch_is_unchanged() -> None:
+    source = "https://github.com/example/marketplace.git"
+    assert _parse_git_marketplace_source(source) == (source, None)
+
+
 def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
     class RecordingClient:
         def __init__(self) -> None:
@@ -307,6 +364,34 @@ def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
     assert ("login_bash", 'git clone --depth 1 -- "$1" "$2"', (source, destination)) in client.calls
 
 
+def test_git_marketplace_branch_is_cloned_with_selected_branch() -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("bash", script, arguments))
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def login_bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("login_bash", script, arguments))
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    client = RecordingClient()
+    source = "https://github.com/example/marketplace.git@feature/branch"
+    runtime = _transfer_marketplaces(client, [source], "/tmp/test-wsl2-llm-run")  # type: ignore[arg-type]
+
+    destination = "/tmp/test-wsl2-llm-run/.harness/inputs/marketplaces/marketplace-001"
+    assert runtime == [destination]
+    assert (
+        "login_bash",
+        'git clone --depth 1 --branch "$2" -- "$1" "$3"',
+        (
+            "https://github.com/example/marketplace.git",
+            "feature/branch",
+            destination,
+        ),
+    ) in client.calls
 def test_copy_files_are_transferred_to_workspace_root(tmp_path) -> None:
     source = tmp_path / "servicex.yaml"
     source.write_text("token: secret\n", encoding="utf-8")
