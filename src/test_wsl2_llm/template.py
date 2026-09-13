@@ -35,6 +35,7 @@ copy_files: []
 copy_back:
   - plot_*.png
   - script.py
+distro: null
 max_copy_back_files: 100
 timeout_seconds: 1800
 output: .\\results\\{output_stem}
@@ -129,6 +130,12 @@ def validate_questions(
                         "non-empty strings"
                     )
                 continue
+            if key == "distro":
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"question {identifier} field 'distro' must be a non-empty string"
+                    )
+                continue
             if value is None or isinstance(value, (dict, list, tuple)):
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
             if not isinstance(value, (str, int, float, bool)):
@@ -191,6 +198,18 @@ def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]
             patterns.append(pattern)
     return patterns
 
+
+def question_distro(shared: str | None, question: dict[str, Any]) -> str | None:
+    """Return a question's distribution override, or the shared distribution."""
+    if "distro" not in question:
+        return shared
+    override = question["distro"]
+    if not isinstance(override, str) or not override.strip():
+        raise ValueError(
+            f"question {question.get('id', 'unknown')} field 'distro' must be a "
+            "non-empty string"
+        )
+    return override
 
 def question_title(identifier: str, question: dict[str, Any], prompt: str) -> str:
     """Build a one-line report heading from the question text or rendered prompt."""
