@@ -28,7 +28,11 @@ from test_wsl2_llm.config import (
     save_config,
 )
 from test_wsl2_llm.models import EnvironmentPolicy, TestResult
-from test_wsl2_llm.runner import WslClient, _is_uninformative_progress
+from test_wsl2_llm.runner import (
+    WslClient,
+    _is_uninformative_progress,
+    create_execution_target,
+)
 from test_wsl2_llm.template import (
     ensure_template_schema,
     load_template_file,
@@ -769,7 +773,7 @@ def connect(
             raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
 
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
-        client = WslClient(result.run.distro, policy)
+        client = create_execution_target(result.run.distro, policy)
         if access == "shell" and resume:
             raise ValueError("--resume is only supported with --access codex")
         command = _connect_command(result, resume=resume, access=access, client=client)
@@ -1029,7 +1033,7 @@ def _connect_command(
     workspace = result.run.workspace_path
     if not workspace:
         raise ValueError("no retained workspace path; rerun with --keep-workspace")
-    client = client or WslClient(result.run.distro)
+    client = client or create_execution_target(result.run.distro)
     if access == "shell":
         if resume:
             raise ValueError("--resume is only supported with --access codex")
