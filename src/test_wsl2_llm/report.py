@@ -77,6 +77,8 @@ def render_markdown(
     lines = [
         result.title.rstrip(),
         "",
+        *_outcome_summary(result),
+        "",
         "## Prompt" + (" (continuing retained workspace)" if result.continued_from else ""),
         "",
         _blockquote(result.prompt),
@@ -258,7 +260,13 @@ def _copied_back_section(result: TestResult, report_path: Path | None) -> list[s
         name = Path(file.destination).name
         if file.type == "image":
             image_source = _png_data_uri(file.destination) or link
-            lines.extend([f"[![{name}]({image_source})]({link})", ""])
+            lines.extend(
+                [
+                    f"[![{name}]({image_source})]({link})",
+                    f"[Open {name}](<{link}>)",
+                    "",
+                ]
+            )
         else:
             lines.extend([f"### [{name}]({link})", ""])
         lines.append(f"- Source: `{file.source}`")
@@ -394,6 +402,43 @@ def _copy_button(expression: str) -> str:
         f'{expression})">📋</button>'
     )
 
+
+def _outcome_summary(result: TestResult) -> list[str]:
+    """Render the run outcome before long-form prompt and response content."""
+    failed_checks = [check for check in result.validation if not check.passed]
+    passed_checks = len(result.validation) - len(failed_checks)
+    if result.run.timed_out or result.result.timed_out:
+        status = "**FAILED (TIMEOUT)**"
+    elif failed_checks:
+        status = "**FAILED (VALIDATION)**"
+    elif result.run.status == "failed":
+        status = "**FAILED**"
+    else:
+        status = "**SUCCEEDED**"
+
+    if result.validation:
+        validation = f"{passed_checks} passed, {len(failed_checks)} failed"
+    else:
+        validation = "not run"
+    artifact_count = len(result.copied_back)
+    missing_count = len(result.missing_copy_back)
+    if artifact_count or missing_count:
+        artifacts = f"{artifact_count} copied back"
+        if missing_count:
+            artifacts += f", {missing_count} missing"
+    else:
+        artifacts = "none requested"
+    lines = [
+        "## Outcome",
+        "",
+        "| Status | Validation | Cost | Artifacts |",
+        "| --- | --- | ---: | --- |",
+        f"| {status} | {validation} | {_money(result.model_information.total_cost)} | "
+        f"{artifacts} |",
+    ]
+    if result.run.error:
+        lines.extend(["", f"**Outcome detail:** {result.run.error}"])
+    return lines
 
 def _activity_section(result: TestResult) -> list[str]:
     """Show concise progress updates with elapsed times, without raw session traces."""
@@ -663,4 +708,14 @@ def _number(value: int) -> str:
 
 
 def _money(value: float | None) -> str:
-    return "unavailable" if value is None else f"${value:.2f}"
+    """Format costs without making positive sub-cent runs look free."""
+    if value is None:
+        return "unavailable"
+    if value == 0:
+        return "$0.00"
+    if abs(value) < 0.01:
+        fixed = f"${value:.8f}"
+        if float(fixed[1:]) == 0:
+            return f"${value:.2e}"
+        return fixed.rstrip("0").rstrip(".")
+    return f"${value:.2f}"
