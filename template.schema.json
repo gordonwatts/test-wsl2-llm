@@ -10,7 +10,7 @@
     "prompt_template": {
       "type": "string",
       "minLength": 1,
-      "description": "Prompt text shared by every question. Substitute scalar question fields with {{ field }}; nested expressions and Jinja expressions are not supported."
+      "description": "Prompt text shared by every question. Substitute scalar question fields with {{ field }} or reuse another question's complete text with {{question-id}}; nested expressions and Jinja expressions are not supported."
     },
     "questions": {
       "type": "array",
@@ -166,7 +166,7 @@
   "definitions": {
     "question": {
       "type": "object",
-      "description": "One question's scalar substitution values. Besides id and copy_back, property names must be identifier-shaped and values must be strings, numbers, or booleans.",
+      "description": "One question's scalar substitution values. Besides id and copy_back, property names must be identifier-shaped and values must be strings, numbers, or booleans. A question field may reuse another question's complete text with {{question-id}}.",
       "required": ["id"],
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$|^id$|^copy_back$" },
       "properties": {

@@ -100,8 +100,11 @@ preserves the effective model list for subsequent runs.
 
 The YAML uses a shared `prompt_template` and a list of question mappings. Every
 mapping needs a unique, filename-safe `id`; its scalar fields are available through strict
-`{{ field }}` substitutions. Question-level `copy_back` and `plugins` fields are lists of
-files/wildcards and plugin selectors, respectively, not substitution scalars. For example:
+`{{ field }}` substitutions. A question can reuse the complete `question` text from another
+mapping with `{{question-id}}` (including IDs with periods or hyphens). References may be
+nested, but cycles and references to a question without text are rejected before execution.
+Question-level `copy_back` and `plugins` fields are lists of files/wildcards and plugin
+selectors, respectively, not substitution scalars. For example:
 
 ```yaml
 prompt_template: |
@@ -111,6 +114,14 @@ questions:
   - id: etmiss
     quantity: ETmiss
     dataset: user.example:dataset_a
+  - id: shared-selection
+    question: Select jets with pT > 30 GeV.
+  - id: jet-selection
+    quantity: selected jets
+    dataset: user.example:dataset_a
+    question: |
+      {{shared-selection}}
+      Apply this selection before plotting.
     copy_back:
       - etmiss.root
       - -ab-output.root
