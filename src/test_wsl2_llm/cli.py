@@ -28,10 +28,11 @@ from test_wsl2_llm.config import (
     save_config,
 )
 from test_wsl2_llm.models import EnvironmentPolicy, TestResult
-from test_wsl2_llm.runner import WslClient
+from test_wsl2_llm.runner import WslClient, _is_uninformative_progress
 from test_wsl2_llm.template import (
     load_template_file,
     question_copy_back,
+    question_plugins,
     question_title,
     render_questions,
     resolved_template_values,
@@ -580,6 +581,9 @@ def template_run(
                     run_values["copy_back"] = question_copy_back(
                         list(shared.get("copy_back", [])), question_values
                     )
+                    run_values["plugins"] = question_plugins(
+                        list(shared.get("plugins", [])), question_values
+                    )
                     run_config = build_config(
                         run_values, {**cli_values, "model": model_config.model_selector}
                     )
@@ -1096,6 +1100,7 @@ class _RepeatDisplay:
     def __init__(self, console: Console, total: int) -> None:
         self._lock = Lock()
         self._recent: deque[str] = deque(maxlen=5)
+        self._latest_meaningful: str | None = None
         self._progress = Progress(
             TextColumn("Repeating runs"),
             BarColumn(),
@@ -1118,6 +1123,9 @@ class _RepeatDisplay:
 
     def log(self, line: str) -> None:
         with self._lock:
+            description = line.rsplit("] ", 1)[-1]
+            if not _is_uninformative_progress(description):
+                self._latest_meaningful = line
             self._recent.append(line)
             self._live.update(self._render())
 
@@ -1128,7 +1136,14 @@ class _RepeatDisplay:
 
     def _render(self) -> Group:
         log_text = "\n".join(self._recent) or "Starting Codex..."
-        return Group(self._progress, Panel(log_text, title="Codex progress"))
+        latest = self._latest_meaningful or "No meaningful activity yet."
+        return Group(
+            self._progress,
+            Panel(
+                f"Latest meaningful activity: {latest}\n\n{log_text}",
+                title="Codex progress",
+            ),
+        )
 
 
 def _load_result_yaml(path: Path) -> TestResult:

@@ -100,8 +100,8 @@ preserves the effective model list for subsequent runs.
 
 The YAML uses a shared `prompt_template` and a list of question mappings. Every
 mapping needs a unique, filename-safe `id`; its scalar fields are available through strict
-`{{ field }}` substitutions. A question-level `copy_back` field is a list of files or wildcards,
-not a substitution scalar. For example:
+`{{ field }}` substitutions. Question-level `copy_back` and `plugins` fields are lists of
+files/wildcards and plugin selectors, respectively, not substitution scalars. For example:
 
 ```yaml
 prompt_template: |
@@ -114,10 +114,17 @@ questions:
     copy_back:
       - etmiss.root
       - -ab-output.root
+    plugins:
+      - etmiss-tools@my-marketplace
+      - -shared-tools@my-marketplace
   - id: leading-jet-pt
     quantity: leading-jet pT
     dataset: user.example:dataset_b
 model: MODEL:high
+marketplaces:
+  - https://github.com/example/my-marketplace.git
+plugins:
+  - shared-tools@my-marketplace
 copy_files:
   - .\servicex.yaml
 copy_back:
@@ -127,6 +134,68 @@ output: .\results\analysis
 repeat: 2
 threads: 4
 ```
+
+### Template YAML specification and VS Code support
+
+[`template.schema.json`](template.schema.json) is the machine-readable JSON Schema for
+template files. It describes the batch fields, the single-run settings that can be
+shared by every job, question value types, and the built-in validators. The schema is
+also useful as a quick reference: in a question, `id` and `copy_back` are reserved;
+every other key must be an identifier and its value must be a scalar string, number, or
+boolean. Those scalar keys are the only values that can be substituted in
+`prompt_template` with `{{ field }}`. A question `id` must be unique, and every
+placeholder must have a value; these cross-field checks remain runtime checks because
+JSON Schema cannot express them for arbitrary question keys.
+
+The top-level template fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `prompt_template` | Required shared prompt. Use strict `{{ field }}` placeholders. |
+| `questions` | Required non-empty list of mappings with a unique filename-safe `id`. |
+| `model` / `models` | One selector or a non-empty list of `MODEL[:EFFORT]` selectors. `models` wins when both are present; CLI `--model` wins over the YAML selection. |
+| `repeat` / `threads` | Positive job repetition count and global concurrency limit; both default to `1`. |
+| `title`, `marketplaces`, `plugins`, `mcp_servers` | Report heading and optional Codex marketplace, plugin, and named MCP-server settings. |
+| `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
+| `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
+| `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
+| `distro`, `wsl_parent`, `output` | WSL distribution, temporary-run parent, and result stem. |
+| `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
+| `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
+
+The other single-run configuration fields use the same defaults and enum values shown
+in the schema. Relative `copy_files`, `output`, and `pricing_file` paths are resolved
+relative to the template YAML file. A template may contain `prompt` or `prompt_file`
+when it was copied from a saved `run` configuration, but those fields are ignored when
+`prompt_template` is present.
+
+For editor completion and inline validation, install the **YAML** extension from
+Red Hat (`redhat.vscode-yaml`) in VS Code. If the schema is beside the template, put
+this comment at the very top of the YAML file:
+
+```yaml
+# yaml-language-server: $schema=./template.schema.json
+```
+
+For templates in another directory, adjust the relative path. Alternatively, associate
+the schema with all template files in the workspace's `.vscode/settings.json`:
+
+```json
+{
+  "yaml.schemas": {
+    "${workspaceFolder}/template.schema.json": [
+      "**/*-template.yaml",
+      "**/*-template.yml",
+      "**/questions.yaml"
+    ]
+  }
+}
+```
+
+The editor schema provides completion and catches malformed field types; run
+`test-wsl2-llm template run TEMPLATE.yaml` to apply the complete runtime validation,
+including duplicate question IDs, missing placeholders, model availability, and
+validator arguments.
 
 This writes `analysis-etmiss-MODEL-high-001.md` and matching YAML and copied-back
 artifacts, then the corresponding files for `leading-jet-pt`. Every report name
@@ -177,7 +246,11 @@ first ten lines, and ROOT files are inspected with
 that question's shared patterns, while entries beginning with `-` remove an exact shared
 pattern (for example, `-ab-output.root`). A removal must refer to a shared pattern or an
 earlier addition in the same question; otherwise template loading fails with an error and the
-YAML must be corrected before the batch can run.
+YAML must be corrected before the batch can run. Template questions may also provide a
+`plugins` list; entries are added to that question's shared plugin selectors, while entries
+beginning with `-` remove an exact shared selector (for example, `-shared-tools@my-marketplace`).
+A plugin removal must refer to a shared selector or an earlier addition in the same question.
+This lets each question use a different plugin set while sharing the same marketplaces.
 
 If a requested copy-back path or glob has no matches, collection continues for the other
 patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
@@ -357,7 +430,7 @@ Override the acceptance model with `--wsl-model MODEL` or `TEST_WSL2_LLM_MODEL`.
 
 The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown cost table rounds USD amounts to the nearest cent.
 
-The normal progress display retains only the five most recent lines and prefixes each with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
+The normal progress display keeps a persistent `Latest meaningful activity` line above the five most recent events. Routine MCP polling entries remain in that bounded detail log without replacing the summary, and each event is prefixed with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
 Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.
 
