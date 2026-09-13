@@ -2,6 +2,7 @@
 
 import base64
 import fnmatch
+import hashlib
 import json
 import logging
 import mimetypes
@@ -1029,11 +1030,39 @@ def _transfer_marketplaces(
 
 def _transfer_files(client: ExecutionTarget, sources: list[str], workspace: str) -> None:
     """Copy Windows files into the root of the WSL workspace before execution."""
+    for windows_path in _validate_copy_file_sources(sources):
+        _copy_to_target(client, str(windows_path.resolve()), workspace)
+
+
+def _validate_copy_file_sources(sources: list[str]) -> list[Path]:
+    """Validate copy-in files before any transfer, rejecting root-name collisions."""
+    paths: list[Path] = []
+    by_basename: dict[str, dict[str, str]] = {}
     for source in sources:
         windows_path = Path(source)
         if not windows_path.is_file():
             raise FileNotFoundError(f"copy file does not exist: {source}")
-        _copy_to_target(client, str(windows_path.resolve()), workspace)
+        paths.append(windows_path)
+        by_basename.setdefault(windows_path.name.casefold(), {})[
+            str(windows_path.resolve()).casefold()
+        ] = str(windows_path.resolve())
+
+    collisions = {
+        basename: sorted(values.values())
+        for basename, values in by_basename.items()
+        if len(values) > 1
+    }
+    if collisions:
+        details = "; ".join(
+            f"{basename}: {', '.join(sources_for_name)}"
+            for basename, sources_for_name in sorted(collisions.items())
+        )
+        raise ValueError(
+            "copy_files contains colliding basenames; files are copied to the workspace "
+            "root, so rename one of the sources or remove the duplicate. Collisions: "
+            f"{details}"
+        )
+    return paths
 
 
 def _copy_back_files(
@@ -1051,41 +1080,81 @@ def _copy_back_files(
     output_stub = _output_stub(output)
     output_stub.parent.mkdir(parents=True, exist_ok=True)
     copied: list[CopiedBackFile] = []
+    matches_by_pattern: list[tuple[str, list[str]]] = []
     seen_sources: set[str] = set()
     for pattern in sources:
-        if max_files is not None and len(copied) >= max_files:
-            LOGGER.warning("copy-back limit reached; skipping remaining patterns")
-            break
         matches = _expand_copy_back_pattern(client, pattern, workspace)
         if not matches:
             LOGGER.warning("copy-back pattern did not match any files: %s", pattern)
             if missing is not None:
                 missing.append(pattern)
             continue
-        if max_files is not None and len(matches) > max_files - len(copied):
-            remaining = max_files - len(copied)
-            LOGGER.warning(
-                "copy-back pattern %s matched %d files; copying only the first %d",
-                pattern,
-                len(matches),
-                remaining,
-            )
-            matches = matches[:remaining]
-        for workspace_source in matches:
-            if workspace_source in seen_sources:
-                continue
-            seen_sources.add(workspace_source)
-            filename = PurePosixPath(workspace_source).name
-            if not filename or filename in {".", ".."}:
-                raise ValueError(f"copy-back path must name a file: {workspace_source}")
-            destination = output_stub.parent / f"{output_stub.name}.{filename}"
-            _copy_from_target(client, workspace_source, str(destination.resolve()))
-            source_name = workspace_source.removeprefix(f"{workspace}/")
-            copied.append(_describe_copied_back(source_name, destination))
+        unique_matches = [match for match in matches if match not in seen_sources]
+        seen_sources.update(unique_matches)
+        matches_by_pattern.append((pattern, unique_matches))
+
+    all_matches = [match for _, matches in matches_by_pattern for match in matches]
+    if max_files is not None and len(all_matches) > max_files:
+        LOGGER.warning(
+            "copy-back limit reached; matched %d distinct files, copying only the first %d",
+            len(all_matches),
+            max_files,
+        )
+        all_matches = all_matches[:max_files]
+
+    basename_counts: dict[str, int] = {}
+    for workspace_source in all_matches:
+        filename = PurePosixPath(workspace_source).name
+        if not filename or filename in {".", ".."}:
+            raise ValueError(f"copy-back path must name a file: {workspace_source}")
+        basename_counts[filename.casefold()] = basename_counts.get(filename.casefold(), 0) + 1
+
+    destinations: set[str] = set()
+    for workspace_source in all_matches:
+        destination = _copy_back_destination(
+            output_stub,
+            workspace,
+            workspace_source,
+            colliding_basenames={
+                basename for basename, count in basename_counts.items() if count > 1
+            },
+            used_destinations=destinations,
+        )
+        _copy_from_target(client, workspace_source, str(destination.resolve()))
+        source_name = workspace_source.removeprefix(f"{workspace}/")
+        copied.append(_describe_copied_back(source_name, destination))
     return copied
 
 
-def _expand_copy_back_pattern(client: ExecutionTarget, pattern: str, workspace: str) -> list[str]:
+def _copy_back_destination(
+    output_stub: Path,
+    workspace: str,
+    workspace_source: str,
+    *,
+    colliding_basenames: set[str],
+    used_destinations: set[str],
+) -> Path:
+    """Choose a readable, deterministic destination for one copied-back source."""
+    filename = PurePosixPath(workspace_source).name
+    source_name = workspace_source.removeprefix(f"{workspace}/")
+    if filename.casefold() in colliding_basenames:
+        readable_source = re.sub(r"[^A-Za-z0-9._-]+", "_", source_name.replace("/", "__"))
+        destination = output_stub.parent / f"{output_stub.name}.{readable_source}"
+    else:
+        destination = output_stub.parent / f"{output_stub.name}.{filename}"
+
+    destination_key = str(destination).casefold()
+    if destination_key in used_destinations:
+        digest = hashlib.sha256(source_name.encode("utf-8")).hexdigest()[:8]
+        destination = destination.with_name(
+            f"{destination.stem}~{digest}{destination.suffix}"
+        )
+        destination_key = str(destination).casefold()
+    used_destinations.add(destination_key)
+    return destination
+
+
+def _expand_copy_back_pattern(client: WslClient, pattern: str, workspace: str) -> list[str]:
     """Expand a workspace-relative glob in WSL and retain regular files only."""
     completed = client.bash(
         """
