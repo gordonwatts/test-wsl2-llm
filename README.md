@@ -143,7 +143,24 @@ uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm ru
   --output .\results\hello
 ```
 
-This writes `results\hello.md` for people and `results\hello.yaml` for code. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
+This writes `results\hello.md` for people and `results\hello.yaml` for code.
+The default `target` is `wsl`, which keeps the Windows-to-WSL2 workflow above. On a
+native Linux host, select `--target linux` (and use Linux paths) to run the same isolated
+workspace, transfer, copy-back, cleanup, and retained-workspace lifecycle without
+invoking `wsl.exe` or `wslpath`:
+
+```bash
+test-wsl2-llm run \
+  --target linux \
+  --model MODEL:medium \
+  --prompt 'Create hello.txt containing Hello from Linux' \
+  --output ./results/hello
+```
+
+The native target requires Python 3.11+, Bash, the Codex CLI on `PATH`, and a readable
+Linux Codex authentication file (normally `~/.codex/auth.json`). `--distro` is only valid
+for the WSL target. Native Linux support is separate from the Windows-to-WSL path, which
+remains the default and is still covered by the WSL tests. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
 
 Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
 YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
@@ -309,7 +326,7 @@ The top-level template fields are:
 | `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
 | `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
 | `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
-| `distro`, `wsl_parent`, `output` | WSL distribution, temporary-run parent, and result stem. |
+| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default) or native `linux`; WSL distribution, temporary-run parent, and result stem. |
 | `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
 | `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
 

@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://raw.githubusercontent.com/gordonwatts/test-wsl2-llm/main/template.schema.json",
   "title": "test-wsl2-llm template configuration",
-  "description": "A batch template for running one isolated WSL2 Codex test for each question, model, and repetition.",
+  "description": "A batch template for running one isolated Codex test for each question, model, and repetition.",
   "type": "object",
   "additionalProperties": false,
   "required": ["prompt_template", "questions"],
@@ -86,7 +86,7 @@
       "$ref": "#/definitions/environment",
       "description": "Optional Windows environment filtering applied before every WSL launch."
     },
-    "distro": {
+        "distro": {
       "type": ["string", "null"],
       "description": "WSL distribution name. Omit to use the WSL default distribution."
     },

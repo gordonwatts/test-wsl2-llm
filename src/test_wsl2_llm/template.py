@@ -109,6 +109,7 @@ copy_files: []
 copy_back:
   - plot_*.png
   - script.py
+target: wsl
 distro: null
 max_copy_back_files: 100
 timeout_seconds: 1800

@@ -1,4 +1,4 @@
-"""Windows-side orchestration of isolated Codex runs inside WSL2."""
+"""Orchestration of isolated Codex runs across supported execution targets."""
 
 import base64
 import fnmatch
@@ -9,7 +9,10 @@ import mimetypes
 import os
 import queue
 import re
+import shutil
+import signal
 import subprocess
+import tempfile
 import threading
 import time
 import tomllib
@@ -129,9 +132,7 @@ def sanitized_windows_environment(
     environment = dict(os.environ if source is None else source)
     names_to_unset = {name.casefold() for name in policy.unset}
     environment = {
-        name: value
-        for name, value in environment.items()
-        if name.casefold() not in names_to_unset
+        name: value for name, value in environment.items() if name.casefold() not in names_to_unset
     }
     wslenv_name = next((name for name in environment if name.casefold() == "wslenv"), None)
     if wslenv_name is not None and names_to_unset:
@@ -330,9 +331,7 @@ class WslClient:
 
     def create_workspace(self, parent: str) -> str:
         """Create and initialize a per-run target workspace root."""
-        run_root = self.text(
-            self.bash('mktemp -d -p "$1" test-wsl2-llm-XXXXXXXX', parent)
-        ).strip()
+        run_root = self.text(self.bash('mktemp -d -p "$1" test-wsl2-llm-XXXXXXXX', parent)).strip()
         self.bash(
             'mkdir -p "$1" "$2"',
             f"{run_root}/workspace",
@@ -345,24 +344,205 @@ class WslClient:
         self.bash('rm -rf -- "$1"', run_root)
 
 
+def sanitized_linux_environment(
+    policy: EnvironmentPolicy,
+    source: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Copy a Linux environment and apply the configured filtering policy."""
+    environment = dict(os.environ if source is None else source)
+    names_to_unset = {name.casefold() for name in policy.unset}
+    environment = {
+        name: value for name, value in environment.items() if name.casefold() not in names_to_unset
+    }
+    path_name = next((name for name in environment if name.casefold() == "path"), None)
+    if path_name is not None and policy.path_remove:
+        patterns = [pattern.strip().strip('"').casefold() for pattern in policy.path_remove]
+
+        def should_remove(entry: str) -> bool:
+            candidate = entry.strip().strip('"').casefold()
+            return any(
+                fnmatch.fnmatchcase(candidate, pattern)
+                if any(character in pattern for character in "*?[")
+                else candidate.startswith(pattern)
+                for pattern in patterns
+            )
+
+        environment[path_name] = os.pathsep.join(
+            entry for entry in environment[path_name].split(os.pathsep) if not should_remove(entry)
+        )
+    return environment
+
+
+class LinuxClient:
+    """Run an isolated Codex workspace directly on a native Linux host."""
+
+    distro = None
+
+    def __init__(
+        self,
+        environment_policy: EnvironmentPolicy | None = None,
+        *,
+        source_environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self.environment = sanitized_linux_environment(
+            environment_policy or EnvironmentPolicy(), source_environment
+        )
+
+    def command(self, arguments: list[str]) -> list[str]:
+        return list(arguments)
+
+    def run(
+        self,
+        arguments: list[str],
+        *,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        command = self.command(arguments)
+        LOGGER.info("Linux command: %s", _display_command(command))
+        completed = subprocess.run(
+            command,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        if check and completed.returncode:
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Linux command failed ({completed.returncode}): {stderr}")
+        return completed
+
+    def bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.run(
+            self.shell_command(script, *arguments), input_bytes=input_bytes, check=check
+        )
+
+    def login_bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.run(
+            self.shell_command(script, *arguments, interactive_login=True),
+            input_bytes=input_bytes,
+            check=check,
+        )
+
+    def shell_command(
+        self, script: str, *arguments: str, interactive_login: bool = False
+    ) -> list[str]:
+        """Build a Bash command using argv for positional values on native Linux."""
+        flags = "-lic" if interactive_login else "-lc"
+        return ["bash", flags, script, "test-wsl2-llm", *arguments]
+
+    def text(self, completed: subprocess.CompletedProcess[bytes]) -> str:
+        return completed.stdout.decode("utf-8", errors="replace")
+
+    def start_process(
+        self,
+        command: list[str],
+        *,
+        stdin: int = subprocess.PIPE,
+        stdout: int = subprocess.PIPE,
+        stderr: int = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=self.environment,
+            start_new_session=True,
+        )
+
+    def stop_process(self, process: subprocess.Popen[str]) -> None:
+        if getattr(process, "poll", lambda: None)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int):
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                LOGGER.debug("process group already stopped")
+        else:
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if isinstance(pid, int):
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    LOGGER.debug("process group did not exit after termination")
+            else:
+                process.kill()
+        except TypeError:
+            process.wait()
+
+    def to_target_path(self, host_path: str) -> str:
+        return str(Path(host_path).expanduser().resolve())
+
+    def copy_to_target(
+        self, host_path: str, target_directory: str, *, recursive: bool = False
+    ) -> None:
+        source = Path(host_path).expanduser().resolve()
+        destination = Path(target_directory)
+        destination.mkdir(parents=True, exist_ok=True)
+        if recursive:
+            if not source.is_dir():
+                raise ValueError(f"copy source is not a directory: {source}")
+            shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
+        else:
+            shutil.copy2(source, destination / source.name)
+
+    def copy_from_target(self, target_path: str, host_path: str) -> None:
+        destination = Path(host_path).expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(target_path), destination)
+
+    def create_workspace(self, parent: str) -> str:
+        parent_path = Path(parent).expanduser().resolve()
+        parent_path.mkdir(parents=True, exist_ok=True)
+        run_root = Path(tempfile.mkdtemp(prefix="test-wsl2-llm-", dir=parent_path))
+        (run_root / "workspace").mkdir()
+        (run_root / ".harness" / "inputs").mkdir(parents=True)
+        return str(run_root)
+
+    def cleanup_workspace(self, run_root: str) -> None:
+        shutil.rmtree(run_root)
+
+
 def create_execution_target(
     distro: str | None = None,
     environment_policy: EnvironmentPolicy | None = None,
     *,
+    execution_target: str = "wsl",
     source_environment: Mapping[str, str] | None = None,
 ) -> ExecutionTarget:
-    """Select the configured execution target.
-
-    WSL is the only supported target today. Keeping selection behind this
-    function gives run, continue, and connect one seam for future targets.
-    """
+    """Select WSL or native Linux while keeping one runner lifecycle."""
+    if execution_target == "linux":
+        if distro:
+            raise ValueError("distro is only valid with the wsl execution target")
+        return LinuxClient(environment_policy, source_environment=source_environment)
+    if execution_target != "wsl":
+        raise ValueError(f"unknown execution target: {execution_target}")
     if source_environment is None:
         return WslClient(distro, environment_policy)
-    return WslClient(
-        distro,
-        environment_policy,
-        source_environment=source_environment,
-    )
+    return WslClient(distro, environment_policy, source_environment=source_environment)
 
 
 # Descriptive name for callers that do not need the historical WslClient name.
@@ -501,7 +681,11 @@ def run_test(
     adapter = validate_agent_capabilities(config)
     console = console or Console(stderr=True)
     client = (
-        target if target is not None else create_execution_target(config.distro, config.environment)
+        target
+        if target is not None
+        else create_execution_target(
+            config.distro, config.environment, execution_target=config.target
+        )
     )
     state = RunState()
     codex_version: str | None = None
@@ -632,7 +816,6 @@ def run_test(
             if timed_out and state.phases and state.phases[-1].name == "codex_execution":
                 state.phases[-1].timed_out = True
 
-
     except (Exception, KeyboardInterrupt) as exc:  # Preserve a report even on interruption.
         error = str(exc) or "Run interrupted by keyboard interrupt"
         LOGGER.exception("WSL Codex test failed")
@@ -680,6 +863,7 @@ def run_test(
             codex_execution_seconds=codex_seconds,
             status="succeeded" if exit_code == 0 and error is None else "failed",
             exit_code=exit_code,
+            target=config.target,
             distro=config.distro,
             workspace_path=workspace_path,
             workspace_retained=retained,
@@ -755,7 +939,9 @@ def continue_test(
     client = (
         target
         if target is not None
-        else create_execution_target(config.distro or previous.run.distro, config.environment)
+        else create_execution_target(
+            config.distro or previous.run.distro, config.environment, execution_target=config.target
+        )
     )
     run_root = workspace_path.rsplit("/", 1)[0]
     codex_home = f"{run_root}/.harness/codex-home"
@@ -842,9 +1028,7 @@ def continue_test(
                     plugin,
                 )
                 installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
-            skill_directories.extend(
-                _skill_directories(client, codex_home, installed_plugin_roots)
-            )
+            skill_directories.extend(_skill_directories(client, codex_home, installed_plugin_roots))
 
         with state.phase("codex_execution"):
             codex_started = time.perf_counter()
@@ -934,6 +1118,7 @@ def continue_test(
             codex_execution_seconds=codex_seconds,
             status="succeeded" if exit_code == 0 and error is None else "failed",
             exit_code=exit_code,
+            target=config.target,
             distro=config.distro or previous.run.distro,
             workspace_path=workspace_path,
             workspace_retained=True,
@@ -962,6 +1147,7 @@ def continue_test(
     )
     result = apply_validators(result, config.validators)
     return result
+
 
 def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
     """Prefix a new prompt with the self-contained prompt/response chain."""
@@ -1081,9 +1267,7 @@ def _transfer_marketplaces(
             destination = f"{marketplace_root}/marketplace-{index:03d}"
             repository, branch = _parse_git_marketplace_source(source)
             if branch is None:
-                client.login_bash(
-                    'git clone --depth 1 -- "$1" "$2"', repository, destination
-                )
+                client.login_bash('git clone --depth 1 -- "$1" "$2"', repository, destination)
             else:
                 client.login_bash(
                     'git clone --depth 1 --branch "$2" -- "$1" "$3"',
@@ -1215,15 +1399,13 @@ def _copy_back_destination(
     destination_key = str(destination).casefold()
     if destination_key in used_destinations:
         digest = hashlib.sha256(source_name.encode("utf-8")).hexdigest()[:8]
-        destination = destination.with_name(
-            f"{destination.stem}~{digest}{destination.suffix}"
-        )
+        destination = destination.with_name(f"{destination.stem}~{digest}{destination.suffix}")
         destination_key = str(destination).casefold()
     used_destinations.add(destination_key)
     return destination
 
 
-def _expand_copy_back_pattern(client: WslClient, pattern: str, workspace: str) -> list[str]:
+def _expand_copy_back_pattern(client: ExecutionTarget, pattern: str, workspace: str) -> list[str]:
     """Expand a workspace-relative glob in WSL and retain regular files only."""
     completed = client.bash(
         """
@@ -1244,9 +1426,7 @@ done < <(compgen -G "$search")
         workspace,
     )
     return [
-        match.decode("utf-8", errors="replace")
-        for match in completed.stdout.split(b"\0")
-        if match
+        match.decode("utf-8", errors="replace") for match in completed.stdout.split(b"\0") if match
     ]
 
 
@@ -1421,14 +1601,17 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
             document = tomllib.load(stream)
     except (OSError, ValueError):
         # TOML errors can contain source fragments, including credentials.
-        raise ValueError(f"Cannot read local Codex MCP configuration '{source}' "
-                         "as TOML; check that the file exists and is valid.") from None
+        raise ValueError(
+            f"Cannot read local Codex MCP configuration '{source}' "
+            "as TOML; check that the file exists and is valid."
+        ) from None
     servers = document.get("mcp_servers", {})
     selected: dict[str, Any] = {}
     for name in names:
         if not isinstance(servers, dict) or name not in servers:
-            raise ValueError(f"MCP server '{name}' was not found in '{source}' "
-                             "under [mcp_servers].")
+            raise ValueError(
+                f"MCP server '{name}' was not found in '{source}' under [mcp_servers]."
+            )
         if not isinstance(servers[name], dict):
             raise ValueError(f"MCP server '{name}' in '{source}' must be a TOML table.")
         selected[name] = servers[name]
@@ -1598,10 +1781,7 @@ def _stream_codex(
                     )
                 )
             description = _progress_description(parsed, line)
-            display = (
-                f"{_console_time(received_at)} [{stream}] "
-                f"{description}"
-            )
+            display = f"{_console_time(received_at)} [{stream}] {description}"
             if not _is_uninformative_progress(description):
                 latest_meaningful = display
             recent.append(display)
@@ -1648,9 +1828,7 @@ def _stream_codex(
         exit_code = 130
     if timed_out:
         exit_code = 124
-        raw["stderr"].append(
-            f"{TIMEOUT_ERROR_PREFIX}{timeout_seconds:g} seconds.\n"
-        )
+        raw["stderr"].append(f"{TIMEOUT_ERROR_PREFIX}{timeout_seconds:g} seconds.\n")
     elif interrupted:
         exit_code = 130
         raw["stderr"].append("[test-wsl2-llm] Codex run interrupted by keyboard interrupt.\n")
@@ -1696,9 +1874,7 @@ def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
                 description = f"{phase} command{suffix}"
             elif item_type == "agent message":
                 text = re.sub(r"\s+", " ", str(item.get("text", ""))).strip()
-                description = (
-                    f"{phase} model message: {text}" if text else f"{phase} model message"
-                )
+                description = f"{phase} model message: {text}" if text else f"{phase} model message"
             elif item_type == "file change":
                 description = f"{phase} file changes"
             elif item_type == "web search":
@@ -1728,6 +1904,7 @@ def _progress_panel(recent: list[str], latest_meaningful: str | None) -> Panel:
         f"Latest meaningful activity: {latest}\n\n{detail}",
         title="Codex progress",
     )
+
 
 def _inventory(client: ExecutionTarget, workspace: str) -> list[WorkspaceFile]:
     completed = client.bash(

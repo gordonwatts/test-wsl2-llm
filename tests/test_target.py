@@ -1,6 +1,13 @@
 import subprocess
+from pathlib import Path
 
-from test_wsl2_llm.runner import WslClient, _copy_from_target, _copy_to_target
+from test_wsl2_llm.runner import (
+    LinuxClient,
+    WslClient,
+    _copy_from_target,
+    _copy_to_target,
+    create_execution_target,
+)
 
 
 def test_wsl_target_workspace_lifecycle_uses_target_native_paths(monkeypatch) -> None:
@@ -69,3 +76,39 @@ def test_stream_process_uses_target_environment(monkeypatch) -> None:
     assert captured["command"] == ["wsl.exe", "--", "true"]
     assert captured["env"] == {"Path": "C:/tools"}
     assert captured["text"] is True
+
+
+def test_linux_target_uses_native_commands_and_preserves_arguments() -> None:
+    client = LinuxClient(source_environment={"PATH": "/bin"})
+
+    assert client.command(["codex", "--model", "model;$(touch nope)"]) == [
+        "codex",
+        "--model",
+        "model;$(touch nope)",
+    ]
+    assert client.shell_command("printf '%s' \"$1\"", "space $x; café") == [
+        "bash",
+        "-lc",
+        "printf '%s' \"$1\"",
+        "test-wsl2-llm",
+        "space $x; café",
+    ]
+    assert isinstance(create_execution_target(execution_target="linux"), LinuxClient)
+
+
+def test_linux_target_workspace_and_transfers_preserve_unicode_and_symlinks(tmp_path) -> None:
+    source = tmp_path / "input $x café.txt"
+    source.write_text("hello", encoding="utf-8")
+    parent = tmp_path / "parent"
+    client = LinuxClient()
+
+    run_root = client.create_workspace(str(parent))
+    workspace = Path(run_root) / "workspace"
+    client.copy_to_target(str(source), str(workspace))
+    copied = workspace / source.name
+    destination = tmp_path / "output $x café.txt"
+    client.copy_from_target(str(copied), str(destination))
+
+    assert destination.read_text(encoding="utf-8") == "hello"
+    client.cleanup_workspace(run_root)
+    assert not Path(run_root).exists()

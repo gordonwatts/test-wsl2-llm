@@ -37,6 +37,7 @@ from test_wsl2_llm.runner import (
     _is_uninformative_progress,
     create_execution_target,
 )
+from test_wsl2_llm.target import ExecutionTarget
 from test_wsl2_llm.template import (
     ensure_template_schema,
     inspect_template_result,
@@ -56,7 +57,7 @@ from test_wsl2_llm.template import (
 
 app = typer.Typer(
     name="test-wsl2-llm",
-    help="Run reproducible Codex CLI tests in fresh WSL2 workspaces.",
+    help="Run reproducible Codex CLI tests in fresh isolated workspaces.",
     no_args_is_help=True,
 )
 template_app = typer.Typer(
@@ -70,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 @app.callback()
 def application() -> None:
-    """Configure and run Codex tests in WSL2."""
+    """Configure and run isolated Codex tests."""
 
 
 @app.command()
@@ -117,15 +118,19 @@ def run(
         list[str] | None,
         typer.Option(
             "--unset-env",
-            help="Windows environment variable removed before WSL launches; repeatable.",
+            help="Environment variable removed before the target launches; repeatable.",
         ),
     ] = None,
     path_remove: Annotated[
         list[str] | None,
         typer.Option(
             "--path-remove",
-            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+            help="Case-insensitive PATH prefix or glob removed before launch; repeatable.",
         ),
+    ] = None,
+    target: Annotated[
+        Literal["wsl", "linux"] | None,
+        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to WSL default.")
@@ -237,6 +242,7 @@ def run(
             "copy_files": copy_file,
             "copy_back": copy_back,
             "environment": _environment_cli_values(unset_env, path_remove),
+            "target": target,
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -439,15 +445,19 @@ def template_run(
         list[str] | None,
         typer.Option(
             "--unset-env",
-            help="Windows environment variable removed before WSL launches; repeatable.",
+            help="Environment variable removed before the target launches; repeatable.",
         ),
     ] = None,
     path_remove: Annotated[
         list[str] | None,
         typer.Option(
             "--path-remove",
-            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+            help="Case-insensitive PATH prefix or glob removed before launch; repeatable.",
         ),
+    ] = None,
+    target: Annotated[
+        Literal["wsl", "linux"] | None,
+        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the template value.")
@@ -583,6 +593,7 @@ def template_run(
             "copy_files": copy_file,
             "copy_back": copy_back,
             "environment": _environment_cli_values(unset_env, path_remove),
+            "target": target,
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -950,7 +961,11 @@ def connect(
         if not agent_adapter.capabilities.interactive_follow_up:
             raise ValueError("agent does not support interactive follow-up: " + agent_name)
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
-        client = create_execution_target(result.run.distro, policy)
+        client = create_execution_target(
+            result.run.distro,
+            policy,
+            execution_target=str(result.configuration.get("target", "wsl")),
+        )
         if access == "shell" and resume:
             raise ValueError("--resume is only supported with --access codex")
         command = _connect_command(result, resume=resume, access=access, client=client)
@@ -1011,15 +1026,19 @@ def continue_work(
         list[str] | None,
         typer.Option(
             "--unset-env",
-            help="Windows environment variable removed before WSL launches; repeatable.",
+            help="Environment variable removed before the target launches; repeatable.",
         ),
     ] = None,
     path_remove: Annotated[
         list[str] | None,
         typer.Option(
             "--path-remove",
-            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+            help="Case-insensitive PATH prefix or glob removed before launch; repeatable.",
         ),
+    ] = None,
+    target: Annotated[
+        Literal["wsl", "linux"] | None,
+        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the previous run.")
@@ -1151,6 +1170,7 @@ def continue_work(
             "copy_files": defaults["copy_files"],
             "copy_back": defaults["copy_back"],
             "environment": _environment_cli_values(unset_env, path_remove),
+            "target": target,
             "distro": distro,
             "output": str(output) if output else None,
             "overwrite": True if force else None,
@@ -1211,13 +1231,15 @@ def _connect_command(
     *,
     resume: bool,
     access: Literal["codex", "shell"] = "codex",
-    client: WslClient | None = None,
+    client: ExecutionTarget | None = None,
 ) -> list[str]:
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path
     if not workspace:
         raise ValueError("no retained workspace path; rerun with --keep-workspace")
-    client = client or create_execution_target(result.run.distro)
+    client = client or create_execution_target(
+        result.run.distro, execution_target=str(result.configuration.get("target", "wsl"))
+    )
     if access == "shell":
         if resume:
             raise ValueError("--resume is only supported with --access codex")
@@ -1347,3 +1369,4 @@ def _merge_strings(*groups: list[str]) -> list[str]:
 def main() -> None:
     """Console-script entry point."""
     app()
+
