@@ -27,6 +27,9 @@ questions:
   - id: example
     question: Replace this with the question to run.
 
+# Alternatively, keep the shared prompt in a UTF-8 text file:
+# prompt_template_file: .\\prompt-template.md
+
 model: MODEL:medium
 marketplaces: []
 plugins: []
@@ -69,10 +72,36 @@ class TemplateConfig(BaseModel):
         return value
 
 
-def load_template_file(path: Path) -> tuple[TemplateConfig, dict[str, Any], Path]:
+def load_template_file(
+    path: Path, *, prompt_template_file: Path | None = None
+) -> tuple[TemplateConfig, dict[str, Any], Path]:
     """Load a template YAML and return batch fields, shared run fields, and its path."""
     path = path.resolve()
     values = load_config_file(path)
+    configured_prompt_template_file = values.pop("prompt_template_file", None)
+    cli_prompt_template_file = prompt_template_file
+    prompt_template_file = (
+        cli_prompt_template_file
+        if cli_prompt_template_file is not None
+        else configured_prompt_template_file
+    )
+    if cli_prompt_template_file is not None:
+        values.pop("prompt_template", None)
+    if prompt_template_file is not None:
+        if "prompt_template" in values:
+            raise ValueError(
+                "template configuration may contain prompt_template or prompt_template_file, "
+                "not both"
+            )
+        template_path = Path(str(prompt_template_file)).expanduser()
+        if not template_path.is_absolute():
+            template_path = path.parent / template_path
+        try:
+            values["prompt_template"] = template_path.resolve().read_text(encoding="utf-8")
+        except OSError as exc:
+            raise ValueError(
+                f"unable to read prompt_template_file '{template_path}': {exc}"
+            ) from exc
     batch_values = {
         key: values.pop(key)
         for key in ("prompt_template", "questions", "models", "repeat", "threads")

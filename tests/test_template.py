@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import output_paths
 from test_wsl2_llm.template import (
+    load_template_file,
     question_copy_back,
     question_title,
     render_template,
@@ -27,6 +28,7 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     content = destination.read_text(encoding="utf-8")
     assert "prompt_template: |" in content
     assert "{{ question }}" in content
+    assert "prompt_template_file: .\\prompt-template.md" in content
     assert "questions:" in content
     assert "id: example" in content
     assert "marketplaces: []" in content
@@ -79,6 +81,65 @@ def test_template_question_validation_rejects_duplicate_ids_and_nested_values() 
         )
     with pytest.raises(ValueError, match="scalar"):
         validate_questions("{{ question }}", [{"id": "one", "question": ["bad"]}])
+
+
+def test_template_can_load_shared_prompt_from_a_file(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "prompts" / "common.md"
+    prompt_file.parent.mkdir()
+    prompt_file.write_text("Do {{ question }} with the shared prompt", encoding="utf-8")
+    config = tmp_path / "batch.yaml"
+    config.write_text(
+        "prompt_template_file: prompts/common.md\n"
+        "questions:\n  - id: one\n    question: first\n"
+        "model: test-model\n",
+        encoding="utf-8",
+    )
+
+    batch, _shared, _path = load_template_file(config)
+
+    assert batch.prompt_template == "Do {{ question }} with the shared prompt"
+
+
+
+def test_template_cli_prompt_template_file_overrides_inline(tmp_path: Path, monkeypatch) -> None:
+    prompt_file = tmp_path / "override.md"
+    prompt_file.write_text("Override {{ question }}", encoding="utf-8")
+    config = tmp_path / "batch.yaml"
+    config.write_text(
+        "prompt_template: Inline {{ question }}\n"
+        "questions:\n  - id: one\n    question: first\n"
+        "model: test-model\noutput: results/run\n",
+        encoding="utf-8",
+    )
+    prompts = []
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner.run_test",
+        lambda run_config, **_kwargs: prompts.append(run_config.prompt) or sample_result(),
+    )
+
+    result = runner.invoke(
+        app,
+        ["template", "run", str(config), "--prompt-template-file", str(prompt_file)],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert prompts == ["Override first"]
+
+
+
+def test_template_rejects_inline_and_file_prompt_sources(tmp_path: Path) -> None:
+    prompt_file = tmp_path / "common.md"
+    prompt_file.write_text("shared", encoding="utf-8")
+    config = tmp_path / "batch.yaml"
+    config.write_text(
+        "prompt_template: inline\n"
+        "prompt_template_file: common.md\n"
+        "questions:\n  - id: one\n    question: first\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="prompt_template or prompt_template_file"):
+        load_template_file(config)
 
 
 def test_question_copy_back_adds_and_removes_shared_patterns() -> None:

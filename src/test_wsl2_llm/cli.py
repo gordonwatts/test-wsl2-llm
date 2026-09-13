@@ -334,6 +334,13 @@ def template_run(
     config: Annotated[
         Path, typer.Argument(help="Input template YAML configuration file.")
     ],
+    prompt_template_file: Annotated[
+        Path | None,
+        typer.Option(
+            "--prompt-template-file",
+            help="UTF-8 file containing the shared prompt template; overrides the YAML value.",
+        ),
+    ] = None,
     question_ids: Annotated[
         list[str] | None,
         typer.Argument(help="Optional question IDs to run; omit to run every question."),
@@ -474,7 +481,10 @@ def template_run(
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
-        batch, shared, _ = load_template_file(config)
+        batch, shared, _ = load_template_file(
+            config,
+            prompt_template_file=prompt_template_file.resolve() if prompt_template_file else None,
+        )
         shared = merge_config_values(load_default_config(), shared)
         if repeat is not None and repeat < 1:
             raise ValueError("repeat must be at least 1")

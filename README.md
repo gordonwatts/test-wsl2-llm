@@ -128,6 +128,21 @@ repeat: 2
 threads: 4
 ```
 
+If the same prompt should be reused with different template settings (for example, different plugins), put the shared prompt in a UTF-8 file and use `prompt_template_file` instead of `prompt_template`. Each template YAML can then reference the same file while selecting its own shared plugins:
+
+```yaml
+prompt_template_file: .\common-prompt.md
+questions:
+  - id: etmiss
+    quantity: ETmiss
+plugins:
+  - analysis-tools@my-marketplace
+```
+
+The file path is resolved relative to the template YAML file. `prompt_template` and `prompt_template_file` are mutually exclusive; the file contents are used as the same shared template for every question.
+
+The `template run --prompt-template-file PATH` option overrides the YAML prompt source and resolves `PATH` from the current directory.
+
 This writes `analysis-etmiss-MODEL-high-001.md` and matching YAML and copied-back
 artifacts, then the corresponding files for `leading-jet-pt`. Every report name
 includes the full model/effort selector, including for single-model runs. Punctuation
