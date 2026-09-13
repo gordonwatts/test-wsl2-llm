@@ -279,8 +279,8 @@ def test_continue_config_only_uses_new_prompt_and_saved_output(tmp_path: Path) -
     assert saved["prompt"] == "Inspect the existing file."
     assert saved["output"] == str((tmp_path / "next").resolve())
     assert saved["cleanup"] is False
-    assert saved["model"] == "gpt-previous"
-    assert saved["reasoning_effort"] == "high"
+    assert saved["model"] == "gpt-previous:high"
+    assert "reasoning_effort" not in saved
     assert saved["sandbox"] == "read-only"
     assert saved["network"] is False
     assert saved["approval_policy"] == "never"
@@ -321,7 +321,8 @@ def test_continue_can_inherit_a_previous_continuation(tmp_path: Path) -> None:
     assert invoked.exit_code == 0, invoked.output
     saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
     assert saved["prompt"] == "Continue the continued run."
-    assert saved["model"] == "gpt-previous"
+    assert saved["model"] == "gpt-previous:medium"
+    assert "reasoning_effort" not in saved
     assert "continuation_of" not in saved
 
 

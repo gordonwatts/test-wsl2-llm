@@ -94,7 +94,7 @@ models:
 
 The existing scalar `model: MODEL:EFFORT` and single `--model MODEL:EFFORT`
 remain supported. `models` takes precedence over a scalar `model` when both are
-present. An omitted effort uses `reasoning_effort` (default `medium`). Empty or
+present. An omitted effort defaults to `medium`. Empty or
 duplicate model selections are rejected before execution. `--save-config`
 preserves the effective model list for subsequent runs.
 
@@ -450,7 +450,7 @@ The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records
 
 The normal progress display keeps a persistent `Latest meaningful activity` line above the five most recent events. Routine MCP polling entries remain in that bounded detail log without replacing the summary, and each event is prefixed with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
-Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). The resolved model and effort are recorded separately in saved configuration and result YAML.
+Model arguments use `MODEL[:EFFORT]`. Omitting the suffix selects `medium`; supported values are `minimal`, `low`, `medium`, `high`, and `xhigh` (when supported by the selected model). Saved configuration and result YAML use the same canonical `model: MODEL:EFFORT` selector.
 
 ### Workspace lifetime
 

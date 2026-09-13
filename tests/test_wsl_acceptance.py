@@ -9,23 +9,16 @@ import yaml
 from typer.testing import CliRunner
 
 from test_wsl2_llm.cli import app
-from test_wsl2_llm.models import EnvironmentPolicy
+from test_wsl2_llm.models import EnvironmentPolicy, ModelSelector
 from test_wsl2_llm.runner import WslClient
 
 pytestmark = pytest.mark.wsl_acceptance
 runner = CliRunner()
 ATLAS_ANALYSISBASE_MARKETPLACE = "https://github.com/gordonwatts/atlas-analysisbase-marketplace.git"
-REASONING_EFFORTS = {"minimal", "low", "medium", "high", "xhigh"}
 
 
 def _base_model(model_argument: str) -> str:
-    model, separator, effort = model_argument.rpartition(":")
-    return model if separator and effort in REASONING_EFFORTS else model_argument
-
-
-def _reasoning_effort(model_argument: str) -> str:
-    _, separator, effort = model_argument.rpartition(":")
-    return effort if separator and effort in REASONING_EFFORTS else "medium"
+    return ModelSelector.parse(model_argument).model
 
 
 def _wsl(
@@ -109,7 +102,7 @@ def test_atlas_al9_hello_world(tmp_path: Path, pytestconfig: pytest.Config) -> N
         assert data["timing"]["trace_events"]
         assert data["usage"]
         assert data["model_information"]["models"][0]["model"] == _base_model(model)
-        assert data["configuration"]["reasoning_effort"] == _reasoning_effort(model)
+        assert data["configuration"]["model"] == model
         assert "Total duration | " in markdown.read_text(encoding="utf-8")
         assert "\n[\n  {" in markdown.read_text(encoding="utf-8")
         assert data["logs"]["session_traces"]
