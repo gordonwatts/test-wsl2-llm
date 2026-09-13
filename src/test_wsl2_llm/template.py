@@ -1,6 +1,7 @@
 """Configuration and rendering helpers for template-driven batch runs."""
 
 import re
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,9 @@ from test_wsl2_llm.config import load_config_file
 _FIELD = re.compile(r"{{\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*}}")
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+TEMPLATE_SCHEMA_NAME = "test-wsl2-llm-template.schema.json"
+_PACKAGED_SCHEMA_NAME = "template.schema.json"
+_SCHEMA_HEADER = re.compile(r"^# yaml-language-server:\s*\$schema=.*$")
 
 TEMPLATE_STARTER = """# yaml-language-server: $schema=./template.schema.json
 # Template-driven WSL2 Codex batch configuration
@@ -383,16 +387,80 @@ def template_output(
 
 
 def write_template(path: Path) -> Path:
-    """Write the starter template, refusing to replace an existing file."""
+    """Write a starter template and its adjacent editor schema."""
     path = path.resolve()
     if path.exists():
         raise FileExistsError(f"template file already exists: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        TEMPLATE_STARTER.replace("{output_stem}", path.stem),
-        encoding="utf-8",
-    )
+    schema_path = _schema_path(path)
+    schema_path.write_text(_packaged_schema_text(), encoding="utf-8")
+    path.write_text(_template_text(path, schema_path), encoding="utf-8")
     return path
+
+
+def ensure_template_schema(path: Path, *, update_yaml: bool = True) -> Path:
+    """Ensure the fixed-name schema and absolute YAML reference beside the path."""
+    path = path.resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"template file does not exist: {path}")
+    schema_path = _schema_path(path)
+    schema_text = _packaged_schema_text()
+    if not schema_path.exists() or schema_path.read_text(encoding="utf-8") != schema_text:
+        schema_path.write_text(schema_text, encoding="utf-8")
+    if update_yaml:
+        current = path.read_text(encoding="utf-8")
+        updated = _with_schema_header(current, schema_path)
+        if updated != current:
+            path.write_text(updated, encoding="utf-8")
+    return schema_path
+
+
+def write_template_config(path: Path, values: dict[str, Any]) -> Path:
+    """Write a resolved template YAML with its adjacent absolute schema reference."""
+    path = path.resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    schema_path = _schema_path(path)
+    schema_text = _packaged_schema_text()
+    if not schema_path.exists() or schema_path.read_text(encoding="utf-8") != schema_text:
+        schema_path.write_text(schema_text, encoding="utf-8")
+    import yaml
+
+    content = yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
+    path.write_text(_with_schema_header(content, schema_path), encoding="utf-8")
+    return path
+
+
+def _schema_path(path: Path) -> Path:
+    return path.with_name(TEMPLATE_SCHEMA_NAME)
+
+
+def _template_text(path: Path, schema_path: Path) -> str:
+    """Render the starter with a schema reference tied to its actual location."""
+    return _with_schema_header(
+        TEMPLATE_STARTER.replace("{output_stem}", path.stem), schema_path
+    )
+
+
+def _with_schema_header(content: str, schema_path: Path) -> str:
+    """Set or prepend the YAML language-server header using an absolute path."""
+    header = f"# yaml-language-server: $schema={schema_path.resolve()}"
+    lines = content.splitlines(keepends=True)
+    for index, line in enumerate(lines[:3]):
+        newline = "\r\n" if line.endswith("\r\n") else "\n"
+        if _SCHEMA_HEADER.match(line.rstrip("\r\n")):
+            lines[index] = header + newline
+            return "".join(lines)
+    return header + "\n" + content
+
+
+def _packaged_schema_text() -> str:
+    """Read the schema bundled with the installed package."""
+    resource = resources.files("test_wsl2_llm").joinpath(_PACKAGED_SCHEMA_NAME)
+    if resource.is_file():
+        return resource.read_text(encoding="utf-8")
+    # Editable source checkouts keep the canonical schema at repository root.
+    source = Path(__file__).resolve().parents[2] / _PACKAGED_SCHEMA_NAME
+    return source.read_text(encoding="utf-8")
 
 
 def resolved_template_values(

@@ -9,6 +9,7 @@ from typer.testing import CliRunner
 from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import output_paths
 from test_wsl2_llm.template import (
+    TEMPLATE_SCHEMA_NAME,
     TemplateConfig,
     question_copy_back,
     question_plugins,
@@ -28,7 +29,12 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
 
     assert result.exit_code == 0, result.output
     content = destination.read_text(encoding="utf-8")
-    assert content.startswith("# yaml-language-server: $schema=./template.schema.json\n")
+    schema = destination.with_name(TEMPLATE_SCHEMA_NAME)
+    assert schema.is_file()
+    assert content.startswith(f"# yaml-language-server: $schema={schema.resolve()}\n")
+    assert schema.read_text(encoding="utf-8") == (
+        Path(__file__).parents[1] / "template.schema.json"
+    ).read_text(encoding="utf-8")
     assert "prompt_template: |" in content
     assert "{{ question }}" in content
     assert "questions:" in content
@@ -43,6 +49,34 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     second = runner.invoke(app, ["template", "init", str(destination)])
     assert second.exit_code == 2
     assert "already exists" in second.output
+
+
+def test_template_run_repairs_adjacent_schema_and_absolute_header(
+    monkeypatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner.run_test", lambda _config, **_kwargs: sample_result()
+    )
+    config = tmp_path / "nested" / "batch.yaml"
+    config.parent.mkdir()
+    config.write_text(
+        "prompt_template: '{{ question }}'\n"
+        "questions:\n  - id: q1\n    question: first\n"
+        "model: test-model\noutput: results/run\n",
+        encoding="utf-8",
+    )
+    schema = config.with_name(TEMPLATE_SCHEMA_NAME)
+    schema.write_text("stale", encoding="utf-8")
+
+    result = runner.invoke(app, ["template", "run", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert schema.read_text(encoding="utf-8") == (
+        Path(__file__).parents[1] / "template.schema.json"
+    ).read_text(encoding="utf-8")
+    assert config.read_text(encoding="utf-8").startswith(
+        f"# yaml-language-server: $schema={schema.resolve()}\n"
+    )
 
 
 def test_template_init_requires_filename() -> None:
@@ -612,6 +646,11 @@ def test_matrix_save_config_round_trip_and_single_model_override(monkeypatch, tm
         ],
     )
     assert result.exit_code == 0, result.output
+    saved_schema = saved.with_name(TEMPLATE_SCHEMA_NAME)
+    assert saved_schema.is_file()
+    assert saved.read_text(encoding="utf-8").startswith(
+        f"# yaml-language-server: $schema={saved_schema.resolve()}\n"
+    )
     values = yaml.safe_load(saved.read_text(encoding="utf-8"))
     assert values["models"] == ["test:high", "test:low"]
     assert "model" not in values

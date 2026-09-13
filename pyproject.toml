@@ -38,6 +38,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/test_wsl2_llm"]
+force-include = { "template.schema.json" = "test_wsl2_llm/template.schema.json" }
 
 [tool.pytest.ini_options]
 addopts = "-ra"
