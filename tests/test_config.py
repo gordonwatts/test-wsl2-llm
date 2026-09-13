@@ -207,3 +207,30 @@ def test_model_argument_rejects_unknown_reasoning_effort(tmp_path: Path) -> None
             {"prompt": "hello", "model": "gpt-test:extreme", "output": str(tmp_path / "out")},
             cwd=tmp_path,
         )
+
+
+def test_saved_single_run_spec_uses_canonical_model_selector(tmp_path: Path) -> None:
+    resolved = build_config(
+        {},
+        {"prompt": "hello", "model": "gpt-test:high", "output": str(tmp_path / "out")},
+        cwd=tmp_path,
+    )
+
+    destination = tmp_path / "saved.yaml"
+    save_config(resolved, destination)
+
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["model"] == "gpt-test:high"
+    assert "reasoning_effort" not in saved
+    assert resolved.model == "gpt-test"
+    assert resolved.reasoning_effort == "high"
+
+
+def test_model_selector_parses_and_formats_in_one_place() -> None:
+    from test_wsl2_llm.models import ModelSelector
+
+    selection = ModelSelector.parse("gpt-test:xhigh")
+
+    assert selection.model == "gpt-test"
+    assert selection.reasoning_effort == "xhigh"
+    assert selection.selector == "gpt-test:xhigh"

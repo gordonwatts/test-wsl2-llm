@@ -1,10 +1,36 @@
 """Validated configuration and result schemas."""
 
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
+
+
+@dataclass(frozen=True)
+class ModelSelector:
+    """The canonical model and reasoning-effort selector used by the CLI and YAML."""
+
+    model: str
+    reasoning_effort: ReasoningEffort = "medium"
+
+    @classmethod
+    def parse(cls, value: str) -> "ModelSelector":
+        """Parse a ``MODEL[:EFFORT]`` value into its runner components."""
+        if ":" not in value:
+            return cls(value)
+        model, separator, effort = value.rpartition(":")
+        if not separator or not model or not effort:
+            raise ValueError("model must use MODEL[:EFFORT]")
+        if effort not in {"minimal", "low", "medium", "high", "xhigh"}:
+            raise ValueError("reasoning_effort must be one of minimal, low, medium, high, or xhigh")
+        return cls(model, effort)  # type: ignore[arg-type]
+
+    @property
+    def selector(self) -> str:
+        """Return the canonical single-field YAML representation."""
+        return f"{self.model}:{self.reasoning_effort}"
 
 
 class EnvironmentPolicy(BaseModel):
@@ -71,23 +97,26 @@ class TestConfig(BaseModel):
 
     @property
     def model_selector(self) -> str:
-        """Canonical model and effort identity, retaining the runner's separate fields."""
-        return f"{self.model}:{self.reasoning_effort}"
+        """Canonical model and effort identity."""
+        return ModelSelector(self.model, self.reasoning_effort).selector
+
+    def model_dump(self, *args: Any, **kwargs: Any) -> dict[str, Any]:
+        """Serialize the single-run spec with one canonical model selector field."""
+        values = super().model_dump(*args, **kwargs)
+        values["model"] = self.model_selector
+        values.pop("reasoning_effort", None)
+        return values
 
     @model_validator(mode="before")
     @classmethod
     def split_model_and_effort(cls, value: Any) -> Any:
         if not isinstance(value, dict) or not isinstance(value.get("model"), str):
             return value
-        model = value["model"]
-        if ":" not in model:
-            return value
-        base_model, separator, effort = model.rpartition(":")
-        if not separator or not base_model or not effort:
-            raise ValueError("model must use MODEL[:EFFORT]")
+        selection = ModelSelector.parse(value["model"])
         normalized = dict(value)
-        normalized["model"] = base_model
-        normalized["reasoning_effort"] = effort
+        normalized["model"] = selection.model
+        if ":" in value["model"] or "reasoning_effort" not in normalized:
+            normalized["reasoning_effort"] = selection.reasoning_effort
         return normalized
 
     @field_validator("prompt", "model")
