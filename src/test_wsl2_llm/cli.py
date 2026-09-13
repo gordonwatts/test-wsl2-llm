@@ -25,6 +25,7 @@ from test_wsl2_llm.config import (
     load_default_config,
     merge_config_values,
     output_paths,
+    output_stem,
     save_config,
 )
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
@@ -774,7 +775,7 @@ def generate_markdown(
     console = Console(stderr=True)
     try:
         result = _load_result_yaml(input_yaml)
-        destination = output or input_yaml.with_suffix(".md")
+        destination = output or output_paths(input_yaml)[0]
         from test_wsl2_llm.report import write_markdown
 
         written = write_markdown(result, destination, overwrite=force, include_details=details)
@@ -1002,7 +1003,10 @@ def continue_work(
             file_values.get("copy_back", []),
             copy_back or [],
         )
-        defaults["output"] = str(output or input_yaml.with_name(f"{input_yaml.stem}-continue"))
+        previous_stem = output_stem(input_yaml)
+        defaults["output"] = str(
+            output or previous_stem.with_name(f"{previous_stem.name}-continue")
+        )
         defaults["cleanup"] = False
         cli_values = {
             "prompt": prompt,
@@ -1139,9 +1143,7 @@ def _repeat_output(output: str, index: int, repeat: int) -> str:
     """Return the result stem for one repetition, preserving single-run names."""
     if repeat == 1:
         return output
-    path = Path(output)
-    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
-        path = path.with_suffix("")
+    path = output_stem(output)
     width = max(3, len(str(repeat)))
     return str(path.with_name(f"{path.name}-{index:0{width}d}"))
 

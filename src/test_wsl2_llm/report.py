@@ -12,7 +12,7 @@ from urllib.parse import quote
 
 import yaml
 
-from test_wsl2_llm.config import output_paths
+from test_wsl2_llm.config import output_paths, output_stem
 from test_wsl2_llm.models import TestResult
 
 
@@ -55,7 +55,8 @@ def write_markdown(
     """Render a result to one Markdown file without rewriting its YAML source."""
     destination = Path(output)
     if destination.suffix.lower() in {".yaml", ".yml", ".md"}:
-        destination = destination.with_suffix(".md")
+        stem = output_stem(destination)
+        destination = stem.with_name(f"{stem.name}.md")
     if destination.exists() and not overwrite:
         raise FileExistsError(f"result file already exists: {destination}")
     destination.parent.mkdir(parents=True, exist_ok=True)

@@ -22,6 +22,7 @@ from test_wsl2_llm.runner import (
     _is_git_marketplace_source,
     _is_timeout,
     _is_uninformative_progress,
+    _output_stub,
     _parse_git_marketplace_source,
     _progress_description,
     _progress_panel,
@@ -688,3 +689,8 @@ def test_copy_back_deduplicates_overlapping_patterns_before_file_limit(
         max_files=3,
     )
     assert [item.source for item in copied] == ["one.png", "two.png", "three.png"]
+
+
+def test_output_stub_preserves_dotted_stems(tmp_path: Path) -> None:
+    assert _output_stub(str(tmp_path / "run.v1")) == tmp_path / "run.v1"
+    assert _output_stub(str(tmp_path / "run.v1.yaml")) == tmp_path / "run.v1"

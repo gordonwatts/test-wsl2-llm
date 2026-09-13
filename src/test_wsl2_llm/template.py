@@ -11,7 +11,7 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from test_wsl2_llm.config import load_config_file
+from test_wsl2_llm.config import load_config_file, output_stem
 from test_wsl2_llm.models import TemplateCell, TestConfig, TestResult, ValidatorConfig
 from test_wsl2_llm.validation import validate_configuration
 
@@ -482,9 +482,7 @@ def template_output(
     model_selector: str | None = None,
 ) -> str:
     """Build a result stem for one question/repetition."""
-    path = Path(output)
-    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
-        path = path.with_suffix("")
+    path = output_stem(output)
     # Normalize every filename component to portable ASCII separators. In
     # particular, do not leave percent-encoded dots or colons in report names.
     path = path.with_name(_filename_component(path.name))

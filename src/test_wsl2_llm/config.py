@@ -124,12 +124,21 @@ def save_config(config: TestConfig, path: Path) -> None:
     )
 
 
-def output_paths(output: str) -> tuple[Path, Path]:
-    """Return same-stem Markdown and YAML output paths."""
-    path = Path(output).resolve()
-    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
+REPORT_SUFFIXES = frozenset({".md", ".yaml", ".yml"})
+
+
+def output_stem(output: str | Path) -> Path:
+    """Return an output stem, removing only a recognized report extension."""
+    path = Path(output)
+    if path.suffix.lower() in REPORT_SUFFIXES:
         path = path.with_suffix("")
-    return path.with_suffix(".md"), path.with_suffix(".yaml")
+    return path
+
+
+def output_paths(output: str | Path) -> tuple[Path, Path]:
+    """Return same-stem Markdown and YAML output paths."""
+    path = output_stem(output).resolve()
+    return path.with_name(f"{path.name}.md"), path.with_name(f"{path.name}.yaml")
 
 
 def _resolve_windows_path(value: str, base: Path) -> Path:

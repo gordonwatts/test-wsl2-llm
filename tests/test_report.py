@@ -568,3 +568,10 @@ def test_money_distinguishes_zero_unavailable_and_sub_cent_values() -> None:
     assert _money(None) == "unavailable"
     assert _money(0.000028) == "$0.000028"
     assert _money(0.000000001) == "$1.00e-09"
+
+
+def test_reports_pair_explicit_dotted_yaml_with_dotted_markdown(tmp_path: Path) -> None:
+    markdown, result_yaml = write_reports(sample_result(), str(tmp_path / "run.v1.yaml"))
+    assert markdown == tmp_path / "run.v1.md"
+    assert result_yaml == tmp_path / "run.v1.yaml"
+    assert markdown.exists() and result_yaml.exists()
