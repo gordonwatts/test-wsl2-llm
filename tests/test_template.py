@@ -9,9 +9,11 @@ from typer.testing import CliRunner
 from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import output_paths
 from test_wsl2_llm.template import (
+    TemplateConfig,
     question_copy_back,
     question_plugins,
     question_title,
+    render_questions,
     render_template,
     template_output,
     validate_questions,
@@ -71,6 +73,43 @@ def test_template_render_rejects_missing_and_unsupported_fields() -> None:
         assert "unsupported" in str(exc)
     else:
         raise AssertionError("nested template field was accepted")
+
+
+def test_template_question_text_can_reuse_another_question() -> None:
+    batch = TemplateConfig(
+        prompt_template="Task: {{ question }}",
+        questions=[
+            {"id": "shared", "question": "Use the calibrated inputs."},
+            {"id": "derived", "question": "{{shared}}\nThen compare the result."},
+        ],
+    )
+
+    rendered = render_questions(batch)
+
+    assert rendered[0][1] == "Task: Use the calibrated inputs."
+    assert rendered[1][1] == "Task: Use the calibrated inputs.\nThen compare the result."
+
+
+def test_template_question_text_reuse_supports_dotted_and_hyphenated_ids() -> None:
+    assert render_template(
+        "{{base-question}} / {{shared.v1}}",
+        {},
+        question_texts={"base-question": "base", "shared.v1": "shared"},
+    ) == "base / shared"
+
+
+def test_template_question_text_reuse_rejects_missing_and_circular_references() -> None:
+    with pytest.raises(ValueError, match="missing"):
+        validate_questions("{{question}}", [{"id": "one", "question": "{{missing}}"}])
+
+    with pytest.raises(ValueError, match="circular"):
+        validate_questions(
+            "{{question}}",
+            [
+                {"id": "one", "question": "{{two}}"},
+                {"id": "two", "question": "{{one}}"},
+            ],
+        )
 
 
 def test_template_question_validation_rejects_duplicate_ids_and_nested_values() -> None:

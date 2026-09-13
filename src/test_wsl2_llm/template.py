@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from test_wsl2_llm.config import load_config_file
 
-_FIELD = re.compile(r"{{\s*([A-Za-z_][A-Za-z0-9_]*)\s*}}")
+_FIELD = re.compile(r"{{\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*}}")
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -153,25 +153,66 @@ def validate_questions(
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
             if not isinstance(value, (str, int, float, bool)):
                 raise ValueError(f"question {identifier} field '{key}' must be a scalar value")
-        render_template(prompt_template, question, identifier)
+    question_ids = {str(question["id"]) for question in questions}
+    prompt_tokens = {match.group(1) for match in _FIELD.finditer(prompt_template)}
+    required_texts = {
+        identifier
+        for identifier, question in ((str(q["id"]), q) for q in questions)
+        if isinstance(question.get("question"), str) and "question" in prompt_tokens
+    }
+    required_texts.update(prompt_tokens & question_ids)
+    question_texts = _resolve_question_texts(questions, required=required_texts)
+    for question in questions:
+        identifier = str(question["id"])
+        values = dict(question)
+        if identifier in question_texts:
+            values["question"] = question_texts[identifier]
+        render_template(prompt_template, values, identifier, question_texts=question_texts)
         question_copy_back(list(shared_copy_back or []), question)
         question_plugins(list(shared_plugins or []), question)
 
 
-def render_template(template: str, values: dict[str, Any], identifier: str = "question") -> str:
+def render_template(
+    template: str,
+    values: dict[str, Any],
+    identifier: str = "question",
+    *,
+    question_texts: dict[str, str] | None = None,
+) -> str:
     """Render supported ``{{ field }}`` expressions with strict validation."""
     matches = list(_FIELD.finditer(template))
     masked = _FIELD.sub("", template)
     if "{{" in masked or "}}" in masked or "{%" in template or "%}" in template:
         raise ValueError(f"question {identifier} contains an unsupported template expression")
-    missing = sorted({match.group(1) for match in matches if match.group(1) not in values})
+    references = question_texts or {}
+    unsupported = sorted(
+        {
+            match.group(1)
+            for match in matches
+            if "." in match.group(1)
+            and match.group(1) not in values
+            and match.group(1) not in references
+        }
+    )
+    if unsupported:
+        raise ValueError(f"question {identifier} contains an unsupported template expression")
+    missing = sorted(
+        {
+            match.group(1)
+            for match in matches
+            if match.group(1) not in values and match.group(1) not in references
+        }
+    )
     if missing:
         raise ValueError(
             f"question {identifier} is missing template field(s): {', '.join(missing)}"
         )
 
     def replace(match: re.Match[str]) -> str:
-        value = values[match.group(1)]
+        token = match.group(1)
+        if token not in values:
+            return references[token]
+        value = values[token]
         if isinstance(value, bool):
             return "true" if value else "false"
         return str(value)
@@ -179,16 +220,79 @@ def render_template(template: str, values: dict[str, Any], identifier: str = "qu
     return _FIELD.sub(replace, template)
 
 
+def _resolve_question_texts(
+    questions: list[dict[str, Any]], *, required: set[str] | None = None
+) -> dict[str, str]:
+    """Resolve reusable question text, detecting missing references and cycles."""
+    question_by_id = {str(question["id"]): question for question in questions}
+    cache: dict[str, str] = {}
+    resolving: list[str] = []
+
+    def resolve(identifier: str) -> str:
+        if identifier in cache:
+            return cache[identifier]
+        if identifier in resolving:
+            cycle = " -> ".join([*resolving, identifier])
+            raise ValueError(f"question {identifier} has a circular text reference: {cycle}")
+        question = question_by_id[identifier]
+        raw_text = question.get("question")
+        if not isinstance(raw_text, str):
+            raise ValueError(
+                f"question {identifier} cannot be reused because it has no question text"
+            )
+        resolving.append(identifier)
+        try:
+            references: dict[str, str] = {}
+            for match in _FIELD.finditer(raw_text):
+                token = match.group(1)
+                if token in question_by_id and token not in question:
+                    references[token] = resolve(token)
+            rendered = render_template(
+                raw_text,
+                question,
+                identifier,
+                question_texts=references,
+            )
+        finally:
+            resolving.pop()
+        cache[identifier] = rendered
+        return rendered
+
+    for identifier in required or set():
+        resolve(identifier)
+    return cache
+
+
 def render_questions(batch: TemplateConfig) -> list[tuple[str, str, dict[str, Any]]]:
     """Return question id, rendered prompt, and source values in YAML order."""
-    return [
-        (
-            str(question["id"]),
-            render_template(batch.prompt_template, question, str(question["id"])),
-            question,
+    question_ids = {str(question["id"]) for question in batch.questions}
+    prompt_tokens = {match.group(1) for match in _FIELD.finditer(batch.prompt_template)}
+    required_texts = {
+        identifier
+        for identifier, question in ((str(q["id"]), q) for q in batch.questions)
+        if isinstance(question.get("question"), str) and "question" in prompt_tokens
+    }
+    required_texts.update(prompt_tokens & question_ids)
+    question_texts = _resolve_question_texts(batch.questions, required=required_texts)
+    rendered: list[tuple[str, str, dict[str, Any]]] = []
+    for question in batch.questions:
+        identifier = str(question["id"])
+        values = dict(question)
+        if identifier in question_texts:
+            values["question"] = question_texts[identifier]
+        rendered.append(
+            (
+                identifier,
+                render_template(
+                    batch.prompt_template,
+                    values,
+                    identifier,
+                    question_texts=question_texts,
+                ),
+                values,
+            )
         )
-        for question in batch.questions
-    ]
+    return rendered
 
 
 def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]:
