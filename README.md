@@ -148,7 +148,7 @@ threads: 4
 
 ### Template YAML specification and VS Code support
 
-[`template.schema.json`](template.schema.json) is the machine-readable JSON Schema for
+[`template.schema.json`](template.schema.json) is the canonical machine-readable JSON Schema for
 template files. It describes the batch fields, the single-run settings that can be
 shared by every job, question value types, and the built-in validators. The schema is
 also useful as a quick reference: in a question, `id` and `copy_back` are reserved;
@@ -181,20 +181,22 @@ when it was copied from a saved `run` configuration, but those fields are ignore
 `prompt_template` is present.
 
 For editor completion and inline validation, install the **YAML** extension from
-Red Hat (`redhat.vscode-yaml`) in VS Code. If the schema is beside the template, put
-this comment at the very top of the YAML file:
+Red Hat (`redhat.vscode-yaml`) in VS Code. `template init` creates a
+`test-wsl2-llm-template.schema.json` file beside the new YAML and writes its absolute
+path into the YAML language-server header. Every `template run` also creates or
+refreshes that file and header, so templates copied from elsewhere remain usable:
 
 ```yaml
-# yaml-language-server: $schema=./template.schema.json
+# yaml-language-server: $schema=C:\\path\\to\\test-wsl2-llm-template.schema.json
 ```
 
-For templates in another directory, adjust the relative path. Alternatively, associate
-the schema with all template files in the workspace's `.vscode/settings.json`:
+For templates in another directory, the generated absolute header needs no adjustment.
+Alternatively, associate the schema with all template files in the workspace's `.vscode/settings.json`:
 
 ```json
 {
   "yaml.schemas": {
-    "${workspaceFolder}/template.schema.json": [
+    "${workspaceFolder}/test-wsl2-llm-template.schema.json": [
       "**/*-template.yaml",
       "**/*-template.yml",
       "**/questions.yaml"

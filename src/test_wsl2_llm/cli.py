@@ -30,6 +30,7 @@ from test_wsl2_llm.config import (
 from test_wsl2_llm.models import EnvironmentPolicy, TestResult
 from test_wsl2_llm.runner import WslClient, _is_uninformative_progress
 from test_wsl2_llm.template import (
+    ensure_template_schema,
     load_template_file,
     question_copy_back,
     question_distro,
@@ -39,6 +40,7 @@ from test_wsl2_llm.template import (
     resolved_template_values,
     template_output,
     write_template,
+    write_template_config,
 )
 
 app = typer.Typer(
@@ -476,6 +478,7 @@ def template_run(
     console = Console(stderr=True)
     _configure_logging(verbose)
     try:
+        ensure_template_schema(config)
         batch, shared, _ = load_template_file(config)
         shared = merge_config_values(load_default_config(), shared)
         if repeat is not None and repeat < 1:
@@ -554,11 +557,7 @@ def template_run(
                 saved.pop("model", None)
                 saved.pop("reasoning_effort", None)
                 saved["models"] = identities
-            save_config_path = save_config_path.resolve()
-            save_config_path.parent.mkdir(parents=True, exist_ok=True)
-            save_config_path.write_text(
-                yaml.safe_dump(saved, sort_keys=False, allow_unicode=True), encoding="utf-8"
-            )
+            save_config_path = write_template_config(save_config_path, saved)
             console.print(f"Saved template configuration: {save_config_path}")
         if config_only:
             return
