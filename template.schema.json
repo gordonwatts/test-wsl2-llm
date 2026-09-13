@@ -33,7 +33,7 @@
       "type": "integer",
       "minimum": 1,
       "default": 1,
-      "description": "Number of repetitions for each model/question cell. Existing result pairs are skipped unless --force is used."
+      "description": "Number of repetitions for each model/question cell. Matching complete result pairs are skipped unless --force is used; stale reports are regenerated and incomplete reports can be retried."
     },
     "threads": {
       "type": "integer",

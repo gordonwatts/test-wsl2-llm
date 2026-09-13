@@ -1,14 +1,18 @@
 """Configuration and rendering helpers for template-driven batch runs."""
 
+import hashlib
+import json
 import re
+from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from test_wsl2_llm.config import load_config_file
-from test_wsl2_llm.models import ValidatorConfig
+from test_wsl2_llm.models import TemplateCell, TestConfig, TestResult, ValidatorConfig
 from test_wsl2_llm.validation import validate_configuration
 
 _FIELD = re.compile(r"{{\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*}}")
@@ -17,6 +21,67 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 TEMPLATE_SCHEMA_NAME = "test-wsl2-llm-template.schema.json"
 _PACKAGED_SCHEMA_NAME = "template.schema.json"
 _SCHEMA_HEADER = re.compile(r"^# yaml-language-server:\s*\$schema=.*$")
+
+
+@dataclass(frozen=True)
+class TemplateCellCheck:
+    """Classification of an existing result pair for template resume."""
+
+    state: Literal["missing", "incomplete", "succeeded", "failed", "stale"]
+    reason: str = ""
+
+
+def template_cell_fingerprint(config: TestConfig) -> str:
+    """Hash the effective cell settings, excluding destination-only controls."""
+    values = config.model_dump(mode="json")
+    values.pop("output", None)
+    values.pop("overwrite", None)
+    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def template_cell_metadata(question_id: str, repetition: int, config: TestConfig) -> TemplateCell:
+    """Build the persisted identity for one expanded template cell."""
+    return TemplateCell(
+        question_id=question_id,
+        model_selector=config.model_selector,
+        repetition=repetition,
+        fingerprint=template_cell_fingerprint(config),
+    )
+
+
+def inspect_template_result(
+    markdown_path: Path,
+    yaml_path: Path,
+    expected: TemplateCell,
+) -> TemplateCellCheck:
+    """Validate a saved pair and classify whether it can satisfy a cell."""
+    if not markdown_path.is_file() or not yaml_path.is_file():
+        if markdown_path.exists() or yaml_path.exists():
+            return TemplateCellCheck("incomplete", "the Markdown/YAML pair is incomplete")
+        return TemplateCellCheck("missing")
+    try:
+        values = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        if not isinstance(values, dict):
+            raise ValueError("YAML root is not a mapping")
+        result = TestResult.model_validate(values)
+    except (OSError, ValueError, TypeError) as exc:
+        return TemplateCellCheck("incomplete", f"canonical YAML is unreadable: {exc}")
+    except Exception as exc:
+        return TemplateCellCheck("incomplete", f"canonical YAML is invalid: {exc}")
+    actual = result.template_cell
+    if actual is None:
+        return TemplateCellCheck("incomplete", "saved result has no template cell identity")
+    if (
+        actual.question_id != expected.question_id
+        or actual.model_selector.casefold() != expected.model_selector.casefold()
+        or actual.repetition != expected.repetition
+    ):
+        return TemplateCellCheck("stale", "saved result belongs to a different template cell")
+    if actual.fingerprint != expected.fingerprint:
+        return TemplateCellCheck("stale", "effective prompt or run settings changed")
+    return TemplateCellCheck(result.run.status)
+
 
 TEMPLATE_STARTER = """# yaml-language-server: $schema=./template.schema.json
 # Template-driven WSL2 Codex batch configuration
@@ -154,8 +219,7 @@ def validate_questions(
                     not isinstance(plugin, str) or not plugin.strip() for plugin in value
                 ):
                     raise ValueError(
-                        f"question {identifier} field 'plugins' must be a list of "
-                        "non-empty strings"
+                        f"question {identifier} field 'plugins' must be a list of non-empty strings"
                     )
                 continue
             if key == "validators":
@@ -359,8 +423,7 @@ def question_distro(shared: str | None, question: dict[str, Any]) -> str | None:
     override = question["distro"]
     if not isinstance(override, str) or not override.strip():
         raise ValueError(
-            f"question {question.get('id', 'unknown')} field 'distro' must be a "
-            "non-empty string"
+            f"question {question.get('id', 'unknown')} field 'distro' must be a non-empty string"
         )
     return override
 
@@ -412,7 +475,11 @@ def _filename_component(value: str) -> str:
 
 
 def template_output(
-    output: str, identifier: str, index: int, repeat: int, model_selector: str | None = None,
+    output: str,
+    identifier: str,
+    index: int,
+    repeat: int,
+    model_selector: str | None = None,
 ) -> str:
     """Build a result stem for one question/repetition."""
     path = Path(output)
@@ -480,9 +547,7 @@ def _schema_path(path: Path) -> Path:
 
 def _template_text(path: Path, schema_path: Path) -> str:
     """Render the starter with a schema reference tied to its actual location."""
-    return _with_schema_header(
-        TEMPLATE_STARTER.replace("{output_stem}", path.stem), schema_path
-    )
+    return _with_schema_header(TEMPLATE_STARTER.replace("{output_stem}", path.stem), schema_path)
 
 
 def _with_schema_header(content: str, schema_path: Path) -> str:
@@ -508,8 +573,12 @@ def _packaged_schema_text() -> str:
 
 
 def resolved_template_values(
-    batch: TemplateConfig, shared: dict[str, Any], *, output: str | None = None,
-    repeat: int | None = None, threads: int | None = None,
+    batch: TemplateConfig,
+    shared: dict[str, Any],
+    *,
+    output: str | None = None,
+    repeat: int | None = None,
+    threads: int | None = None,
 ) -> dict[str, Any]:
     """Return the resolved batch YAML values suitable for ``--save-config``."""
     values = dict(shared)
