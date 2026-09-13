@@ -5,17 +5,21 @@ build-backend = "hatchling.build"
 [project]
 name = "test-wsl2-llm"
 version = "0.1.0"
-description = "Run reproducible Codex CLI tests in fresh WSL2 workspaces"
+description = "Run reproducible coding-agent CLI tests in isolated workspaces"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [{ name = "Gordon Watts" }]
+keywords = ["coding-agents", "testing", "Codex", "WSL2"]
 classifiers = [
+  "Environment :: Console",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3 :: Only",
   "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Programming Language :: Python :: 3.13",
+  "Operating System :: Microsoft :: Windows",
 ]
 dependencies = [
   "pydantic>=2.10",
@@ -25,6 +29,11 @@ dependencies = [
   "typer>=0.15",
   "uproot>=5.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/gordonwatts/test-wsl2-llm"
+Repository = "https://github.com/gordonwatts/test-wsl2-llm"
+Issues = "https://github.com/gordonwatts/test-wsl2-llm/issues"
 
 [project.scripts]
 test-wsl2-llm = "test_wsl2_llm.cli:main"
@@ -38,7 +47,22 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/test_wsl2_llm"]
-force-include = { "template.schema.json" = "test_wsl2_llm/template.schema.json" }
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/test_wsl2_llm/model-pricing.yaml" = "test_wsl2_llm/model-pricing.yaml"
+"template.schema.json" = "test_wsl2_llm/template.schema.json"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/test_wsl2_llm",
+  "template.schema.json",
+  "README.md",
+  "LICENSE",
+  "CHANGELOG.md",
+  "RELEASING.md",
+  "pyproject.toml",
+  "scripts/verify_package.py",
+]
 
 [tool.pytest.ini_options]
 addopts = "-ra"
