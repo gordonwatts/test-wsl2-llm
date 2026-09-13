@@ -14,6 +14,7 @@ from test_wsl2_llm.template import (
     question_copy_back,
     question_plugins,
     question_title,
+    question_validators,
     render_questions,
     render_template,
     template_output,
@@ -41,6 +42,7 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     assert "id: example" in content
     assert "marketplaces: []" in content
     assert "plugins: []" in content
+    assert "# validators:" in content
     assert "copy_files: []" in content
     assert "repeat: 1" in content
     assert "threads: 1" in content
@@ -703,3 +705,120 @@ def test_template_names_keep_entire_selector_and_dotted_question_id():
     assert all(path.stem == stem for path, stem in zip(paths, stems, strict=True))
     assert "gpt-5-4-high" in stems[0]
     assert all("%" not in stem and ":" not in stem for stem in stems)
+
+
+def test_question_validators_use_replace_and_inherit_precedence() -> None:
+    shared = [{"name": "require_string", "arguments": {"string": "shared"}}]
+    replacement = [{"name": "require_string", "arguments": {"string": "question"}}]
+
+    assert question_validators(shared, {"id": "inherit"}) == shared
+    assert question_validators(shared, {"id": "replace", "validators": replacement}) == replacement
+    assert question_validators(shared, {"id": "disable", "validators": []}) == []
+
+
+def test_question_validator_names_and_arguments_are_checked_before_execution() -> None:
+    with pytest.raises(ValueError, match="Unknown validator"):
+        validate_questions(
+            "{{ question }}",
+            [{"id": "bad", "question": "bad", "validators": [{"name": "missing"}]}],
+        )
+    with pytest.raises(ValueError, match="extra_forbidden"):
+        validate_questions(
+            "{{ question }}",
+            [
+                {
+                    "id": "bad",
+                    "question": "bad",
+                    "validators": [
+                        {"name": "require_string", "arguments": {"string": "ok", "typo": True}}
+                    ],
+                }
+            ],
+        )
+
+
+def test_template_run_applies_question_validator_precedence(
+    monkeypatch, tmp_path: Path
+) -> None:
+    seen: list[tuple[str, list[str]]] = []
+
+    def fake_run(config, **_kwargs):
+        seen.append((config.prompt, [spec.name for spec in config.validators]))
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        return output_paths(output)
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+    config = tmp_path / "validators.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "prompt_template": "Do {{ question }}",
+                "questions": [
+                    {"id": "inherit", "question": "one"},
+                    {
+                        "id": "replace",
+                        "question": "two",
+                        "validators": [
+                            {"name": "require_string", "arguments": {"string": "question"}}
+                        ],
+                    },
+                    {"id": "disable", "question": "three", "validators": []},
+                ],
+                "model": "test-model",
+                "validators": [
+                    {"name": "require_string", "arguments": {"string": "shared"}}
+                ],
+                "output": "results/run",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["template", "run", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert seen == [
+        ("Do one", ["require_string"]),
+        ("Do two", ["require_string"]),
+        ("Do three", []),
+    ]
+
+
+def test_question_validators_survive_saved_template_round_trip(tmp_path: Path) -> None:
+    config = tmp_path / "validators.yaml"
+    question_validators_value = [
+        {"name": "require_string", "arguments": {"string": "question"}}
+    ]
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "prompt_template": "{{ question }}",
+                "questions": [
+                    {"id": "q1", "question": "first", "validators": question_validators_value}
+                ],
+                "model": "test-model",
+                "validators": [{"name": "require_string", "arguments": {"string": "shared"}}],
+                "output": "results/run",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+    saved = tmp_path / "saved.yaml"
+
+    result = runner.invoke(
+        app,
+        ["template", "run", str(config), "--save-config", str(saved), "--config-only"],
+    )
+
+    assert result.exit_code == 0, result.output
+    values = yaml.safe_load(saved.read_text(encoding="utf-8"))
+    assert values["validators"] == [
+        {"name": "require_string", "arguments": {"string": "shared"}}
+    ]
+    assert values["questions"][0]["validators"] == question_validators_value
