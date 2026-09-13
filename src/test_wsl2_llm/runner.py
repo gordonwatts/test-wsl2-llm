@@ -1121,6 +1121,7 @@ def _stream_codex(
     trace_events: list[TraceEvent] = []
     parsed_events: list[dict[str, Any]] = []
     recent: list[str] = []
+    latest_meaningful: str | None = None
     completed_streams = 0
     stopped_at: float | None = None
 
@@ -1152,7 +1153,7 @@ def _stream_codex(
             process.wait()
 
     def consume(live: Live | None) -> None:
-        nonlocal completed_streams, interrupted, timed_out
+        nonlocal completed_streams, interrupted, timed_out, latest_meaningful
         while completed_streams < 2:
             try:
                 if (
@@ -1200,16 +1201,19 @@ def _stream_codex(
                         elapsed_seconds=elapsed,
                     )
                 )
+            description = _progress_description(parsed, line)
             display = (
                 f"{_console_time(received_at)} [{stream}] "
-                f"{_progress_description(parsed, line)}"
+                f"{description}"
             )
+            if not _is_uninformative_progress(description):
+                latest_meaningful = display
             recent.append(display)
             del recent[:-progress_lines]
             if verbosity >= 2:
                 LOGGER.debug("[%s] %s", stream, line.rstrip("\r\n"))
             elif live:
-                live.update(Panel("\n".join(recent), title="Codex progress"))
+                live.update(_progress_panel(recent, latest_meaningful))
             elif not live_progress:
                 if log_callback is not None:
                     log_callback(display)
@@ -1309,6 +1313,20 @@ def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
     description = re.sub(r"\s+", " ", description).strip()
     return description if len(description) <= 120 else description[:117].rstrip() + "..."
 
+
+def _is_uninformative_progress(description: str) -> bool:
+    """Identify routine MCP polling entries that should not replace the summary."""
+    return description.casefold() in {"started mcp tool call", "completed mcp tool call"}
+
+
+def _progress_panel(recent: list[str], latest_meaningful: str | None) -> Panel:
+    """Render a bounded event log with a persistent summary of useful activity."""
+    latest = latest_meaningful or "No meaningful activity yet."
+    detail = "\n".join(recent) or "Starting Codex..."
+    return Panel(
+        f"Latest meaningful activity: {latest}\n\n{detail}",
+        title="Codex progress",
+    )
 
 def _inventory(client: WslClient, workspace: str) -> list[WorkspaceFile]:
     completed = client.bash(
