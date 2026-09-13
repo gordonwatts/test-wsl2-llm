@@ -789,7 +789,18 @@ def _transfer_marketplaces(
             runtime.append(destination)
         elif _is_git_marketplace_source(source):
             destination = f"{marketplace_root}/marketplace-{index:03d}"
-            client.login_bash('git clone --depth 1 -- "$1" "$2"', source, destination)
+            repository, branch = _parse_git_marketplace_source(source)
+            if branch is None:
+                client.login_bash(
+                    'git clone --depth 1 -- "$1" "$2"', repository, destination
+                )
+            else:
+                client.login_bash(
+                    'git clone --depth 1 --branch "$2" -- "$1" "$3"',
+                    repository,
+                    branch,
+                    destination,
+                )
             runtime.append(destination)
         else:
             runtime.append(source)
@@ -984,6 +995,22 @@ def _is_git_marketplace_source(source: str) -> bool:
     if parsed.scheme in {"http", "https", "ssh", "git"} and bool(parsed.netloc):
         return True
     return bool(re.fullmatch(r"[^@\s]+@[^:\s]+:.+", source))
+
+
+def _parse_git_marketplace_source(source: str) -> tuple[str, str | None]:
+    """Split an optional trailing ``@branch`` selector from a Git source."""
+    parsed = urlparse(source)
+    if parsed.scheme in {"http", "https", "ssh", "git"} and parsed.netloc:
+        repository_path, separator, branch = parsed.path.rpartition("@")
+        if separator and repository_path and branch:
+            return parsed._replace(path=repository_path).geturl(), branch
+        return source, None
+
+    if _is_git_marketplace_source(source):
+        repository, separator, branch = source.rpartition("@")
+        if separator and branch and source.find(":") < source.rfind("@"):
+            return repository, branch
+    return source, None
 
 
 def _installed_paths_from_json(output: str) -> list[str]:
