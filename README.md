@@ -251,6 +251,11 @@ YAML must be corrected before the batch can run. Template questions may also pro
 beginning with `-` remove an exact shared selector (for example, `-shared-tools@my-marketplace`).
 A plugin removal must refer to a shared selector or an earlier addition in the same question.
 This lets each question use a different plugin set while sharing the same marketplaces.
+Template questions may also provide a `distro` string to select a different WSL
+distribution for that question. It overrides the shared YAML `distro` only for the
+expanded jobs from that question; the global `--distro` option still overrides every
+question. Questions without a `distro` field inherit the shared value (or the WSL
+default when neither is set).
 
 If a requested copy-back path or glob has no matches, collection continues for the other
 patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
