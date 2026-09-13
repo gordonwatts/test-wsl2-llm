@@ -9,7 +9,7 @@ from test_report import sample_result
 from typer.testing import CliRunner
 
 import test_wsl2_llm.cli as cli_module
-from test_wsl2_llm.cli import _connect_command, app
+from test_wsl2_llm.cli import _connect_command, _repeat_output, app
 from test_wsl2_llm.config import DEFAULT_CONFIG_ENV, output_paths
 
 runner = CliRunner()
@@ -651,3 +651,31 @@ def test_generate_defaults_to_standard_diagnostics_without_raw_details(tmp_path:
     assert "<summary>Complete Codex stderr</summary>" in markdown
     assert "<summary>Model activity</summary>" in markdown
     assert "Complete Codex stdout JSONL" not in markdown
+
+
+def test_repeat_output_preserves_dotted_stems() -> None:
+    assert Path(_repeat_output("run.v1", 2, 3)).name == "run.v1-002"
+    assert Path(_repeat_output("run.v1.yaml", 2, 3)).name == "run.v1-002"
+
+
+def test_continue_default_preserves_dotted_input_stem(tmp_path: Path) -> None:
+    source = tmp_path / "previous.v1.yaml"
+    destination = tmp_path / "continued.yaml"
+    result = sample_result()
+    result.configuration = {"model": "gpt-previous", "output": str(tmp_path / "previous.v1")}
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    invoked = runner.invoke(
+        app,
+        [
+            "continue",
+            str(source),
+            "--prompt",
+            "Inspect the existing file.",
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+    assert invoked.exit_code == 0, invoked.output
+    saved = yaml.safe_load(destination.read_text(encoding="utf-8"))
+    assert saved["output"] == str((tmp_path / "previous.v1-continue").resolve())

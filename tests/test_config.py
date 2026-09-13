@@ -234,3 +234,19 @@ def test_model_selector_parses_and_formats_in_one_place() -> None:
     assert selection.model == "gpt-test"
     assert selection.reasoning_effort == "xhigh"
     assert selection.selector == "gpt-test:xhigh"
+
+
+@pytest.mark.parametrize(
+    ("name", "expected_stem"),
+    [
+        ("trial.v1", "trial.v1"),
+        ("trial.v1.yaml", "trial.v1"),
+        ("trial.v1.yml", "trial.v1"),
+    ],
+)
+def test_output_paths_preserve_arbitrary_dotted_stems(
+    tmp_path: Path, name: str, expected_stem: str
+) -> None:
+    markdown, result_yaml = output_paths(str(tmp_path / name))
+    assert markdown.name == f"{expected_stem}.md"
+    assert result_yaml.name == f"{expected_stem}.yaml"

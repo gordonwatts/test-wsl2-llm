@@ -27,6 +27,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 
+from test_wsl2_llm.config import output_stem
 from test_wsl2_llm.models import (
     CommandResult,
     ConversationTurn,
@@ -1182,10 +1183,7 @@ done < <(compgen -G "$search")
 
 
 def _output_stub(output: str) -> Path:
-    path = Path(output).resolve()
-    if path.suffix.lower() in {".md", ".yaml", ".yml"}:
-        path = path.with_suffix("")
-    return path
+    return output_stem(output).resolve()
 
 
 def _describe_copied_back(source: str, destination: Path) -> CopiedBackFile:
