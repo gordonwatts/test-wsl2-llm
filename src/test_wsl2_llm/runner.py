@@ -334,6 +334,97 @@ class RunState:
             )
 
 
+def _append_failure(error: str | None, label: str, failure: BaseException) -> str:
+    """Keep the primary failure while adding a secondary recovery diagnostic."""
+    detail = str(failure) or failure.__class__.__name__
+    return f"{error + '; ' if error else ''}{label} failed: {detail}"
+
+
+def _collect_evidence(
+    client: WslClient,
+    *,
+    workspace_path: str | None,
+    run_root: str | None,
+    codex_home: str | None,
+    config: TestConfig,
+    state: RunState,
+    files: list[WorkspaceFile],
+    copied_back: list[CopiedBackFile],
+    missing_copy_back: list[str],
+    session_traces: list[SessionTrace],
+    trace_events: list[TraceEvent],
+    error: str | None,
+    exit_code: int,
+) -> tuple[
+    list[WorkspaceFile],
+    list[CopiedBackFile],
+    list[SessionTrace],
+    list[TraceEvent],
+    str | None,
+    int,
+]:
+    """Collect every available evidence source without masking the primary error.
+
+    This is deliberately shared by fresh runs and retained-workspace continuations.
+    Each source is attempted independently so a broken inventory or copy-back does
+    not prevent the remaining evidence from being included in a report.
+    """
+    if not workspace_path or not run_root:
+        return files, copied_back, session_traces, trace_events, error, exit_code
+
+    try:
+        with state.phase("workspace_inventory"):
+            files = _inventory(client, workspace_path)
+    except (Exception, KeyboardInterrupt) as collection_error:
+        error = _append_failure(error, "workspace_inventory", collection_error)
+        exit_code = exit_code or 1
+
+    try:
+        with state.phase("copy_back"):
+            copied_back = _copy_back_files(
+                client,
+                config.copy_back,
+                workspace_path,
+                config.output,
+                max_files=config.max_copy_back_files,
+                missing=missing_copy_back,
+            )
+    except (Exception, KeyboardInterrupt) as collection_error:
+        error = _append_failure(error, "copy_back", collection_error)
+        exit_code = exit_code or 1
+
+    if codex_home:
+        try:
+            with state.phase("session_trace_collection"):
+                session_traces, session_events = _session_traces(client, codex_home)
+            trace_events.extend(session_events)
+        except (Exception, KeyboardInterrupt) as collection_error:
+            error = _append_failure(error, "session_trace_collection", collection_error)
+            exit_code = exit_code or 1
+
+    return files, copied_back, session_traces, trace_events, error, exit_code
+
+
+def _remove_auth(
+    client: WslClient,
+    codex_home: str | None,
+    *,
+    state: RunState,
+    error: str | None,
+    exit_code: int,
+) -> tuple[str | None, int]:
+    """Best-effort auth removal shared by run and continuation finalization."""
+    if not codex_home:
+        return error, exit_code
+    try:
+        with state.phase("auth_cleanup"):
+            client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
+    except (Exception, KeyboardInterrupt) as auth_error:
+        error = _append_failure(error, "auth cleanup", auth_error)
+        exit_code = exit_code or 1
+    return error, exit_code
+
+
 def run_test(
     config: TestConfig,
     *,
@@ -477,58 +568,32 @@ def run_test(
             if timed_out and state.phases and state.phases[-1].name == "codex_execution":
                 state.phases[-1].timed_out = True
 
-        with state.phase("workspace_inventory"):
-            files = _inventory(client, workspace_path)
-
-        with state.phase("copy_back"):
-            copied_back = _copy_back_files(
-                client,
-                config.copy_back,
-                workspace_path,
-                config.output,
-                max_files=config.max_copy_back_files,
-                missing=missing_copy_back,
-            )
-
-        with state.phase("session_trace_collection"):
-            session_traces, session_events = _session_traces(client, codex_home)
-            trace_events.extend(session_events)
 
     except (Exception, KeyboardInterrupt) as exc:  # Preserve a report even on interruption.
         error = str(exc) or "Run interrupted by keyboard interrupt"
         LOGGER.exception("WSL Codex test failed")
         exit_code = 130 if isinstance(exc, KeyboardInterrupt) else (exit_code or 1)
-        if workspace_path and run_root:
-            for name, collect in (
-                ("workspace_inventory", lambda: _inventory(client, workspace_path)),
-                ("copy_back", lambda: _copy_back_files(
-                    client, config.copy_back, workspace_path, config.output,
-                    max_files=config.max_copy_back_files, missing=missing_copy_back,
-                )),
-                ("session_trace_collection", lambda: _session_traces(client, codex_home)),
-            ):
-                try:
-                    with state.phase(name):
-                        collected = collect()
-                    if name == "workspace_inventory":
-                        files = collected
-                    elif name == "copy_back":
-                        copied_back = collected
-                    else:
-                        traces, session_events = collected
-                        session_traces.extend(traces)
-                        trace_events.extend(session_events)
-                except (Exception, KeyboardInterrupt) as collection_error:
-                    error = f"{error}; {name} failed: {collection_error}"
     finally:
-        # Collection failures must never prevent cleanup or hide the original error.
+        files, copied_back, session_traces, trace_events, error, exit_code = _collect_evidence(
+            client,
+            workspace_path=workspace_path,
+            run_root=run_root,
+            codex_home=codex_home,
+            config=config,
+            state=state,
+            files=files,
+            copied_back=copied_back,
+            missing_copy_back=missing_copy_back,
+            session_traces=session_traces,
+            trace_events=trace_events,
+            error=error,
+            exit_code=exit_code,
+        )
+        error, exit_code = _remove_auth(
+            client, codex_home, state=state, error=error, exit_code=exit_code
+        )
+        # A run workspace is retained until the report has been persisted.
         retained = run_root is not None
-        if codex_home:
-            try:
-                client.bash('rm -f -- "$1/auth.json"', codex_home)
-            except (Exception, KeyboardInterrupt) as auth_error:
-                error = f"{error + '; ' if error else ''}auth cleanup failed: {auth_error}"
-                exit_code = exit_code or 1
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
@@ -645,6 +710,7 @@ def continue_test(
     exit_code = 1
     error: str | None = None
     timed_out = False
+    files: list[WorkspaceFile] = []
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
     model_information = ModelInformation(
@@ -750,38 +816,29 @@ def continue_test(
             if timed_out and state.phases and state.phases[-1].name == "codex_execution":
                 state.phases[-1].timed_out = True
 
-        with state.phase("workspace_inventory"):
-            files = _inventory(client, workspace_path)
-
-        with state.phase("copy_back"):
-            copied_back = _copy_back_files(
-                client,
-                config.copy_back,
-                workspace_path,
-                config.output,
-                max_files=config.max_copy_back_files,
-                missing=missing_copy_back,
-            )
-
-        with state.phase("session_trace_collection"):
-            session_traces, session_events = _session_traces(client, codex_home)
-            trace_events.extend(session_events)
-    except Exception as exc:  # A continuation should still produce a report.
-        error = str(exc)
+    except (Exception, KeyboardInterrupt) as exc:  # A continuation should still produce a report.
+        error = str(exc) or "Continuation interrupted by keyboard interrupt"
         LOGGER.exception("WSL Codex continuation failed")
-        files = []
-        copied_back = []
-        exit_code = exit_code or 1
-        try:
-            with state.phase("workspace_inventory"):
-                files = _inventory(client, workspace_path)
-            with state.phase("session_trace_collection"):
-                session_traces, session_events = _session_traces(client, codex_home)
-                trace_events.extend(session_events)
-        except Exception as collection_error:
-            error = f"{error}; result collection failed: {collection_error}"
+        exit_code = 130 if isinstance(exc, KeyboardInterrupt) else (exit_code or 1)
     finally:
-        client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
+        files, copied_back, session_traces, trace_events, error, exit_code = _collect_evidence(
+            client,
+            workspace_path=workspace_path,
+            run_root=run_root,
+            codex_home=codex_home,
+            config=config,
+            state=state,
+            files=files,
+            copied_back=copied_back,
+            missing_copy_back=missing_copy_back,
+            session_traces=session_traces,
+            trace_events=trace_events,
+            error=error,
+            exit_code=exit_code,
+        )
+        error, exit_code = _remove_auth(
+            client, codex_home, state=state, error=error, exit_code=exit_code
+        )
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
