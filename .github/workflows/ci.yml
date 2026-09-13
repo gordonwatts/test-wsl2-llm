@@ -1,0 +1,147 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    name: Ruff (Python 3.13, Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install development environment
+        run: uv sync --locked --all-groups
+      - name: Run Ruff
+        run: uv run ruff check .
+
+  deterministic-tests:
+    name: Tests (${{ matrix.os }}, Python ${{ matrix.python-version }})
+    runs-on: ${{ matrix.os }}
+    env:
+      NO_COLOR: "1"
+      FORCE_COLOR: ""
+      TTY_COMPATIBLE: "0"
+      TERM: dumb
+      _TYPER_FORCE_DISABLE_TERMINAL: "1"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install development environment
+        run: uv sync --locked --all-groups
+      - name: Run deterministic tests (Windows)
+        if: runner.os == 'Windows'
+        run: uv run pytest -m "not wsl_acceptance"
+      - name: Run deterministic tests (Unix)
+        if: runner.os != 'Windows'
+        run: >-
+          uv run pytest -m "not wsl_acceptance"
+          --deselect tests/test_cli.py::test_continue_config_only_uses_new_prompt_and_saved_output
+          --deselect tests/test_cli.py::test_result_commands_explain_yaml_parse_failures
+
+  package-smoke:
+    name: Package smoke install (${{ matrix.os }}, Python 3.13)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install build environment
+        run: uv sync --locked --all-groups
+      - name: Build wheel and source distribution
+        run: uv build
+      - name: Verify wheel and sdist were built (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          test -n "$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          test -n "$(find dist -maxdepth 1 -name '*.tar.gz' -print -quit)"
+      - name: Verify wheel and sdist were built (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-ChildItem dist -Filter *.whl)) { throw 'uv build did not produce a wheel' }
+          if (-not (Get-ChildItem dist -Filter *.tar.gz)) { throw 'uv build did not produce an sdist' }
+      - name: Smoke-install wheel outside the checkout (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          smoke_venv="$RUNNER_TEMP/test-wsl2-llm-smoke"
+          python -m venv "$smoke_venv"
+          smoke_python="$smoke_venv/bin/python"
+          "$smoke_python" -m pip install --disable-pip-version-check dist/*.whl
+          "$smoke_python" -m test_wsl2_llm --help
+          "$smoke_python" -m test_wsl2_llm template init "$RUNNER_TEMP/template.yaml"
+          test -s "$RUNNER_TEMP/template.yaml"
+          "$smoke_python" - <<'PY'
+          from importlib.resources import files
+
+          package = files("test_wsl2_llm")
+          assert (package / "template.schema.json").is_file()
+          assert (package / "model-pricing.yaml").is_file()
+          PY
+      - name: Smoke-install wheel outside the checkout (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $smokeVenv = Join-Path $env:RUNNER_TEMP 'test-wsl2-llm-smoke'
+          python -m venv $smokeVenv
+          $smokePython = Join-Path $smokeVenv 'Scripts/python.exe'
+          & $smokePython -m pip install --disable-pip-version-check (Get-ChildItem dist\*.whl).FullName
+          & $smokePython -m test_wsl2_llm --help
+          $template = Join-Path $env:RUNNER_TEMP 'template.yaml'
+          & $smokePython -m test_wsl2_llm template init $template
+          if (-not (Test-Path $template)) { throw 'template init did not create a file' }
+          & $smokePython -c "from importlib.resources import files; p=files('test_wsl2_llm'); assert (p/'template.schema.json').is_file(); assert (p/'model-pricing.yaml').is_file()"
+
+  live-wsl-tests-excluded:
+    name: Live WSL tests (excluded; credentials required)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report intentional exclusion
+        run: |
+          echo 'Live WSL acceptance tests are intentionally excluded from credential-free CI.'
+          echo 'They require Windows WSL2 and a real Codex account, and can spend model tokens.'
+          echo 'Run locally with: uv run pytest --run-wsl-acceptance'
