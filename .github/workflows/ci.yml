@@ -41,6 +41,7 @@ jobs:
       FORCE_COLOR: ""
       TTY_COMPATIBLE: "0"
       TERM: dumb
+      _TYPER_FORCE_DISABLE_TERMINAL: "1"
     strategy:
       fail-fast: false
       matrix:
