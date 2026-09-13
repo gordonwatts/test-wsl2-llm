@@ -26,6 +26,7 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
 
     assert result.exit_code == 0, result.output
     content = destination.read_text(encoding="utf-8")
+    assert content.startswith("# yaml-language-server: $schema=./template.schema.json\n")
     assert "prompt_template: |" in content
     assert "{{ question }}" in content
     assert "questions:" in content

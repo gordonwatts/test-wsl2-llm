@@ -1,0 +1,278 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/gordonwatts/test-wsl2-llm/main/template.schema.json",
+  "title": "test-wsl2-llm template configuration",
+  "description": "A batch template for running one isolated WSL2 Codex test for each question, model, and repetition.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["prompt_template", "questions"],
+  "properties": {
+    "prompt_template": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Prompt text shared by every question. Substitute scalar question fields with {{ field }}; nested expressions and Jinja expressions are not supported."
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Questions to expand in YAML order. Each id must be unique at runtime.",
+      "items": { "$ref": "#/definitions/question" }
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One Codex model, optionally written as MODEL:EFFORT. The effort defaults to medium. A model from user defaults or the template-run --model option may supply this instead."
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Models to compare, each optionally written as MODEL:EFFORT. This list takes precedence over model when both are present.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "repeat": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Number of repetitions for each model/question cell. Existing result pairs are skipped unless --force is used."
+    },
+    "threads": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 1,
+      "description": "Maximum number of model/question/repetition jobs run concurrently."
+    },
+    "title": {
+      "type": "string",
+      "default": "# WSL2 Codex test result",
+      "description": "Markdown report heading. When omitted, template runs derive a heading from the question id and question field."
+    },
+    "marketplaces": {
+      "type": "array",
+      "description": "Windows marketplace directories or Git repository URLs to make available in each isolated WSL run.",
+      "items": { "type": "string" }
+    },
+    "plugins": {
+      "type": "array",
+      "description": "Plugin selectors to install in each run, such as NAME@MARKETPLACE.",
+      "items": { "type": "string" }
+    },
+    "mcp_servers": {
+      "type": "array",
+      "description": "Names of MCP servers to copy from the Windows user's Codex config.toml. Names are resolved at execution time.",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "copy_files": {
+      "type": "array",
+      "description": "Windows files copied into the root of each fresh WSL workspace before Codex starts. Relative paths are relative to this YAML file.",
+      "items": { "type": "string" }
+    },
+    "copy_back": {
+      "type": "array",
+      "description": "Workspace-relative files or shell-style globs copied beside each report after Codex finishes. Missing matches are reported but do not fail collection.",
+      "items": { "type": "string" }
+    },
+    "validators": {
+      "type": "array",
+      "description": "Local checks applied after execution and copy-back. Every check must pass for the run to succeed.",
+      "items": { "$ref": "#/definitions/validator" }
+    },
+    "environment": {
+      "$ref": "#/definitions/environment",
+      "description": "Optional Windows environment filtering applied before every WSL launch."
+    },
+    "distro": {
+      "type": ["string", "null"],
+      "description": "WSL distribution name. Omit to use the WSL default distribution."
+    },
+    "wsl_parent": {
+      "type": "string",
+      "default": "/tmp",
+      "description": "Existing directory in WSL under which temporary run roots are created."
+    },
+    "output": {
+      "type": "string",
+      "description": "Windows result stem or .md/.yaml path. A question id, model selector, and repetition suffix are appended for template jobs. Omit to use a timestamped default."
+    },
+    "overwrite": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether existing report pairs may be replaced. The template-run --force option sets this for the invocation."
+    },
+    "sandbox": {
+      "type": "string",
+      "enum": ["read-only", "workspace-write", "danger-full-access"],
+      "default": "workspace-write",
+      "description": "Codex sandbox policy for the isolated workspace."
+    },
+    "network": {
+      "type": "boolean",
+      "default": true,
+      "description": "Whether network access is allowed in the workspace sandbox."
+    },
+    "approval_policy": {
+      "type": "string",
+      "enum": ["untrusted", "on-request", "never"],
+      "default": "on-request",
+      "description": "Codex approval policy."
+    },
+    "approvals_reviewer": {
+      "type": "string",
+      "enum": ["auto_review", "user"],
+      "default": "auto_review",
+      "description": "Reviewer used by the Codex approval policy."
+    },
+    "auth_source": {
+      "type": "string",
+      "default": "~/.codex/auth.json",
+      "description": "Readable WSL-side Codex auth.json source copied into the isolated run CODEX_HOME."
+    },
+    "pricing_file": {
+      "type": ["string", "null"],
+      "description": "Windows pricing YAML path. Omit to use the bundled model-pricing.yaml."
+    },
+    "progress_lines": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 5,
+      "default": 5,
+      "description": "Number of recent Codex progress lines shown while each job runs."
+    },
+    "timeout_seconds": {
+      "type": ["number", "null"],
+      "exclusiveMinimum": 0,
+      "default": 1800,
+      "description": "Maximum Codex execution time per job in seconds. Use null to disable the timeout."
+    },
+    "max_copy_back_files": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 100,
+      "description": "Maximum number of files collected per job, including files matched by globs."
+    },
+    "cleanup": {
+      "type": "boolean",
+      "default": true,
+      "description": "Remove each temporary WSL run root after reports and copied-back files are collected. Set false to retain it for connect/continue."
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Accepted for compatibility with a saved run configuration, but ignored when prompt_template is present."
+    },
+    "prompt_file": {
+      "type": "string",
+      "description": "Accepted for compatibility with a saved run configuration, but its prompt is ignored when prompt_template is present."
+    }
+  },
+  "definitions": {
+    "question": {
+      "type": "object",
+      "description": "One question's scalar substitution values. Besides id and copy_back, property names must be identifier-shaped and values must be strings, numbers, or booleans.",
+      "required": ["id"],
+      "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$|^id$|^copy_back$" },
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "description": "Unique result and selection identifier. It must start with a letter or digit and contain only letters, digits, periods, underscores, or hyphens."
+        },
+        "copy_back": {
+          "type": "array",
+          "description": "Question-specific copy-back additions. A string beginning with '-' removes a matching shared pattern or earlier addition.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": {
+        "type": ["string", "number", "boolean"],
+        "description": "A scalar value available to prompt_template as {{ field }}."
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "unset": {
+          "type": "array",
+          "description": "Environment variable names removed case-insensitively before WSL launches.",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "path_remove": {
+          "type": "array",
+          "description": "Case-insensitive Windows PATH prefixes or shell-style globs removed before WSL launches.",
+          "items": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "validator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "enum": ["require_string", "root_tree", "num_compare"],
+          "description": "Built-in validator name."
+        },
+        "arguments": {
+          "type": "object",
+          "description": "Arguments for the selected validator.",
+          "additionalProperties": true
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "name": { "const": "require_string" } } },
+          "then": {
+            "required": ["arguments"],
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["string"],
+                "properties": { "string": { "type": "string", "minLength": 1 } }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "name": { "const": "root_tree" } } },
+          "then": {
+            "required": ["arguments"],
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["file", "tree"],
+                "properties": {
+                  "file": { "type": "string", "minLength": 1 },
+                  "tree": { "type": "string", "minLength": 1 },
+                  "must_have": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                  "can_have": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                  "cannot_have": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+                  "no_other_leaves": { "type": "boolean", "default": false }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "name": { "const": "num_compare" } } },
+          "then": {
+            "required": ["arguments"],
+            "properties": {
+              "arguments": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["var_name", "number", "tolerance"],
+                "properties": {
+                  "var_name": { "type": "string", "minLength": 1 },
+                  "number": { "type": "number" },
+                  "tolerance": { "oneOf": [{ "type": "number", "minimum": 0 }, { "type": "string", "pattern": "^[0-9]+(?:\\.[0-9]+)?%$" }] }
+                }
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

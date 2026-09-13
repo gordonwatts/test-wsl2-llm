@@ -135,6 +135,68 @@ repeat: 2
 threads: 4
 ```
 
+### Template YAML specification and VS Code support
+
+[`template.schema.json`](template.schema.json) is the machine-readable JSON Schema for
+template files. It describes the batch fields, the single-run settings that can be
+shared by every job, question value types, and the built-in validators. The schema is
+also useful as a quick reference: in a question, `id` and `copy_back` are reserved;
+every other key must be an identifier and its value must be a scalar string, number, or
+boolean. Those scalar keys are the only values that can be substituted in
+`prompt_template` with `{{ field }}`. A question `id` must be unique, and every
+placeholder must have a value; these cross-field checks remain runtime checks because
+JSON Schema cannot express them for arbitrary question keys.
+
+The top-level template fields are:
+
+| Field | Meaning |
+| --- | --- |
+| `prompt_template` | Required shared prompt. Use strict `{{ field }}` placeholders. |
+| `questions` | Required non-empty list of mappings with a unique filename-safe `id`. |
+| `model` / `models` | One selector or a non-empty list of `MODEL[:EFFORT]` selectors. `models` wins when both are present; CLI `--model` wins over the YAML selection. |
+| `repeat` / `threads` | Positive job repetition count and global concurrency limit; both default to `1`. |
+| `title`, `marketplaces`, `plugins`, `mcp_servers` | Report heading and optional Codex marketplace, plugin, and named MCP-server settings. |
+| `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
+| `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
+| `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
+| `distro`, `wsl_parent`, `output` | WSL distribution, temporary-run parent, and result stem. |
+| `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
+| `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
+
+The other single-run configuration fields use the same defaults and enum values shown
+in the schema. Relative `copy_files`, `output`, and `pricing_file` paths are resolved
+relative to the template YAML file. A template may contain `prompt` or `prompt_file`
+when it was copied from a saved `run` configuration, but those fields are ignored when
+`prompt_template` is present.
+
+For editor completion and inline validation, install the **YAML** extension from
+Red Hat (`redhat.vscode-yaml`) in VS Code. If the schema is beside the template, put
+this comment at the very top of the YAML file:
+
+```yaml
+# yaml-language-server: $schema=./template.schema.json
+```
+
+For templates in another directory, adjust the relative path. Alternatively, associate
+the schema with all template files in the workspace's `.vscode/settings.json`:
+
+```json
+{
+  "yaml.schemas": {
+    "${workspaceFolder}/template.schema.json": [
+      "**/*-template.yaml",
+      "**/*-template.yml",
+      "**/questions.yaml"
+    ]
+  }
+}
+```
+
+The editor schema provides completion and catches malformed field types; run
+`test-wsl2-llm template run TEMPLATE.yaml` to apply the complete runtime validation,
+including duplicate question IDs, missing placeholders, model availability, and
+validator arguments.
+
 This writes `analysis-etmiss-MODEL-high-001.md` and matching YAML and copied-back
 artifacts, then the corresponding files for `leading-jet-pt`. Every report name
 includes the full model/effort selector, including for single-model runs. Punctuation
