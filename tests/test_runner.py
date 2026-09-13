@@ -21,6 +21,7 @@ from test_wsl2_llm.runner import (
     _installed_paths_from_json,
     _is_git_marketplace_source,
     _is_timeout,
+    _parse_git_marketplace_source,
     _progress_description,
     _root_contents,
     _stream_codex,
@@ -285,6 +286,37 @@ def test_git_marketplace_source_recognition(source: str) -> None:
     assert _is_git_marketplace_source(source)
 
 
+@pytest.mark.parametrize(
+    ("source", "repository", "branch"),
+    [
+        (
+            "https://github.com/example/marketplace.git@feature/branch",
+            "https://github.com/example/marketplace.git",
+            "feature/branch",
+        ),
+        (
+            "ssh://git@github.com/example/marketplace.git@release",
+            "ssh://git@github.com/example/marketplace.git",
+            "release",
+        ),
+        (
+            "git@github.com:example/marketplace.git@main",
+            "git@github.com:example/marketplace.git",
+            "main",
+        ),
+    ],
+)
+def test_git_marketplace_source_branch_selector(
+    source: str, repository: str, branch: str
+) -> None:
+    assert _parse_git_marketplace_source(source) == (repository, branch)
+
+
+def test_git_marketplace_source_without_branch_is_unchanged() -> None:
+    source = "https://github.com/example/marketplace.git"
+    assert _parse_git_marketplace_source(source) == (source, None)
+
+
 def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
     class RecordingClient:
         def __init__(self) -> None:
@@ -307,6 +339,34 @@ def test_git_marketplace_is_cloned_into_wsl_harness() -> None:
     assert ("login_bash", 'git clone --depth 1 -- "$1" "$2"', (source, destination)) in client.calls
 
 
+def test_git_marketplace_branch_is_cloned_with_selected_branch() -> None:
+    class RecordingClient:
+        def __init__(self) -> None:
+            self.calls: list[tuple[str, str, tuple[str, ...]]] = []
+
+        def bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("bash", script, arguments))
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+        def login_bash(self, script: str, *arguments: str, **_kwargs):
+            self.calls.append(("login_bash", script, arguments))
+            return subprocess.CompletedProcess([], 0, b"", b"")
+
+    client = RecordingClient()
+    source = "https://github.com/example/marketplace.git@feature/branch"
+    runtime = _transfer_marketplaces(client, [source], "/tmp/test-wsl2-llm-run")  # type: ignore[arg-type]
+
+    destination = "/tmp/test-wsl2-llm-run/.harness/inputs/marketplaces/marketplace-001"
+    assert runtime == [destination]
+    assert (
+        "login_bash",
+        'git clone --depth 1 --branch "$2" -- "$1" "$3"',
+        (
+            "https://github.com/example/marketplace.git",
+            "feature/branch",
+            destination,
+        ),
+    ) in client.calls
 def test_copy_files_are_transferred_to_workspace_root(tmp_path) -> None:
     source = tmp_path / "servicex.yaml"
     source.write_text("token: secret\n", encoding="utf-8")

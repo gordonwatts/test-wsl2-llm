@@ -323,6 +323,19 @@ test-wsl2-llm run `
   --output .\results\atlas-analysisbase
 ```
 
+To clone a non-default branch, append `@<branchname>` to the Git URL. Branch names
+containing `/` are supported; the suffix is removed from the URL and passed to the Git
+branch selector. The same syntax works for marketplace entries in YAML. For example:
+
+```powershell
+test-wsl2-llm run `
+  --marketplace https://github.com/example/marketplace.git@feature/new-plugin `
+  --output .\results\feature-marketplace
+```
+
+This branch suffix applies only to Git marketplace URLs. Local marketplace paths and
+plugin selectors such as `plugin-name@marketplace-name` keep their existing meaning.
+
 ## Tests
 
 Normal tests mock WSL and never spend model tokens:
