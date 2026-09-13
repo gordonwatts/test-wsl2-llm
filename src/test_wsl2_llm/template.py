@@ -37,6 +37,7 @@ copy_files: []
 copy_back:
   - plot_*.png
   - script.py
+distro: null
 max_copy_back_files: 100
 timeout_seconds: 1800
 output: .\\results\\{output_stem}
@@ -133,6 +134,12 @@ def validate_questions(
                         "non-empty strings"
                     )
                 continue
+            if key == "distro":
+                if not isinstance(value, str) or not value.strip():
+                    raise ValueError(
+                        f"question {identifier} field 'distro' must be a non-empty string"
+                    )
+                continue
             if key == "plugins":
                 if not isinstance(value, list) or any(
                     not isinstance(plugin, str) or not plugin.strip() for plugin in value
@@ -204,6 +211,19 @@ def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]
         elif pattern not in patterns:
             patterns.append(pattern)
     return patterns
+
+
+def question_distro(shared: str | None, question: dict[str, Any]) -> str | None:
+    """Return a question distro override, or the shared distribution."""
+    if "distro" not in question:
+        return shared
+    override = question["distro"]
+    if not isinstance(override, str) or not override.strip():
+        raise ValueError(
+            f"question {question.get('id', 'unknown')} field 'distro' must be a "
+            "non-empty string"
+        )
+    return override
 
 
 def question_plugins(shared: list[str], question: dict[str, Any]) -> list[str]:

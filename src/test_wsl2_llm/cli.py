@@ -32,6 +32,7 @@ from test_wsl2_llm.runner import WslClient, _is_uninformative_progress
 from test_wsl2_llm.template import (
     load_template_file,
     question_copy_back,
+    question_distro,
     question_plugins,
     question_title,
     render_questions,
@@ -580,6 +581,9 @@ def template_run(
                     run_values["output"] = resolved_base.output
                     run_values["copy_back"] = question_copy_back(
                         list(shared.get("copy_back", [])), question_values
+                    )
+                    run_values["distro"] = question_distro(
+                        shared.get("distro"), question_values
                     )
                     run_values["plugins"] = question_plugins(
                         list(shared.get("plugins", [])), question_values

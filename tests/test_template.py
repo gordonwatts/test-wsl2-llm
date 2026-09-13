@@ -191,6 +191,39 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
     }
 
 
+
+
+def test_template_run_applies_question_distro_override(monkeypatch, tmp_path: Path) -> None:
+    distros: list[str | None] = []
+
+    def fake_run(config, **_kwargs):
+        distros.append(config.distro)
+        return sample_result()
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    config = tmp_path / "distros.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "prompt_template": "Do {{ question }}",
+                "questions": [
+                    {"id": "default", "question": "default distro"},
+                    {"id": "custom", "question": "custom distro", "distro": "atlas_al9"},
+                ],
+                "model": "gpt-test",
+                "distro": "ubuntu",
+                "output": "results/run",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["template", "run", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert distros == ["ubuntu", "atlas_al9"]
+
 def test_template_run_selects_questions_by_positional_id(monkeypatch, tmp_path: Path) -> None:
     prompts: list[str] = []
 
