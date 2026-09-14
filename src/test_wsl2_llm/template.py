@@ -1,7 +1,6 @@
 """Configuration and rendering helpers for template-driven batch runs."""
 
-import hashlib
-import json
+import os
 import re
 from dataclasses import dataclass
 from importlib import resources
@@ -11,8 +10,10 @@ from typing import Any, Literal
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from test_wsl2_llm.compatibility import load_result_yaml
 from test_wsl2_llm.config import load_config_file, output_stem
-from test_wsl2_llm.models import TemplateCell, TestConfig, TestResult, ValidatorConfig
+from test_wsl2_llm.models import TemplateCell, TestConfig, ValidatorConfig
+from test_wsl2_llm.provenance import effective_configuration_hash
 from test_wsl2_llm.validation import validate_configuration
 
 _FIELD = re.compile(r"{{\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*}}")
@@ -32,13 +33,8 @@ class TemplateCellCheck:
 
 
 def template_cell_fingerprint(config: TestConfig) -> str:
-    """Hash the effective cell settings, excluding destination-only controls."""
-    values = config.model_dump(mode="json")
-    values.pop("output", None)
-    values.pop("overwrite", None)
-    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
+    """Hash effective settings using the same canonical identity as run provenance."""
+    return effective_configuration_hash(config)
 
 def template_cell_metadata(question_id: str, repetition: int, config: TestConfig) -> TemplateCell:
     """Build the persisted identity for one expanded template cell."""
@@ -61,10 +57,7 @@ def inspect_template_result(
             return TemplateCellCheck("incomplete", "the Markdown/YAML pair is incomplete")
         return TemplateCellCheck("missing")
     try:
-        values = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
-        if not isinstance(values, dict):
-            raise ValueError("YAML root is not a mapping")
-        result = TestResult.model_validate(values)
+        result = load_result_yaml(yaml_path)
     except (OSError, ValueError, TypeError) as exc:
         return TemplateCellCheck("incomplete", f"canonical YAML is unreadable: {exc}")
     except Exception as exc:
@@ -85,6 +78,7 @@ def inspect_template_result(
 
 TEMPLATE_STARTER = """# yaml-language-server: $schema=./template.schema.json
 # Template-driven WSL2 Codex batch configuration
+schema_version: 1
 prompt_template: |
   Please write a stand-alone Python file that uv can run and auto-install
   dependencies for. It must do the following:
@@ -109,6 +103,7 @@ copy_files: []
 copy_back:
   - plot_*.png
   - script.py
+target: wsl
 distro: null
 max_copy_back_files: 100
 timeout_seconds: 1800
@@ -224,9 +219,7 @@ def validate_questions(
                 continue
             if key == "validators":
                 if not isinstance(value, list):
-                    raise ValueError(
-                        f"question {identifier} field 'validators' must be a list"
-                    )
+                    raise ValueError(f"question {identifier} field 'validators' must be a list")
                 try:
                     specifications = [ValidatorConfig.model_validate(item) for item in value]
                 except Exception as exc:
@@ -266,9 +259,7 @@ def validate_questions(
             ]
             validate_configuration(specifications)
         except Exception as exc:
-            raise ValueError(
-                f"question {identifier} has invalid validators: {exc}"
-            ) from exc
+            raise ValueError(f"question {identifier} has invalid validators: {exc}") from exc
 
 
 def render_template(
@@ -463,6 +454,7 @@ def question_validators(
         )
     return list(overrides)
 
+
 def question_title(identifier: str, question: dict[str, Any], prompt: str) -> str:
     """Build a one-line report heading from the question text or rendered prompt."""
     text = " ".join(str(question.get("question", prompt)).split())
@@ -532,7 +524,6 @@ def write_template_config(path: Path, values: dict[str, Any]) -> Path:
     schema_text = _packaged_schema_text()
     if not schema_path.exists() or schema_path.read_text(encoding="utf-8") != schema_text:
         schema_path.write_text(schema_text, encoding="utf-8")
-    import yaml
 
     content = yaml.safe_dump(values, sort_keys=False, allow_unicode=True)
     path.write_text(_with_schema_header(content, schema_path), encoding="utf-8")
@@ -545,7 +536,9 @@ def _schema_path(path: Path) -> Path:
 
 def _template_text(path: Path, schema_path: Path) -> str:
     """Render the starter with a schema reference tied to its actual location."""
-    return _with_schema_header(TEMPLATE_STARTER.replace("{output_stem}", path.stem), schema_path)
+    output = r".\results\{output_stem}" if os.name == "nt" else "./results/{output_stem}"
+    starter = TEMPLATE_STARTER.replace(r".\results\{output_stem}", output)
+    return _with_schema_header(starter.replace("{output_stem}", path.stem), schema_path)
 
 
 def _with_schema_header(content: str, schema_path: Path) -> str:

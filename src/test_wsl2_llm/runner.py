@@ -1,4 +1,4 @@
-"""Windows-side orchestration of isolated Codex runs inside WSL2."""
+"""Orchestration of isolated Codex runs across supported execution targets."""
 
 import base64
 import fnmatch
@@ -9,7 +9,10 @@ import mimetypes
 import os
 import queue
 import re
+import shutil
+import signal
 import subprocess
+import tempfile
 import threading
 import time
 import tomllib
@@ -28,6 +31,7 @@ from rich.live import Live
 from rich.panel import Panel
 
 from test_wsl2_llm.agents import AgentAdapter, validate_agent_capabilities
+from test_wsl2_llm.compatibility import configuration_snapshot, serialize_config
 from test_wsl2_llm.config import output_stem
 from test_wsl2_llm.models import (
     CommandResult,
@@ -49,7 +53,8 @@ from test_wsl2_llm.models import (
     WorkspaceResult,
 )
 from test_wsl2_llm.pricing import load_and_calculate_costs
-from test_wsl2_llm.target import ExecutionTarget
+from test_wsl2_llm.provenance import build_provenance
+from test_wsl2_llm.target import ExecutionTarget, SshTarget
 from test_wsl2_llm.traces import (
     final_message_from_events,
     parse_json_line,
@@ -129,9 +134,7 @@ def sanitized_windows_environment(
     environment = dict(os.environ if source is None else source)
     names_to_unset = {name.casefold() for name in policy.unset}
     environment = {
-        name: value
-        for name, value in environment.items()
-        if name.casefold() not in names_to_unset
+        name: value for name, value in environment.items() if name.casefold() not in names_to_unset
     }
     wslenv_name = next((name for name in environment if name.casefold() == "wslenv"), None)
     if wslenv_name is not None and names_to_unset:
@@ -330,9 +333,7 @@ class WslClient:
 
     def create_workspace(self, parent: str) -> str:
         """Create and initialize a per-run target workspace root."""
-        run_root = self.text(
-            self.bash('mktemp -d -p "$1" test-wsl2-llm-XXXXXXXX', parent)
-        ).strip()
+        run_root = self.text(self.bash('mktemp -d -p "$1" test-wsl2-llm-XXXXXXXX', parent)).strip()
         self.bash(
             'mkdir -p "$1" "$2"',
             f"{run_root}/workspace",
@@ -345,25 +346,343 @@ class WslClient:
         self.bash('rm -rf -- "$1"', run_root)
 
 
+def sanitized_linux_environment(
+    policy: EnvironmentPolicy,
+    source: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    """Copy a Linux environment and apply the configured filtering policy."""
+    environment = dict(os.environ if source is None else source)
+    names_to_unset = {name.casefold() for name in policy.unset}
+    environment = {
+        name: value for name, value in environment.items() if name.casefold() not in names_to_unset
+    }
+    path_name = next((name for name in environment if name.casefold() == "path"), None)
+    if path_name is not None and policy.path_remove:
+        patterns = [pattern.strip().strip('"').casefold() for pattern in policy.path_remove]
+
+        def should_remove(entry: str) -> bool:
+            candidate = entry.strip().strip('"').casefold()
+            return any(
+                fnmatch.fnmatchcase(candidate, pattern)
+                if any(character in pattern for character in "*?[")
+                else candidate.startswith(pattern)
+                for pattern in patterns
+            )
+
+        environment[path_name] = os.pathsep.join(
+            entry for entry in environment[path_name].split(os.pathsep) if not should_remove(entry)
+        )
+    return environment
+
+
+class LinuxClient:
+    """Run an isolated Codex workspace directly on a native Linux host."""
+
+    distro = None
+
+    def __init__(
+        self,
+        environment_policy: EnvironmentPolicy | None = None,
+        *,
+        source_environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self.environment = sanitized_linux_environment(
+            environment_policy or EnvironmentPolicy(), source_environment
+        )
+
+    def command(self, arguments: list[str]) -> list[str]:
+        return list(arguments)
+
+    def run(
+        self,
+        arguments: list[str],
+        *,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        command = self.command(arguments)
+        LOGGER.info("Linux command: %s", _display_command(command))
+        completed = subprocess.run(
+            command,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        if check and completed.returncode:
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Linux command failed ({completed.returncode}): {stderr}")
+        return completed
+
+    def bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.run(
+            self.shell_command(script, *arguments), input_bytes=input_bytes, check=check
+        )
+
+    def login_bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.run(
+            self.shell_command(script, *arguments, interactive_login=True),
+            input_bytes=input_bytes,
+            check=check,
+        )
+
+    def shell_command(
+        self, script: str, *arguments: str, interactive_login: bool = False
+    ) -> list[str]:
+        """Build a Bash command using argv for positional values on native Linux."""
+        flags = "-lic" if interactive_login else "-lc"
+        return ["bash", flags, script, "test-wsl2-llm", *arguments]
+
+    def text(self, completed: subprocess.CompletedProcess[bytes]) -> str:
+        return completed.stdout.decode("utf-8", errors="replace")
+
+    def start_process(
+        self,
+        command: list[str],
+        *,
+        stdin: int = subprocess.PIPE,
+        stdout: int = subprocess.PIPE,
+        stderr: int = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=self.environment,
+            start_new_session=True,
+        )
+
+    def stop_process(self, process: subprocess.Popen[str]) -> None:
+        if getattr(process, "poll", lambda: None)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int):
+            try:
+                os.killpg(pid, signal.SIGTERM)
+            except (ProcessLookupError, PermissionError):
+                LOGGER.debug("process group already stopped")
+        else:
+            terminate = getattr(process, "terminate", None)
+            if callable(terminate):
+                terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            if isinstance(pid, int):
+                try:
+                    os.killpg(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    LOGGER.debug("process group did not exit after termination")
+            else:
+                process.kill()
+        except TypeError:
+            process.wait()
+
+    def to_target_path(self, host_path: str) -> str:
+        return str(Path(host_path).expanduser().resolve())
+
+    def copy_to_target(
+        self, host_path: str, target_directory: str, *, recursive: bool = False
+    ) -> None:
+        source = Path(host_path).expanduser().resolve()
+        destination = Path(target_directory)
+        destination.mkdir(parents=True, exist_ok=True)
+        if recursive:
+            if not source.is_dir():
+                raise ValueError(f"copy source is not a directory: {source}")
+            shutil.copytree(source, destination, dirs_exist_ok=True, symlinks=True)
+        else:
+            shutil.copy2(source, destination / source.name)
+
+    def copy_from_target(self, target_path: str, host_path: str) -> None:
+        destination = Path(host_path).expanduser().resolve()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(target_path), destination)
+
+    def create_workspace(self, parent: str) -> str:
+        parent_path = Path(parent).expanduser().resolve()
+        parent_path.mkdir(parents=True, exist_ok=True)
+        run_root = Path(tempfile.mkdtemp(prefix="test-wsl2-llm-", dir=parent_path))
+        (run_root / "workspace").mkdir()
+        (run_root / ".harness" / "inputs").mkdir(parents=True)
+        return str(run_root)
+
+    def cleanup_workspace(self, run_root: str) -> None:
+        shutil.rmtree(run_root)
+
+    # These helpers keep the local target independent of GNU find/coreutils.
+    # The WSL target intentionally continues to use its existing shell helpers.
+    def resolve_path(self, path: str, *, require_directory: bool = False) -> str:
+        value = Path(path).expanduser()
+        if require_directory and not value.is_dir():
+            raise FileNotFoundError(f"directory does not exist: {path}")
+        if not require_directory and not value.is_file():
+            raise FileNotFoundError(f"file is not readable: {path}")
+        return str(value.resolve())
+
+    def write_file(self, path: str, content: bytes) -> None:
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+
+    def remove_file(self, path: str) -> None:
+        Path(path).unlink(missing_ok=True)
+
+    def copy_file_to_target(self, host_path: str, target_path: str) -> None:
+        destination = Path(target_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(host_path).expanduser().resolve(), destination)
+        destination.chmod(0o600)
+
+    def list_child_directories(self, root: str) -> list[str]:
+        directory = Path(root)
+        if not directory.is_dir():
+            return []
+        return sorted(
+            str(entry) for entry in directory.iterdir() if entry.is_dir() and not entry.is_symlink()
+        )
+
+    def find_skill_directories(self, roots: list[str]) -> list[str]:
+        found: list[str] = []
+        for root in roots:
+            directory = Path(root)
+            if not directory.is_dir():
+                continue
+            for candidate in directory.rglob("SKILL.md"):
+                if candidate.is_file():
+                    found.append(str(candidate.parent))
+        return sorted(set(found))
+
+    def expand_copy_back_pattern(self, pattern: str, workspace: str) -> list[str]:
+        search = Path(pattern) if Path(pattern).is_absolute() else Path(workspace) / pattern
+        if any(character in str(search) for character in "*?["):
+            matches = search.parent.glob(search.name) if search.parent != search else []
+        else:
+            matches = [search]
+        return sorted(str(match) for match in matches if match.is_file())
+
+    def inventory(self, workspace: str) -> list[WorkspaceFile]:
+        root = Path(workspace)
+        if not root.is_dir():
+            return []
+        files: list[WorkspaceFile] = []
+
+        def visit(directory: Path) -> None:
+            try:
+                entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+            except OSError:
+                return
+            for entry in entries:
+                relative = entry.relative_to(root).as_posix()
+                try:
+                    stat = entry.lstat()
+                except OSError:
+                    continue
+                if entry.is_symlink():
+                    entry_type = "symlink"
+                    symlink_target = _normalize_symlink_target(os.readlink(entry))
+                elif entry.is_dir():
+                    entry_type = "directory"
+                    symlink_target = None
+                else:
+                    entry_type = "file"
+                    symlink_target = None
+                files.append(
+                    WorkspaceFile(
+                        type=entry_type,
+                        path=relative,
+                        size=stat.st_size,
+                        symlink_target=symlink_target,
+                    )
+                )
+                if entry_type == "directory":
+                    visit(entry)
+
+        visit(root)
+        return sorted(files, key=lambda entry: entry.path)
+
+    def session_traces(self, codex_home: str) -> tuple[list[SessionTrace], list[TraceEvent]]:
+        sessions = Path(codex_home) / "sessions"
+        if not sessions.is_dir():
+            return [], []
+        traces: list[SessionTrace] = []
+        events: list[TraceEvent] = []
+        for path in sorted(sessions.rglob("*.jsonl")):
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            relative = path.relative_to(Path(codex_home)).as_posix()
+            traces.append(SessionTrace(path=relative, content=content))
+            for sequence, line in enumerate(content.splitlines(), start=1):
+                parsed = parse_json_line(line)
+                if parsed:
+                    events.append(
+                        trace_event_from_json(
+                            parsed,
+                            source=f"session_trace:{relative}",
+                            sequence=sequence,
+                        )
+                    )
+        return traces, events
+
+
 def create_execution_target(
     distro: str | None = None,
     environment_policy: EnvironmentPolicy | None = None,
     *,
+    execution_target: str = "wsl",
     source_environment: Mapping[str, str] | None = None,
+    ssh_host: str | None = None,
+    ssh_user: str | None = None,
+    ssh_port: int | None = None,
+    remote_workspace_parent: str = "/tmp",
+    ssh_connect_timeout_seconds: float = 10.0,
 ) -> ExecutionTarget:
-    """Select the configured execution target.
-
-    WSL is the only supported target today. Keeping selection behind this
-    function gives run, continue, and connect one seam for future targets.
-    """
+    """Select WSL or native Linux while keeping one runner lifecycle."""
+    if execution_target in {"linux", "macos", "local"}:
+        if distro:
+            raise ValueError("distro is only valid with the wsl execution target")
+        return LinuxClient(environment_policy, source_environment=source_environment)
+    if execution_target == "ssh":
+        if distro:
+            raise ValueError("distro is only valid with the wsl execution target")
+        if not ssh_host:
+            raise ValueError("ssh_host is required with the ssh execution target")
+        return SshTarget(
+            ssh_host,
+            user=ssh_user,
+            port=ssh_port,
+            remote_workspace_parent=remote_workspace_parent,
+            connect_timeout_seconds=ssh_connect_timeout_seconds,
+            source_environment=source_environment,
+        )
+    if execution_target != "wsl":
+        raise ValueError(f"unknown execution target: {execution_target}")
     if source_environment is None:
         return WslClient(distro, environment_policy)
-    return WslClient(
-        distro,
-        environment_policy,
-        source_environment=source_environment,
-    )
+    return WslClient(distro, environment_policy, source_environment=source_environment)
 
+
+# Descriptive names for callers that do not need the historical LinuxClient name.
+LocalClient = LinuxClient
+MacOSClient = LinuxClient
 
 # Descriptive name for callers that do not need the historical WslClient name.
 WslExecutionTarget = WslClient
@@ -477,7 +796,15 @@ def _remove_auth(
         return error, exit_code
     try:
         with state.phase("auth_cleanup"):
-            client.bash('rm -f -- "$1/$2"', codex_home, auth_filename, check=False)
+            remover = (
+                getattr(client, "remove_file", None)
+                if hasattr(type(client), "remove_file")
+                else None
+            )
+            if callable(remover):
+                remover(f"{codex_home}/{auth_filename}")
+            else:
+                client.bash('rm -f -- "$1/$2"', codex_home, auth_filename, check=False)
     except (Exception, KeyboardInterrupt) as auth_error:
         error = _append_failure(error, "auth cleanup", auth_error)
         exit_code = exit_code or 1
@@ -502,7 +829,18 @@ def run_test(
     adapter = validate_agent_capabilities(config)
     console = console or Console(stderr=True)
     client = (
-        target if target is not None else create_execution_target(config.distro, config.environment)
+        target
+        if target is not None
+        else create_execution_target(
+            config.distro,
+            config.environment,
+            execution_target=config.target,
+            ssh_host=config.ssh_host,
+            ssh_user=config.ssh_user,
+            ssh_port=config.ssh_port,
+            remote_workspace_parent=config.remote_workspace_parent,
+            ssh_connect_timeout_seconds=config.ssh_connect_timeout_seconds,
+        )
     )
     state = RunState()
     codex_version: str | None = None
@@ -525,6 +863,8 @@ def run_test(
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
     runtime_marketplaces: list[str] = []
+    marketplace_versions: dict[str, str] = {}
+    plugin_versions: dict[str, str] = {}
     resolved_parent = config.wsl_parent
     resolved_auth = config.auth_source
     model_information = ModelInformation(
@@ -555,16 +895,14 @@ def run_test(
             )
             _write_wsl_file(client, f"{run_root}/.harness/inputs/config.yaml", resolved_yaml)
             runtime_marketplaces = _transfer_marketplaces(client, config.marketplaces, run_root)
+            marketplace_versions = _resolved_marketplace_versions(
+                client, config.marketplaces, runtime_marketplaces
+            )
             _transfer_files(client, config.copy_files, workspace_path)
 
         with state.phase(f"{adapter.name}_home_setup"):
             if adapter.capabilities.requires_auth:
-                client.bash(
-                    'mkdir -p "$1" && cp -- "$2" "$1/$3" && chmod 600 "$1/$3"',
-                    codex_home,
-                    resolved_auth,
-                    adapter.auth_filename,
-                )
+                _copy_auth(client, resolved_auth, codex_home)
             else:
                 client.bash('mkdir -p -- "$1"', codex_home)
             if codex_configuration:
@@ -584,7 +922,12 @@ def run_test(
                     codex_home,
                     plugin,
                 )
-                installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
+                roots = _installed_paths_from_json(client.text(installed))
+                installed_plugin_roots.extend(roots)
+                for root in roots:
+                    version = _plugin_manifest_version(client, root)
+                    if version is not None:
+                        plugin_versions[plugin] = version
             for installed_root in sorted(set(installed_plugin_roots)):
                 found = client.bash(
                     'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
@@ -636,7 +979,6 @@ def run_test(
 
             if timed_out and state.phases and state.phases[-1].name == f"{adapter.name}_execution":
                 state.phases[-1].timed_out = True
-
 
     except (Exception, KeyboardInterrupt) as exc:  # Preserve a report even on interruption.
         error = str(exc) or "Run interrupted by keyboard interrupt"
@@ -690,6 +1032,7 @@ def run_test(
             codex_execution_seconds=codex_seconds,
             status="succeeded" if exit_code == 0 and error is None else "failed",
             exit_code=exit_code,
+            target=config.target,
             distro=config.distro,
             workspace_path=workspace_path,
             workspace_retained=retained,
@@ -701,7 +1044,15 @@ def run_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=config.model_dump(mode="json"),
+        configuration=configuration_snapshot(config),
+        provenance=build_provenance(
+            config,
+            agent_version=codex_version,
+            target="wsl2" if type(client).__name__ == "WslClient" else type(client).__name__,
+            target_version=None,
+            marketplace_versions=marketplace_versions,
+            plugin_versions=plugin_versions,
+        ),
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message, timed_out=timed_out),
@@ -765,7 +1116,16 @@ def continue_test(
     client = (
         target
         if target is not None
-        else create_execution_target(config.distro or previous.run.distro, config.environment)
+        else create_execution_target(
+            config.distro or previous.run.distro,
+            config.environment,
+            execution_target=config.target,
+            ssh_host=config.ssh_host,
+            ssh_user=config.ssh_user,
+            ssh_port=config.ssh_port,
+            remote_workspace_parent=config.remote_workspace_parent,
+            ssh_connect_timeout_seconds=config.ssh_connect_timeout_seconds,
+        )
     )
     run_root = workspace_path.rsplit("/", 1)[0]
     codex_home = f"{run_root}/.harness/{adapter.home_name}"
@@ -783,6 +1143,8 @@ def continue_test(
     parsed_events: list[dict[str, Any]] = []
     session_traces: list[SessionTrace] = []
     runtime_marketplaces: list[str] = []
+    marketplace_versions: dict[str, str] = {}
+    plugin_versions: dict[str, str] = {}
     skill_directories: list[str] = list(previous.skills.directories)
     codex_seconds = 0.0
     exit_code = 1
@@ -819,6 +1181,9 @@ def continue_test(
             runtime_marketplaces = _transfer_marketplaces(
                 client, new_marketplaces, run_root, append=True
             )
+            marketplace_versions = _resolved_marketplace_versions(
+                client, new_marketplaces, runtime_marketplaces
+            )
             prior_copy_files = set(previous.configuration.get("copy_files", []))
             new_copy_files = [
                 source for source in config.copy_files if source not in prior_copy_files
@@ -827,12 +1192,7 @@ def continue_test(
 
         with state.phase(f"{adapter.name}_home_setup"):
             if adapter.capabilities.requires_auth:
-                client.bash(
-                    'mkdir -p "$1" && cp -- "$2" "$1/$3" && chmod 600 "$1/$3"',
-                    codex_home,
-                    resolved_auth,
-                    adapter.auth_filename,
-                )
+                _copy_auth(client, resolved_auth, codex_home)
             else:
                 client.bash('mkdir -p -- "$1"', codex_home)
             if codex_configuration:
@@ -854,7 +1214,12 @@ def continue_test(
                     codex_home,
                     plugin,
                 )
-                installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
+                roots = _installed_paths_from_json(client.text(installed))
+                installed_plugin_roots.extend(roots)
+                for root in roots:
+                    version = _plugin_manifest_version(client, root)
+                    if version is not None:
+                        plugin_versions[plugin] = version
             skill_directories.extend(
                 _skill_directories(client, codex_home, installed_plugin_roots)
             )
@@ -934,7 +1299,7 @@ def continue_test(
     all_marketplaces = _unique([*previous.skills.marketplaces, *config.marketplaces])
     all_plugins = _unique([*previous.skills.plugins, *config.plugins])
     conversation = [*history, ConversationTurn(prompt=prompt, final_response=final_message)]
-    continuation_config = config.model_dump(mode="json")
+    continuation_config = serialize_config(config)
     continuation_config["continuation_of"] = workspace_path
     result = TestResult(
         prompt=prompt,
@@ -953,6 +1318,7 @@ def continue_test(
             codex_execution_seconds=codex_seconds,
             status="succeeded" if exit_code == 0 and error is None else "failed",
             exit_code=exit_code,
+            target=config.target,
             distro=config.distro or previous.run.distro,
             workspace_path=workspace_path,
             workspace_retained=True,
@@ -964,7 +1330,15 @@ def continue_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=continuation_config,
+        configuration=configuration_snapshot(continuation_config),
+        provenance=build_provenance(
+            config,
+            agent_version=codex_version or previous.run.agent_version,
+            target="wsl2" if type(client).__name__ == "WslClient" else type(client).__name__,
+            target_version=None,
+            marketplace_versions=marketplace_versions,
+            plugin_versions=plugin_versions,
+        ),
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message, timed_out=timed_out),
@@ -981,6 +1355,7 @@ def continue_test(
     )
     result = apply_validators(result, config.validators)
     return result
+
 
 def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
     """Prefix a new prompt with the self-contained prompt/response chain."""
@@ -1007,7 +1382,14 @@ def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
 def _skill_directories(
     client: ExecutionTarget, codex_home: str, installed_plugin_roots: list[str]
 ) -> list[str]:
-    roots = _unique([codex_home, *installed_plugin_roots])
+    roots = _unique([root for root in [codex_home, *installed_plugin_roots] if root])
+    native_finder = (
+        getattr(client, "find_skill_directories", None)
+        if hasattr(type(client), "find_skill_directories")
+        else None
+    )
+    if callable(native_finder):
+        return native_finder(roots)
     found: list[str] = []
     for root in roots:
         result = client.bash(
@@ -1016,6 +1398,15 @@ def _skill_directories(
         )
         found.extend(line for line in client.text(result).splitlines() if line)
     return _unique(found)
+
+
+def _normalize_symlink_target(target: str) -> str:
+    """Remove Windows extended-path syntax from inventory evidence."""
+    if target.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + target[8:]
+    if target.startswith("\\\\?\\"):
+        return target[4:]
+    return target
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -1074,14 +1465,23 @@ def _transfer_marketplaces(
     client.bash('mkdir -p "$1"', marketplace_root)
     start_index = 1
     if append:
-        existing = client.bash(
-            'if test -d "$1"; then find "$1" -mindepth 1 -maxdepth 1 -type d '
-            '-name "marketplace-*" -printf "%f\\n"; fi',
-            marketplace_root,
+        directory_lister = (
+            getattr(client, "list_child_directories", None)
+            if hasattr(type(client), "list_child_directories")
+            else None
         )
+        if callable(directory_lister):
+            existing_names = [Path(path).name for path in directory_lister(marketplace_root)]
+        else:
+            existing = client.bash(
+                'if test -d "$1"; then find "$1" -mindepth 1 -maxdepth 1 -type d '
+                '-name "marketplace-*" -printf "%f\\n"; fi',
+                marketplace_root,
+            )
+            existing_names = client.text(existing).splitlines()
         indices = [
             int(name.removeprefix("marketplace-"))
-            for name in client.text(existing).splitlines()
+            for name in existing_names
             if name.removeprefix("marketplace-").isdigit()
         ]
         start_index = max(indices, default=0) + 1
@@ -1100,9 +1500,7 @@ def _transfer_marketplaces(
             destination = f"{marketplace_root}/marketplace-{index:03d}"
             repository, branch = _parse_git_marketplace_source(source)
             if branch is None:
-                client.login_bash(
-                    'git clone --depth 1 -- "$1" "$2"', repository, destination
-                )
+                client.login_bash('git clone --depth 1 -- "$1" "$2"', repository, destination)
             else:
                 client.login_bash(
                     'git clone --depth 1 --branch "$2" -- "$1" "$3"',
@@ -1234,16 +1632,21 @@ def _copy_back_destination(
     destination_key = str(destination).casefold()
     if destination_key in used_destinations:
         digest = hashlib.sha256(source_name.encode("utf-8")).hexdigest()[:8]
-        destination = destination.with_name(
-            f"{destination.stem}~{digest}{destination.suffix}"
-        )
+        destination = destination.with_name(f"{destination.stem}~{digest}{destination.suffix}")
         destination_key = str(destination).casefold()
     used_destinations.add(destination_key)
     return destination
 
 
-def _expand_copy_back_pattern(client: WslClient, pattern: str, workspace: str) -> list[str]:
-    """Expand a workspace-relative glob in WSL and retain regular files only."""
+def _expand_copy_back_pattern(client: ExecutionTarget, pattern: str, workspace: str) -> list[str]:
+    """Expand a workspace-relative glob and retain regular files only."""
+    native_expander = (
+        getattr(client, "expand_copy_back_pattern", None)
+        if hasattr(type(client), "expand_copy_back_pattern")
+        else None
+    )
+    if callable(native_expander):
+        return native_expander(pattern, workspace)
     completed = client.bash(
         """
 pattern="$1"
@@ -1263,9 +1666,7 @@ done < <(compgen -G "$search")
         workspace,
     )
     return [
-        match.decode("utf-8", errors="replace")
-        for match in completed.stdout.split(b"\0")
-        if match
+        match.decode("utf-8", errors="replace") for match in completed.stdout.split(b"\0") if match
     ]
 
 
@@ -1383,6 +1784,39 @@ def _parse_git_marketplace_source(source: str) -> tuple[str, str | None]:
     return source, None
 
 
+def _resolved_marketplace_versions(
+    client: ExecutionTarget, sources: list[str], runtime_paths: list[str]
+) -> dict[str, str]:
+    """Resolve Git marketplace checkouts to commit IDs without publishing checkout paths."""
+    versions: dict[str, str] = {}
+    for source, runtime_path in zip(sources, runtime_paths, strict=False):
+        try:
+            completed = client.bash(
+                'git -C "$1" rev-parse HEAD 2>/dev/null', runtime_path, check=False
+            )
+            commit = client.text(completed).strip()
+        except (AttributeError, OSError, RuntimeError):
+            commit = ""
+        if re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            versions[source] = commit.lower()
+    return versions
+
+
+def _plugin_manifest_version(client: ExecutionTarget, installed_root: str) -> str | None:
+    """Read only the version field from an installed plugin manifest."""
+    try:
+        completed = client.bash(
+            'for file in "$1/.codex-plugin/plugin.json" "$1/plugin.json"; do '
+            'if test -r "$file"; then cat -- "$file"; break; fi; done',
+            installed_root,
+            check=False,
+        )
+        payload = json.loads(client.text(completed))
+    except (AttributeError, OSError, RuntimeError, json.JSONDecodeError):
+        return None
+    version = payload.get("version") if isinstance(payload, dict) else None
+    return str(version) if isinstance(version, (str, int, float)) and str(version) else None
+
 def _installed_paths_from_json(output: str) -> list[str]:
     """Return installedPath values from a Codex CLI JSON response."""
     try:
@@ -1440,27 +1874,55 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
             document = tomllib.load(stream)
     except (OSError, ValueError):
         # TOML errors can contain source fragments, including credentials.
-        raise ValueError(f"Cannot read local Codex MCP configuration '{source}' "
-                         "as TOML; check that the file exists and is valid.") from None
+        raise ValueError(
+            f"Cannot read local Codex MCP configuration '{source}' "
+            "as TOML; check that the file exists and is valid."
+        ) from None
     servers = document.get("mcp_servers", {})
     selected: dict[str, Any] = {}
     for name in names:
         if not isinstance(servers, dict) or name not in servers:
-            raise ValueError(f"MCP server '{name}' was not found in '{source}' "
-                             "under [mcp_servers].")
+            raise ValueError(
+                f"MCP server '{name}' was not found in '{source}' under [mcp_servers]."
+            )
         if not isinstance(servers[name], dict):
             raise ValueError(f"MCP server '{name}' in '{source}' must be a TOML table.")
         selected[name] = servers[name]
     return selected
 
 
+def _copy_auth(client: ExecutionTarget, source: str, codex_home: str) -> None:
+    copier = (
+        getattr(client, "copy_file_to_target", None)
+        if hasattr(type(client), "copy_file_to_target")
+        else None
+    )
+    if callable(copier):
+        copier(source, f"{codex_home}/auth.json")
+    else:
+        client.bash(
+            'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
+            codex_home,
+            source,
+        )
+
+
 def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:
-    client.bash('mkdir -p "$(dirname "$1")" && cat > "$1"', path, input_bytes=content.encode())
+    writer = getattr(client, "write_file", None) if hasattr(type(client), "write_file") else None
+    if callable(writer):
+        writer(path, content.encode())
+    else:
+        client.bash('mkdir -p "$(dirname "$1")" && cat > "$1"', path, input_bytes=content.encode())
 
 
 def _resolve_wsl_path(
     client: ExecutionTarget, path: str, *, require_directory: bool = False
 ) -> str:
+    resolver = (
+        getattr(client, "resolve_path", None) if hasattr(type(client), "resolve_path") else None
+    )
+    if callable(resolver):
+        return resolver(path, require_directory=require_directory)
     test = "test -d" if require_directory else "test -r"
     script = (
         'value="$1"; case "$value" in "~/"*) value="$HOME/${value:2}";; esac; '
@@ -1618,10 +2080,7 @@ def _stream_codex(
                     )
                 )
             description = _progress_description(parsed, line)
-            display = (
-                f"{_console_time(received_at)} [{stream}] "
-                f"{description}"
-            )
+            display = f"{_console_time(received_at)} [{stream}] {description}"
             if not _is_uninformative_progress(description):
                 latest_meaningful = display
             recent.append(display)
@@ -1723,9 +2182,7 @@ def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
                 description = f"{phase} command{suffix}"
             elif item_type == "agent message":
                 text = re.sub(r"\s+", " ", str(item.get("text", ""))).strip()
-                description = (
-                    f"{phase} model message: {text}" if text else f"{phase} model message"
-                )
+                description = f"{phase} model message: {text}" if text else f"{phase} model message"
             elif item_type == "file change":
                 description = f"{phase} file changes"
             elif item_type == "web search":
@@ -1758,7 +2215,13 @@ def _progress_panel(
         title=f"{agent_name.title()} progress",
     )
 
+
 def _inventory(client: ExecutionTarget, workspace: str) -> list[WorkspaceFile]:
+    native_inventory = (
+        getattr(client, "inventory", None) if hasattr(type(client), "inventory") else None
+    )
+    if callable(native_inventory):
+        return native_inventory(workspace)
     completed = client.bash(
         'if test -d "$1"; then find "$1" -mindepth 1 -printf \'%y\\0%s\\0%P\\0%l\\0\'; fi',
         workspace,
@@ -1789,6 +2252,11 @@ def _session_traces(
 ) -> tuple[list[SessionTrace], list[TraceEvent]]:
     if not codex_home:
         return [], []
+    native_traces = (
+        getattr(client, "session_traces", None) if hasattr(type(client), "session_traces") else None
+    )
+    if callable(native_traces):
+        return native_traces(codex_home)
     listed = client.bash(
         'if test -d "$1/sessions"; then find "$1/sessions" -type f -name "*.jsonl" -print; fi',
         codex_home,

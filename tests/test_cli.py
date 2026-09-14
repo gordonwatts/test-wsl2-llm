@@ -464,23 +464,39 @@ def test_config_only_writes_resolved_yaml_without_wsl(tmp_path: Path) -> None:
     assert not (tmp_path / "out.yaml").exists()
 
 
-def test_explicit_config_composes_with_user_defaults(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_config_only_persists_linux_target(tmp_path: Path) -> None:
+    destination = tmp_path / "saved.yaml"
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--target",
+            "linux",
+            "--output",
+            str(tmp_path / "out"),
+            "--save-config",
+            str(destination),
+            "--config-only",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert yaml.safe_load(destination.read_text(encoding="utf-8"))["target"] == "linux"
+
+
+def test_explicit_config_composes_with_user_defaults(monkeypatch, tmp_path: Path) -> None:
     defaults = tmp_path / "defaults.yaml"
     defaults.write_text(
-        "environment:\n"
-        "  unset: [INCLUDE]\n"
-        "  path_remove: ['C:\\Visual Studio']\n",
+        "environment:\n  unset: [INCLUDE]\n  path_remove: ['C:\\Visual Studio']\n",
         encoding="utf-8",
     )
     explicit = tmp_path / "run.yaml"
     explicit.write_text(
-        "prompt: hello\n"
-        "model: gpt-test\n"
-        "output: out\n"
-        "environment:\n"
-        "  unset: [LIB]\n",
+        "prompt: hello\nmodel: gpt-test\noutput: out\nenvironment:\n  unset: [LIB]\n",
         encoding="utf-8",
     )
     destination = tmp_path / "saved.yaml"

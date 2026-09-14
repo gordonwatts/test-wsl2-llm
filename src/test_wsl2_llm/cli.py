@@ -21,6 +21,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.agents import get_agent_adapter
+from test_wsl2_llm.compatibility import load_result_yaml
 from test_wsl2_llm.config import (
     build_config,
     load_config_file,
@@ -33,10 +34,10 @@ from test_wsl2_llm.config import (
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     CancellationCoordinator,
-    WslClient,
     _is_uninformative_progress,
     create_execution_target,
 )
+from test_wsl2_llm.target import ExecutionTarget
 from test_wsl2_llm.template import (
     ensure_template_schema,
     inspect_template_result,
@@ -56,7 +57,7 @@ from test_wsl2_llm.template import (
 
 app = typer.Typer(
     name="test-wsl2-llm",
-    help="Run reproducible Codex CLI tests in fresh WSL2 workspaces.",
+    help="Run reproducible Codex CLI tests in fresh isolated workspaces.",
     no_args_is_help=True,
 )
 template_app = typer.Typer(
@@ -70,7 +71,7 @@ logger = logging.getLogger(__name__)
 
 @app.callback()
 def application() -> None:
-    """Configure and run Codex tests in WSL2."""
+    """Configure and run isolated Codex tests."""
 
 
 @app.command()
@@ -117,14 +118,20 @@ def run(
         list[str] | None,
         typer.Option(
             "--unset-env",
-            help="Windows environment variable removed before WSL launches; repeatable.",
+            help="Environment variable removed before the target launches; repeatable.",
         ),
     ] = None,
     path_remove: Annotated[
         list[str] | None,
         typer.Option(
             "--path-remove",
-            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+            help="Case-insensitive PATH prefix or glob removed before launch; repeatable.",
+        ),
+    ] = None,
+    target: Annotated[
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
     ] = None,
     distro: Annotated[
@@ -237,6 +244,7 @@ def run(
             "copy_files": copy_file,
             "copy_back": copy_back,
             "environment": _environment_cli_values(unset_env, path_remove),
+            "target": target,
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -439,14 +447,20 @@ def template_run(
         list[str] | None,
         typer.Option(
             "--unset-env",
-            help="Windows environment variable removed before WSL launches; repeatable.",
+            help="Environment variable removed before the target launches; repeatable.",
         ),
     ] = None,
     path_remove: Annotated[
         list[str] | None,
         typer.Option(
             "--path-remove",
-            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+            help="Case-insensitive PATH prefix or glob removed before launch; repeatable.",
+        ),
+    ] = None,
+    target: Annotated[
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
     ] = None,
     distro: Annotated[
@@ -583,6 +597,7 @@ def template_run(
             "copy_files": copy_file,
             "copy_back": copy_back,
             "environment": _environment_cli_values(unset_env, path_remove),
+            "target": target,
             "distro": distro,
             "wsl_parent": wsl_parent,
             "output": str(output) if output else None,
@@ -760,6 +775,7 @@ def template_run(
                     130,
                     "not started: cancellation requested",
                 )
+
             def persist(collected: TestResult) -> None:
                 collected.template_cell = template_cell_metadata(identifier, repetition, run_config)
                 write_reports(collected, run_config.output, resolved_base.overwrite)
@@ -940,6 +956,8 @@ def connect(
     try:
         result = _load_result_yaml(input_yaml)
         workspace = result.run.workspace_path
+        if str(result.configuration.get("target", "wsl")) == "ssh":
+            raise ValueError("interactive connect is deferred for the SSH target")
         if not workspace:
             raise ValueError("no retained workspace path; rerun with --keep-workspace")
         if not result.run.workspace_retained:
@@ -950,7 +968,11 @@ def connect(
         if not agent_adapter.capabilities.interactive_follow_up:
             raise ValueError("agent does not support interactive follow-up: " + agent_name)
         policy = EnvironmentPolicy.model_validate(result.configuration.get("environment", {}))
-        client = create_execution_target(result.run.distro, policy)
+        client = create_execution_target(
+            result.run.distro,
+            policy,
+            execution_target=str(result.configuration.get("target", "wsl")),
+        )
         if access == "shell" and resume:
             raise ValueError("--resume is only supported with --access codex")
         command = _connect_command(result, resume=resume, access=access, client=client)
@@ -1011,14 +1033,20 @@ def continue_work(
         list[str] | None,
         typer.Option(
             "--unset-env",
-            help="Windows environment variable removed before WSL launches; repeatable.",
+            help="Environment variable removed before the target launches; repeatable.",
         ),
     ] = None,
     path_remove: Annotated[
         list[str] | None,
         typer.Option(
             "--path-remove",
-            help="Case-insensitive Windows PATH prefix or glob removed before WSL; repeatable.",
+            help="Case-insensitive PATH prefix or glob removed before launch; repeatable.",
+        ),
+    ] = None,
+    target: Annotated[
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
     ] = None,
     distro: Annotated[
@@ -1094,6 +1122,8 @@ def continue_work(
     _configure_logging(verbose)
     try:
         previous = _load_result_yaml(input_yaml)
+        if str(previous.configuration.get("target", "wsl")) == "ssh":
+            raise ValueError("continue is deferred for the SSH target")
         if not previous.run.workspace_path or not previous.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
         file_values = load_config_file(config) if config else {}
@@ -1102,7 +1132,8 @@ def continue_work(
         # not an input accepted by ``TestConfig``. Keep it out of the inherited
         # settings so a continuation can itself be continued.
         previous_values = {
-            key: value for key, value in previous.configuration.items() if key != "continuation_of"
+            key: value for key, value in previous.configuration.items()
+            if key not in {"continuation_of", "schema_version"}
         }
         defaults = merge_config_values(load_default_config(), previous_values)
         defaults = merge_config_values(defaults, file_values)
@@ -1151,6 +1182,7 @@ def continue_work(
             "copy_files": defaults["copy_files"],
             "copy_back": defaults["copy_back"],
             "environment": _environment_cli_values(unset_env, path_remove),
+            "target": target,
             "distro": distro,
             "output": str(output) if output else None,
             "overwrite": True if force else None,
@@ -1211,13 +1243,15 @@ def _connect_command(
     *,
     resume: bool,
     access: Literal["codex", "shell"] = "codex",
-    client: WslClient | None = None,
+    client: ExecutionTarget | None = None,
 ) -> list[str]:
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path
     if not workspace:
         raise ValueError("no retained workspace path; rerun with --keep-workspace")
-    client = client or create_execution_target(result.run.distro)
+    client = client or create_execution_target(
+        result.run.distro, execution_target=str(result.configuration.get("target", "wsl"))
+    )
     if access == "shell":
         if resume:
             raise ValueError("--resume is only supported with --access codex")
@@ -1332,11 +1366,8 @@ class _RepeatDisplay:
 
 
 def _load_result_yaml(path: Path) -> TestResult:
-    """Load a result YAML file with an actionable error for the wrong file type."""
-    try:
-        return TestResult.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-    except yaml.YAMLError as exc:
-        raise ValueError(f"while trying to parse file '{path}' as YAML: {exc}") from exc
+    """Load and validate a result through the compatibility boundary."""
+    return load_result_yaml(path)
 
 
 def _merge_strings(*groups: list[str]) -> list[str]:

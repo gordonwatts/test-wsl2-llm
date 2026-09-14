@@ -1,11 +1,13 @@
 """Validated configuration and result schemas."""
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
+ExecutionTargetName = Literal["wsl", "linux", "macos", "local", "ssh"]
 
 
 @dataclass(frozen=True)
@@ -65,7 +67,7 @@ class ValidationResult(BaseModel):
 
 
 class TestConfig(BaseModel):
-    """All behavior-affecting settings for one WSL Codex test."""
+    """All behavior-affecting settings for one isolated Codex test."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,6 +91,12 @@ class TestConfig(BaseModel):
     network: bool = True
     approval_policy: Literal["untrusted", "on-request", "never"] = "on-request"
     approvals_reviewer: Literal["auto_review", "user"] = "auto_review"
+    target: ExecutionTargetName = "wsl"
+    ssh_host: str | None = None
+    ssh_user: str | None = None
+    ssh_port: int | None = None
+    remote_workspace_parent: str = "/tmp"
+    ssh_connect_timeout_seconds: float = 10.0
     auth_source: str = "~/.codex/auth.json"
     pricing_file: str | None = None
     progress_lines: int = 5
@@ -148,12 +156,105 @@ class TestConfig(BaseModel):
             raise ValueError("must be greater than zero")
         return value
 
+    @field_validator("ssh_port")
+    @classmethod
+    def valid_ssh_port(cls, value: int | None) -> int | None:
+        if value is not None and not 1 <= value <= 65535:
+            raise ValueError("ssh_port must be between 1 and 65535")
+        return value
+
+    @field_validator("ssh_connect_timeout_seconds")
+    @classmethod
+    def valid_ssh_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ssh_connect_timeout_seconds must be greater than zero")
+        return value
+
+    @model_validator(mode="after")
+    def validate_ssh_settings(self) -> "TestConfig":
+        if self.target == "ssh" and not self.ssh_host:
+            raise ValueError("ssh_host is required when target is ssh")
+        if self.target != "ssh" and any(
+            value is not None for value in (self.ssh_host, self.ssh_user, self.ssh_port)
+        ):
+            raise ValueError("SSH connection settings require target=ssh")
+        return self
+
     @field_validator("max_copy_back_files")
     @classmethod
     def positive_max_copy_back_files(cls, value: int) -> int:
         if value < 1:
             raise ValueError("must be at least 1")
         return value
+
+
+class ConfigurationSnapshot(BaseModel, Mapping[str, Any]):
+    """Typed, persisted view of a resolved ``TestConfig``.
+
+    Result files are an API. Known configuration fields are typed while
+    extra fields are retained so a newer producer can be inspected by an
+    older reader without silently discarding data.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: Literal[1] = 1
+    prompt: str | None = None
+    title: str | None = None
+    agent: str | None = None
+    model: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
+    marketplaces: list[str] = Field(default_factory=list)
+    plugins: list[str] = Field(default_factory=list)
+    mcp_servers: list[str] = Field(default_factory=list)
+    copy_files: list[str] = Field(default_factory=list)
+    copy_back: list[str] = Field(default_factory=list)
+    validators: list[ValidatorConfig] = Field(default_factory=list)
+    environment: EnvironmentPolicy = Field(default_factory=EnvironmentPolicy)
+    distro: str | None = None
+    wsl_parent: str | None = None
+    output: str | None = None
+    overwrite: bool | None = None
+    sandbox: str | None = None
+    network: bool | None = None
+    approval_policy: str | None = None
+    approvals_reviewer: str | None = None
+    auth_source: str | None = None
+    pricing_file: str | None = None
+    progress_lines: int | None = None
+    timeout_seconds: float | None = None
+    max_copy_back_files: int | None = None
+    cleanup: bool | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return self.model_dump(mode="json", exclude_none=True)[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        setattr(self, key, value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.model_dump(mode="json", exclude_none=True))
+
+    def __len__(self) -> int:
+        return len(self.model_dump(mode="json", exclude_none=True))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.model_dump(mode="json", exclude_none=True).get(key, default)
+
+    def items(self):
+        return self.model_dump(mode="json", exclude_none=True).items()
+
+    def keys(self):
+        return self.model_dump(mode="json", exclude_none=True).keys()
+
+    def values(self):
+        return self.model_dump(mode="json", exclude_none=True).values()
+
+    def update(self, values: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
+        updates = dict(values or {})
+        updates.update(kwargs)
+        for key, value in updates.items():
+            setattr(self, key, value)
 
 
 class PhaseTiming(BaseModel):
@@ -234,6 +335,47 @@ class SkillsResult(BaseModel):
     directories: list[str] = Field(default_factory=list)
 
 
+class InputProvenance(BaseModel):
+    """A public, content-addressed input used by a run."""
+
+    kind: str
+    requested: str
+    resolved: str | None = None
+    content_hash: str | None = None
+
+
+class MarketplaceProvenance(BaseModel):
+    """Requested marketplace source and its resolved checkout identity."""
+
+    requested: str
+    resolved: str | None = None
+    selector: str | None = None
+    version: str = "unknown"
+    content_hash: str | None = None
+
+
+class PluginProvenance(BaseModel):
+    """Requested plugin selector and resolved manifest version."""
+
+    requested: str
+    resolved: str | None = None
+    version: str = "unknown"
+
+
+class Provenance(BaseModel):
+    """Non-secret identity of the harness, runtime, and effective inputs."""
+
+    harness_version: str
+    agent: str
+    agent_version: str = "unknown"
+    target: str
+    target_version: str = "unknown"
+    configuration_hash: str
+    inputs: list[InputProvenance] = Field(default_factory=list)
+    marketplaces: list[MarketplaceProvenance] = Field(default_factory=list)
+    plugins: list[PluginProvenance] = Field(default_factory=list)
+    identity: str
+
 class RunResult(BaseModel):
     started_at: str
     finished_at: str
@@ -241,6 +383,7 @@ class RunResult(BaseModel):
     codex_execution_seconds: float
     status: Literal["succeeded", "failed"]
     exit_code: int
+    target: ExecutionTargetName = "wsl"
     distro: str | None
     workspace_path: str | None
     workspace_retained: bool
@@ -269,6 +412,7 @@ class TemplateCell(BaseModel):
     model_selector: str
     repetition: int
     fingerprint: str
+
 
 class ConversationTurn(BaseModel):
     """One prompt and the response produced while working in a workspace."""
@@ -313,7 +457,8 @@ class TestResult(BaseModel):
     skills: SkillsResult
     run: RunResult
     timing: TimingResult
-    configuration: dict[str, Any]
+    configuration: ConfigurationSnapshot
+    provenance: Provenance | None = None
     usage: list[UsageRecord]
     model_information: ModelInformation
     result: FinalResult

@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from threading import Barrier, Lock
 
@@ -49,7 +50,10 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     assert "copy_files: []" in content
     assert "repeat: 1" in content
     assert "threads: 1" in content
-    assert "output: .\\results\\template" in content
+    expected_output = (
+        r"output: .\results\template" if os.name == "nt" else "output: ./results/template"
+    )
+    assert expected_output in content
 
     second = runner.invoke(app, ["template", "init", str(destination)])
     assert second.exit_code == 2
@@ -268,6 +272,28 @@ def test_template_run_expands_questions_and_repetitions(monkeypatch, tmp_path: P
         "Do ETmiss for a": ["shared@marketplace"],
         "Do jets for b": ["question@marketplace"],
     }
+
+
+def test_template_run_persists_linux_target(monkeypatch, tmp_path: Path) -> None:
+    targets: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        targets.append(config.target)
+        return sample_result()
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    config = tmp_path / "linux.yaml"
+    config.write_text(
+        "prompt_template: 'Do {{ question }}'\n"
+        "questions:\n  - id: q1\n    question: first\n"
+        "model: test-model\ntarget: linux\noutput: results/run\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["template", "run", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert targets == ["linux"]
 
 
 def test_template_run_applies_question_distro_override(monkeypatch, tmp_path: Path) -> None:
@@ -742,9 +768,7 @@ def test_question_validator_names_and_arguments_are_checked_before_execution() -
         )
 
 
-def test_template_run_applies_question_validator_precedence(
-    monkeypatch, tmp_path: Path
-) -> None:
+def test_template_run_applies_question_validator_precedence(monkeypatch, tmp_path: Path) -> None:
     seen: list[tuple[str, list[str]]] = []
 
     def fake_run(config, **_kwargs):
@@ -774,9 +798,7 @@ def test_template_run_applies_question_validator_precedence(
                     {"id": "disable", "question": "three", "validators": []},
                 ],
                 "model": "test-model",
-                "validators": [
-                    {"name": "require_string", "arguments": {"string": "shared"}}
-                ],
+                "validators": [{"name": "require_string", "arguments": {"string": "shared"}}],
                 "output": "results/run",
             },
             sort_keys=False,
@@ -796,9 +818,7 @@ def test_template_run_applies_question_validator_precedence(
 
 def test_question_validators_survive_saved_template_round_trip(tmp_path: Path) -> None:
     config = tmp_path / "validators.yaml"
-    question_validators_value = [
-        {"name": "require_string", "arguments": {"string": "question"}}
-    ]
+    question_validators_value = [{"name": "require_string", "arguments": {"string": "question"}}]
     config.write_text(
         yaml.safe_dump(
             {
@@ -823,10 +843,10 @@ def test_question_validators_survive_saved_template_round_trip(tmp_path: Path) -
 
     assert result.exit_code == 0, result.output
     values = yaml.safe_load(saved.read_text(encoding="utf-8"))
-    assert values["validators"] == [
-        {"name": "require_string", "arguments": {"string": "shared"}}
-    ]
+    assert values["validators"] == [{"name": "require_string", "arguments": {"string": "shared"}}]
     assert values["questions"][0]["validators"] == question_validators_value
+
+
 def test_template_result_validation_requires_matching_complete_pair(tmp_path: Path) -> None:
     output = str(tmp_path / "result")
     config = build_config({"prompt": "Do first", "model": "test-model", "output": output}, {})
