@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from threading import Barrier, Lock
 
@@ -49,7 +50,10 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     assert "copy_files: []" in content
     assert "repeat: 1" in content
     assert "threads: 1" in content
-    assert "output: .\\results\\template" in content
+    expected_output = (
+        r"output: .\results\template" if os.name == "nt" else "output: ./results/template"
+    )
+    assert expected_output in content
 
     second = runner.invoke(app, ["template", "init", str(destination)])
     assert second.exit_code == 2
