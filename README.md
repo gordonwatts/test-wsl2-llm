@@ -11,8 +11,10 @@ The support boundary is intentionally explicit:
 | Codex CLI (non-interactive `codex exec`) | Windows host with a WSL2 distribution | Supported |
 | Codex CLI (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Supported |
 | Claude Code | Any target | Not implemented in this package |
-| Codex or Claude Code | Native Linux/macOS (`--target local`), or passwordless SSH | Local Linux/macOS target is experimental; SSH is not supported yet |
+| Codex CLI (non-interactive `codex exec`) | Passwordless SSH to a Linux host | Supported; interactive access deferred |
+| Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
 
+| Codex CLI (non-interactive `codex exec`) | Native Linux/macOS (`--target local`) | Experimental |
 The package name and `test-wsl2-llm` command are stable. The target and agent
 rows above describe the current release boundary; they are not promises about
 the future target work tracked in the project.
@@ -145,24 +147,22 @@ uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm ru
 
 This writes `results\hello.md` for people and `results\hello.yaml` for code.
 The default `target` is `wsl`, which keeps the Windows-to-WSL2 workflow above. On a
-native Linux or macOS host, select `--target local` (the existing `linux` name remains an alias) and use native paths to run the same isolated
+native Linux or macOS host, select `--target local` (the existing `linux` name remains an alias; use native paths) to run the same isolated
 workspace, transfer, copy-back, cleanup, and retained-workspace lifecycle without
 invoking `wsl.exe` or `wslpath`:
 
 ```bash
 test-wsl2-llm run \
-  --target local \
+  --target linux \
   --model MODEL:medium \
   --prompt 'Create hello.txt containing Hello from Linux' \
   --output ./results/hello
 ```
 
-The local target requires Python 3.11+, the system shell (`/bin/bash` on macOS), the
-Codex CLI on `PATH`, and a readable Codex authentication file (normally
-`~/.codex/auth.json`). macOS support targets macOS 13 Ventura or newer on Apple silicon
-and Intel 64-bit hosts; no GNU coreutils installation is required. `--distro` is only
-valid for the WSL target. Native Linux and macOS support are separate from the
-Windows-to-WSL path, which remains the default and is still covered by the WSL tests. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
+The native target requires Python 3.11+, Bash, the Codex CLI on `PATH`, and a readable
+Linux Codex authentication file (normally `~/.codex/auth.json`). `--distro` is only valid
+for the WSL target. Native Linux support is separate from the Windows-to-WSL path, which
+remains the default and is still covered by the WSL tests. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
 
 Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
 YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
@@ -328,7 +328,7 @@ The top-level template fields are:
 | `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
 | `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
 | `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
-| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), `local` (macOS/Linux; `linux` is an alias), WSL distribution, temporary-run parent, and result stem. |
+| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), native `local` (macOS/Linux; `linux` is an alias), or passwordless `ssh`; WSL distribution, target temporary-run parent, and result stem. |
 | `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
 | `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
 
@@ -500,30 +500,6 @@ in a Markdown details section. The previous result must retain its workspace.
 
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
-## Saved-data compatibility
-
-The 1.0 compatibility contract has two versioned wire formats:
-
-- Configuration YAML is `schema_version: 1`. Files created before this contract
-  (without a version marker) are accepted as legacy pre-1.0 input and migrated
-  in memory; they are never silently treated as a future version. `run
-  --save-config` writes the v1 marker.
-- Result YAML is `schema_version: 2`, the current result format. The `generate`,
-  `connect`, `continue`, and template-resume commands all use the same loader.
-  Unknown or missing result versions fail with an actionable upgrade message
-  instead of being interpreted as a compatible result.
-
-Within the v1 configuration contract, model selectors are serialized as one
-canonical `MODEL:EFFORT` string (with `medium` when omitted), and template model
-matrices retain that selector in each result cell. The typed configuration
-snapshot in a result is intended for inspection and continuation; unknown
-fields are retained for forward-compatible diagnostics.
-
-The package promises that a 1.x reader will continue to read v1 configurations
-and v2 results produced by this package, and that 1.x writers will not change
-those formats incompatibly. A future schema requires an explicit migration or
-a major-version reader; no automatic migration is attempted for future data.
-
 ## YAML configuration
 
 Before loading an explicit `--config` file or template, the CLI looks for the optional user
@@ -639,7 +615,7 @@ Override the acceptance model with `--wsl-model MODEL` or `TEST_WSL2_LLM_MODEL`.
 
 ## Model pricing
 
-The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. It includes current Claude API model IDs and the dated Claude Code model IDs that they alias, using Anthropic published cache-read rates for cached input. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown costs preserve useful precision for positive sub-cent totals (and display unavailable separately from $0.00).
+The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown costs preserve useful precision for positive sub-cent totals (and display unavailable separately from $0.00).
 
 The normal progress display keeps a persistent `Latest meaningful activity` line above the five most recent events. Routine MCP polling entries remain in that bounded detail log without replacing the summary, and each event is prefixed with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
@@ -756,6 +732,8 @@ reference value. With a zero reference or zero tolerance, only exact equality pa
 Tolerances must be finite and nonnegative; expected numbers must be finite.
 Markdown files are rendered inline as indented Markdown content in the report; other text files
 remain available as a compact first-ten-lines preview.
-### Experimental SSH command target
+### SSH execution target
 
-Issue #83 provides `SshTarget` for passwordless, noninteractive command execution through an existing OpenSSH configuration. Configure an SSH host alias (and optionally a user, port, and remote workspace parent); the adapter uses `BatchMode=yes` and a bounded `ConnectTimeout` while leaving host-key verification enabled. Saved target metadata contains only the alias and public connection settings; passwords and private keys are intentionally unsupported. Workspace transfer, remote ownership, collection, and cancellation are tracked separately in issue #84.
+The `ssh` target runs a complete isolated test on a Linux host through the existing passwordless OpenSSH configuration. Set `target: ssh` and `ssh_host` in a saved YAML configuration; optional `ssh_user`, `ssh_port`, `remote_workspace_parent`, and `ssh_connect_timeout_seconds` select the destination. The client uses `BatchMode=yes`, bounded connection setup, and normal host-key verification. Password provisioning and private-key management are intentionally out of scope; configure authentication in the user's SSH agent/configuration first.
+
+Workspace input and artifact collection use tar streams over SSH, and require a remote POSIX shell with `mkdir`, `mktemp`, `tar`, `cat`, `find`, `realpath`, `setsid`, and `rm`. Each run writes an ownership marker below its generated `test-wsl2-llm-*` root. Cleanup verifies that marker before deleting and reports the remote path as retained if deletion cannot be confirmed. Codex is wrapped in an owned remote process group; timeout and Ctrl-C cancellation target only that group. Interactive `connect`/`continue` is deferred for SSH because those commands need a terminal-aware SSH session; use a retained remote workspace with a manually opened SSH session instead.

@@ -129,7 +129,7 @@ def run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux", "macos", "local"] | None,
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
             "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
@@ -458,7 +458,7 @@ def template_run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux", "macos", "local"] | None,
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
             "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
@@ -956,6 +956,8 @@ def connect(
     try:
         result = _load_result_yaml(input_yaml)
         workspace = result.run.workspace_path
+        if str(result.configuration.get("target", "wsl")) == "ssh":
+            raise ValueError("interactive connect is deferred for the SSH target")
         if not workspace:
             raise ValueError("no retained workspace path; rerun with --keep-workspace")
         if not result.run.workspace_retained:
@@ -1042,7 +1044,7 @@ def continue_work(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux", "macos", "local"] | None,
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
             "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
@@ -1120,6 +1122,8 @@ def continue_work(
     _configure_logging(verbose)
     try:
         previous = _load_result_yaml(input_yaml)
+        if str(previous.configuration.get("target", "wsl")) == "ssh":
+            raise ValueError("continue is deferred for the SSH target")
         if not previous.run.workspace_path or not previous.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
         file_values = load_config_file(config) if config else {}

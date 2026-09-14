@@ -53,7 +53,7 @@ from test_wsl2_llm.models import (
     WorkspaceResult,
 )
 from test_wsl2_llm.pricing import load_and_calculate_costs
-from test_wsl2_llm.target import ExecutionTarget
+from test_wsl2_llm.target import ExecutionTarget, SshTarget
 from test_wsl2_llm.traces import (
     final_message_from_events,
     parse_json_line,
@@ -648,12 +648,30 @@ def create_execution_target(
     *,
     execution_target: str = "wsl",
     source_environment: Mapping[str, str] | None = None,
+    ssh_host: str | None = None,
+    ssh_user: str | None = None,
+    ssh_port: int | None = None,
+    remote_workspace_parent: str = "/tmp",
+    ssh_connect_timeout_seconds: float = 10.0,
 ) -> ExecutionTarget:
     """Select WSL or native Linux while keeping one runner lifecycle."""
     if execution_target in {"linux", "macos", "local"}:
         if distro:
             raise ValueError("distro is only valid with the wsl execution target")
         return LinuxClient(environment_policy, source_environment=source_environment)
+    if execution_target == "ssh":
+        if distro:
+            raise ValueError("distro is only valid with the wsl execution target")
+        if not ssh_host:
+            raise ValueError("ssh_host is required with the ssh execution target")
+        return SshTarget(
+            ssh_host,
+            user=ssh_user,
+            port=ssh_port,
+            remote_workspace_parent=remote_workspace_parent,
+            connect_timeout_seconds=ssh_connect_timeout_seconds,
+            source_environment=source_environment,
+        )
     if execution_target != "wsl":
         raise ValueError(f"unknown execution target: {execution_target}")
     if source_environment is None:
@@ -812,7 +830,14 @@ def run_test(
         target
         if target is not None
         else create_execution_target(
-            config.distro, config.environment, execution_target=config.target
+            config.distro,
+            config.environment,
+            execution_target=config.target,
+            ssh_host=config.ssh_host,
+            ssh_user=config.ssh_user,
+            ssh_port=config.ssh_port,
+            remote_workspace_parent=config.remote_workspace_parent,
+            ssh_connect_timeout_seconds=config.ssh_connect_timeout_seconds,
         )
     )
     state = RunState()
@@ -1059,7 +1084,14 @@ def continue_test(
         target
         if target is not None
         else create_execution_target(
-            config.distro or previous.run.distro, config.environment, execution_target=config.target
+            config.distro or previous.run.distro,
+            config.environment,
+            execution_target=config.target,
+            ssh_host=config.ssh_host,
+            ssh_user=config.ssh_user,
+            ssh_port=config.ssh_port,
+            remote_workspace_parent=config.remote_workspace_parent,
+            ssh_connect_timeout_seconds=config.ssh_connect_timeout_seconds,
         )
     )
     run_root = workspace_path.rsplit("/", 1)[0]

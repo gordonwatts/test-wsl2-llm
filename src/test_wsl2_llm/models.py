@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
-ExecutionTargetName = Literal["wsl", "linux", "macos", "local"]
+ExecutionTargetName = Literal["wsl", "linux", "macos", "local", "ssh"]
 
 
 @dataclass(frozen=True)
@@ -92,6 +92,11 @@ class TestConfig(BaseModel):
     approval_policy: Literal["untrusted", "on-request", "never"] = "on-request"
     approvals_reviewer: Literal["auto_review", "user"] = "auto_review"
     target: ExecutionTargetName = "wsl"
+    ssh_host: str | None = None
+    ssh_user: str | None = None
+    ssh_port: int | None = None
+    remote_workspace_parent: str = "/tmp"
+    ssh_connect_timeout_seconds: float = 10.0
     auth_source: str = "~/.codex/auth.json"
     pricing_file: str | None = None
     progress_lines: int = 5
@@ -150,6 +155,30 @@ class TestConfig(BaseModel):
         if value is not None and value <= 0:
             raise ValueError("must be greater than zero")
         return value
+
+    @field_validator("ssh_port")
+    @classmethod
+    def valid_ssh_port(cls, value: int | None) -> int | None:
+        if value is not None and not 1 <= value <= 65535:
+            raise ValueError("ssh_port must be between 1 and 65535")
+        return value
+
+    @field_validator("ssh_connect_timeout_seconds")
+    @classmethod
+    def valid_ssh_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("ssh_connect_timeout_seconds must be greater than zero")
+        return value
+
+    @model_validator(mode="after")
+    def validate_ssh_settings(self) -> "TestConfig":
+        if self.target == "ssh" and not self.ssh_host:
+            raise ValueError("ssh_host is required when target is ssh")
+        if self.target != "ssh" and any(
+            value is not None for value in (self.ssh_host, self.ssh_user, self.ssh_port)
+        ):
+            raise ValueError("SSH connection settings require target=ssh")
+        return self
 
     @field_validator("max_copy_back_files")
     @classmethod

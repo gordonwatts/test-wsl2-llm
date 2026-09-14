@@ -94,10 +94,35 @@
     },
     "target": {
       "type": "string",
-      "enum": ["wsl", "linux", "local", "macos"],
+      "enum": ["wsl", "linux", "local", "macos", "ssh"],
       "default": "wsl",
       "description": "Execution target: WSL, native Linux, or native macOS/local. The linux name is retained as an alias for local."
         },
+    "ssh_host": {
+      "type": ["string", "null"],
+      "description": "SSH alias or hostname when target is ssh."
+    },
+    "ssh_user": {
+      "type": ["string", "null"],
+      "description": "Optional SSH username when target is ssh."
+    },
+    "ssh_port": {
+      "type": ["integer", "null"],
+      "minimum": 1,
+      "maximum": 65535,
+      "description": "Optional SSH port when target is ssh."
+    },
+    "remote_workspace_parent": {
+      "type": "string",
+      "default": "/tmp",
+      "description": "Existing remote directory under which SSH run roots are created."
+    },
+    "ssh_connect_timeout_seconds": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "default": 10,
+      "description": "SSH connection setup timeout."
+    },
     "distro": {
       "type": ["string", "null"],
       "description": "WSL distribution name. Omit to use the WSL default distribution."
