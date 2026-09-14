@@ -7,7 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
-ExecutionTargetName = Literal["wsl", "linux"]
+ExecutionTargetName = Literal["wsl", "linux", "macos", "local"]
 
 
 @dataclass(frozen=True)

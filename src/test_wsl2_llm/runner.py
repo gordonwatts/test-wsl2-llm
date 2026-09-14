@@ -526,6 +526,121 @@ class LinuxClient:
     def cleanup_workspace(self, run_root: str) -> None:
         shutil.rmtree(run_root)
 
+    # These helpers keep the local target independent of GNU find/coreutils.
+    # The WSL target intentionally continues to use its existing shell helpers.
+    def resolve_path(self, path: str, *, require_directory: bool = False) -> str:
+        value = Path(path).expanduser()
+        if require_directory and not value.is_dir():
+            raise FileNotFoundError(f"directory does not exist: {path}")
+        if not require_directory and not value.is_file():
+            raise FileNotFoundError(f"file is not readable: {path}")
+        return str(value.resolve())
+
+    def write_file(self, path: str, content: bytes) -> None:
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+
+    def remove_file(self, path: str) -> None:
+        Path(path).unlink(missing_ok=True)
+
+    def copy_file_to_target(self, host_path: str, target_path: str) -> None:
+        destination = Path(target_path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(Path(host_path).expanduser().resolve(), destination)
+        destination.chmod(0o600)
+
+    def list_child_directories(self, root: str) -> list[str]:
+        directory = Path(root)
+        if not directory.is_dir():
+            return []
+        return sorted(
+            str(entry) for entry in directory.iterdir() if entry.is_dir() and not entry.is_symlink()
+        )
+
+    def find_skill_directories(self, roots: list[str]) -> list[str]:
+        found: list[str] = []
+        for root in roots:
+            directory = Path(root)
+            if not directory.is_dir():
+                continue
+            for candidate in directory.rglob("SKILL.md"):
+                if candidate.is_file():
+                    found.append(str(candidate.parent))
+        return sorted(set(found))
+
+    def expand_copy_back_pattern(self, pattern: str, workspace: str) -> list[str]:
+        search = Path(pattern) if Path(pattern).is_absolute() else Path(workspace) / pattern
+        if any(character in str(search) for character in "*?["):
+            matches = search.parent.glob(search.name) if search.parent != search else []
+        else:
+            matches = [search]
+        return sorted(str(match) for match in matches if match.is_file())
+
+    def inventory(self, workspace: str) -> list[WorkspaceFile]:
+        root = Path(workspace)
+        if not root.is_dir():
+            return []
+        files: list[WorkspaceFile] = []
+
+        def visit(directory: Path) -> None:
+            try:
+                entries = sorted(directory.iterdir(), key=lambda entry: entry.name)
+            except OSError:
+                return
+            for entry in entries:
+                relative = entry.relative_to(root).as_posix()
+                try:
+                    stat = entry.lstat()
+                except OSError:
+                    continue
+                if entry.is_symlink():
+                    entry_type = "symlink"
+                    symlink_target = _normalize_symlink_target(os.readlink(entry))
+                elif entry.is_dir():
+                    entry_type = "directory"
+                    symlink_target = None
+                else:
+                    entry_type = "file"
+                    symlink_target = None
+                files.append(
+                    WorkspaceFile(
+                        type=entry_type,
+                        path=relative,
+                        size=stat.st_size,
+                        symlink_target=symlink_target,
+                    )
+                )
+                if entry_type == "directory":
+                    visit(entry)
+
+        visit(root)
+        return sorted(files, key=lambda entry: entry.path)
+
+    def session_traces(self, codex_home: str) -> tuple[list[SessionTrace], list[TraceEvent]]:
+        sessions = Path(codex_home) / "sessions"
+        if not sessions.is_dir():
+            return [], []
+        traces: list[SessionTrace] = []
+        events: list[TraceEvent] = []
+        for path in sorted(sessions.rglob("*.jsonl")):
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace")
+            relative = path.relative_to(Path(codex_home)).as_posix()
+            traces.append(SessionTrace(path=relative, content=content))
+            for sequence, line in enumerate(content.splitlines(), start=1):
+                parsed = parse_json_line(line)
+                if parsed:
+                    events.append(
+                        trace_event_from_json(
+                            parsed,
+                            source=f"session_trace:{relative}",
+                            sequence=sequence,
+                        )
+                    )
+        return traces, events
+
 
 def create_execution_target(
     distro: str | None = None,
@@ -535,7 +650,7 @@ def create_execution_target(
     source_environment: Mapping[str, str] | None = None,
 ) -> ExecutionTarget:
     """Select WSL or native Linux while keeping one runner lifecycle."""
-    if execution_target == "linux":
+    if execution_target in {"linux", "macos", "local"}:
         if distro:
             raise ValueError("distro is only valid with the wsl execution target")
         return LinuxClient(environment_policy, source_environment=source_environment)
@@ -545,6 +660,10 @@ def create_execution_target(
         return WslClient(distro, environment_policy)
     return WslClient(distro, environment_policy, source_environment=source_environment)
 
+
+# Descriptive names for callers that do not need the historical LinuxClient name.
+LocalClient = LinuxClient
+MacOSClient = LinuxClient
 
 # Descriptive name for callers that do not need the historical WslClient name.
 WslExecutionTarget = WslClient
@@ -657,7 +776,15 @@ def _remove_auth(
         return error, exit_code
     try:
         with state.phase("auth_cleanup"):
-            client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
+            remover = (
+                getattr(client, "remove_file", None)
+                if hasattr(type(client), "remove_file")
+                else None
+            )
+            if callable(remover):
+                remover(f"{codex_home}/auth.json")
+            else:
+                client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
     except (Exception, KeyboardInterrupt) as auth_error:
         error = _append_failure(error, "auth cleanup", auth_error)
         exit_code = exit_code or 1
@@ -743,11 +870,7 @@ def run_test(
 
         with state.phase("codex_home_setup"):
             if adapter.capabilities.requires_auth:
-                client.bash(
-                    'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
-                    codex_home,
-                    resolved_auth,
-                )
+                _copy_auth(client, resolved_auth, codex_home)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -766,12 +889,7 @@ def run_test(
                     plugin,
                 )
                 installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
-            for installed_root in sorted(set(installed_plugin_roots)):
-                found = client.bash(
-                    'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
-                    installed_root,
-                )
-                skill_directories.extend(line for line in client.text(found).splitlines() if line)
+            skill_directories.extend(_skill_directories(client, "", installed_plugin_roots))
             skill_directories = sorted(set(skill_directories))
 
         with state.phase("codex_execution"):
@@ -1004,11 +1122,7 @@ def continue_test(
 
         with state.phase("codex_home_setup"):
             if adapter.capabilities.requires_auth:
-                client.bash(
-                    'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
-                    codex_home,
-                    resolved_auth,
-                )
+                _copy_auth(client, resolved_auth, codex_home)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1175,7 +1289,14 @@ def continuation_prompt(history: list[ConversationTurn], prompt: str) -> str:
 def _skill_directories(
     client: ExecutionTarget, codex_home: str, installed_plugin_roots: list[str]
 ) -> list[str]:
-    roots = _unique([codex_home, *installed_plugin_roots])
+    roots = _unique([root for root in [codex_home, *installed_plugin_roots] if root])
+    native_finder = (
+        getattr(client, "find_skill_directories", None)
+        if hasattr(type(client), "find_skill_directories")
+        else None
+    )
+    if callable(native_finder):
+        return native_finder(roots)
     found: list[str] = []
     for root in roots:
         result = client.bash(
@@ -1184,6 +1305,15 @@ def _skill_directories(
         )
         found.extend(line for line in client.text(result).splitlines() if line)
     return _unique(found)
+
+
+def _normalize_symlink_target(target: str) -> str:
+    """Remove Windows extended-path syntax from inventory evidence."""
+    if target.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + target[8:]
+    if target.startswith("\\\\?\\"):
+        return target[4:]
+    return target
 
 
 def _unique(values: list[str]) -> list[str]:
@@ -1242,14 +1372,23 @@ def _transfer_marketplaces(
     client.bash('mkdir -p "$1"', marketplace_root)
     start_index = 1
     if append:
-        existing = client.bash(
-            'if test -d "$1"; then find "$1" -mindepth 1 -maxdepth 1 -type d '
-            '-name "marketplace-*" -printf "%f\\n"; fi',
-            marketplace_root,
+        directory_lister = (
+            getattr(client, "list_child_directories", None)
+            if hasattr(type(client), "list_child_directories")
+            else None
         )
+        if callable(directory_lister):
+            existing_names = [Path(path).name for path in directory_lister(marketplace_root)]
+        else:
+            existing = client.bash(
+                'if test -d "$1"; then find "$1" -mindepth 1 -maxdepth 1 -type d '
+                '-name "marketplace-*" -printf "%f\\n"; fi',
+                marketplace_root,
+            )
+            existing_names = client.text(existing).splitlines()
         indices = [
             int(name.removeprefix("marketplace-"))
-            for name in client.text(existing).splitlines()
+            for name in existing_names
             if name.removeprefix("marketplace-").isdigit()
         ]
         start_index = max(indices, default=0) + 1
@@ -1407,7 +1546,14 @@ def _copy_back_destination(
 
 
 def _expand_copy_back_pattern(client: ExecutionTarget, pattern: str, workspace: str) -> list[str]:
-    """Expand a workspace-relative glob in WSL and retain regular files only."""
+    """Expand a workspace-relative glob and retain regular files only."""
+    native_expander = (
+        getattr(client, "expand_copy_back_pattern", None)
+        if hasattr(type(client), "expand_copy_back_pattern")
+        else None
+    )
+    if callable(native_expander):
+        return native_expander(pattern, workspace)
     completed = client.bash(
         """
 pattern="$1"
@@ -1619,13 +1765,38 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
     return selected
 
 
+def _copy_auth(client: ExecutionTarget, source: str, codex_home: str) -> None:
+    copier = (
+        getattr(client, "copy_file_to_target", None)
+        if hasattr(type(client), "copy_file_to_target")
+        else None
+    )
+    if callable(copier):
+        copier(source, f"{codex_home}/auth.json")
+    else:
+        client.bash(
+            'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
+            codex_home,
+            source,
+        )
+
+
 def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:
-    client.bash('mkdir -p "$(dirname "$1")" && cat > "$1"', path, input_bytes=content.encode())
+    writer = getattr(client, "write_file", None) if hasattr(type(client), "write_file") else None
+    if callable(writer):
+        writer(path, content.encode())
+    else:
+        client.bash('mkdir -p "$(dirname "$1")" && cat > "$1"', path, input_bytes=content.encode())
 
 
 def _resolve_wsl_path(
     client: ExecutionTarget, path: str, *, require_directory: bool = False
 ) -> str:
+    resolver = (
+        getattr(client, "resolve_path", None) if hasattr(type(client), "resolve_path") else None
+    )
+    if callable(resolver):
+        return resolver(path, require_directory=require_directory)
     test = "test -d" if require_directory else "test -r"
     script = (
         'value="$1"; case "$value" in "~/"*) value="$HOME/${value:2}";; esac; '
@@ -1908,6 +2079,11 @@ def _progress_panel(recent: list[str], latest_meaningful: str | None) -> Panel:
 
 
 def _inventory(client: ExecutionTarget, workspace: str) -> list[WorkspaceFile]:
+    native_inventory = (
+        getattr(client, "inventory", None) if hasattr(type(client), "inventory") else None
+    )
+    if callable(native_inventory):
+        return native_inventory(workspace)
     completed = client.bash(
         'if test -d "$1"; then find "$1" -mindepth 1 -printf \'%y\\0%s\\0%P\\0%l\\0\'; fi',
         workspace,
@@ -1938,6 +2114,11 @@ def _session_traces(
 ) -> tuple[list[SessionTrace], list[TraceEvent]]:
     if not codex_home:
         return [], []
+    native_traces = (
+        getattr(client, "session_traces", None) if hasattr(type(client), "session_traces") else None
+    )
+    if callable(native_traces):
+        return native_traces(codex_home)
     listed = client.bash(
         'if test -d "$1/sessions"; then find "$1/sessions" -type f -name "*.jsonl" -print; fi',
         codex_home,

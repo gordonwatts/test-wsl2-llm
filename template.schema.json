@@ -92,7 +92,13 @@
       "$ref": "#/definitions/environment",
       "description": "Optional Windows environment filtering applied before every WSL launch."
     },
-        "distro": {
+    "target": {
+      "type": "string",
+      "enum": ["wsl", "linux", "local", "macos"],
+      "default": "wsl",
+      "description": "Execution target: WSL, native Linux, or native macOS/local. The linux name is retained as an alias for local."
+        },
+    "distro": {
       "type": ["string", "null"],
       "description": "WSL distribution name. Omit to use the WSL default distribution."
     },
@@ -183,7 +189,7 @@
       "propertyNames": { "pattern": "^[A-Za-z_][A-Za-z0-9_]*$|^id$|^copy_back$" },
       "properties": {
         "id": {
-          "type": "string",
+      "type": "string",
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
           "description": "Unique result and selection identifier. It must start with a letter or digit and contain only letters, digits, periods, underscores, or hyphens."
         },
@@ -197,8 +203,14 @@
           "description": "Question-specific plugin additions and removals. A string beginning with '-' removes a matching shared selector or earlier addition.",
           "items": { "type": "string", "minLength": 1 }
         },
-        "distro": {
-          "type": "string",
+    "target": {
+      "type": "string",
+      "enum": ["wsl", "linux", "local", "macos"],
+      "default": "wsl",
+      "description": "Execution target: WSL, native Linux, or native macOS/local. The linux name is retained as an alias for local."
+        },
+    "distro": {
+      "type": "string",
           "minLength": 1,
           "description": "Question-specific WSL distribution override."
         },
@@ -235,7 +247,7 @@
       "required": ["name"],
       "properties": {
         "name": {
-          "type": "string",
+      "type": "string",
           "enum": ["require_string", "root_tree", "num_compare"],
           "description": "Built-in validator name."
         },

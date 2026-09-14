@@ -11,7 +11,7 @@ The support boundary is intentionally explicit:
 | Codex CLI (non-interactive `codex exec`) | Windows host with a WSL2 distribution | Supported |
 | Codex CLI (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Supported |
 | Claude Code | Any target | Not implemented in this package |
-| Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
+| Codex or Claude Code | Native Linux/macOS (`--target local`), or passwordless SSH | Local Linux/macOS target is experimental; SSH is not supported yet |
 
 The package name and `test-wsl2-llm` command are stable. The target and agent
 rows above describe the current release boundary; they are not promises about
@@ -145,22 +145,24 @@ uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm ru
 
 This writes `results\hello.md` for people and `results\hello.yaml` for code.
 The default `target` is `wsl`, which keeps the Windows-to-WSL2 workflow above. On a
-native Linux host, select `--target linux` (and use Linux paths) to run the same isolated
+native Linux or macOS host, select `--target local` (the existing `linux` name remains an alias) and use native paths to run the same isolated
 workspace, transfer, copy-back, cleanup, and retained-workspace lifecycle without
 invoking `wsl.exe` or `wslpath`:
 
 ```bash
 test-wsl2-llm run \
-  --target linux \
+  --target local \
   --model MODEL:medium \
   --prompt 'Create hello.txt containing Hello from Linux' \
   --output ./results/hello
 ```
 
-The native target requires Python 3.11+, Bash, the Codex CLI on `PATH`, and a readable
-Linux Codex authentication file (normally `~/.codex/auth.json`). `--distro` is only valid
-for the WSL target. Native Linux support is separate from the Windows-to-WSL path, which
-remains the default and is still covered by the WSL tests. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
+The local target requires Python 3.11+, the system shell (`/bin/bash` on macOS), the
+Codex CLI on `PATH`, and a readable Codex authentication file (normally
+`~/.codex/auth.json`). macOS support targets macOS 13 Ventura or newer on Apple silicon
+and Intel 64-bit hosts; no GNU coreutils installation is required. `--distro` is only
+valid for the WSL target. Native Linux and macOS support are separate from the
+Windows-to-WSL path, which remains the default and is still covered by the WSL tests. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
 
 Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
 YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
@@ -326,7 +328,7 @@ The top-level template fields are:
 | `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
 | `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
 | `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
-| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default) or native `linux`; WSL distribution, temporary-run parent, and result stem. |
+| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), `local` (macOS/Linux; `linux` is an alias), WSL distribution, temporary-run parent, and result stem. |
 | `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
 | `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
 

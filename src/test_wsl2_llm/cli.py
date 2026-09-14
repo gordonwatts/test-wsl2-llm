@@ -129,8 +129,10 @@ def run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux"] | None,
-        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
+        Literal["wsl", "linux", "macos", "local"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+        ),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to WSL default.")
@@ -456,8 +458,10 @@ def template_run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux"] | None,
-        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
+        Literal["wsl", "linux", "macos", "local"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+        ),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the template value.")
@@ -771,6 +775,7 @@ def template_run(
                     130,
                     "not started: cancellation requested",
                 )
+
             def persist(collected: TestResult) -> None:
                 collected.template_cell = template_cell_metadata(identifier, repetition, run_config)
                 write_reports(collected, run_config.output, resolved_base.overwrite)
@@ -1037,8 +1042,10 @@ def continue_work(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux"] | None,
-        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
+        Literal["wsl", "linux", "macos", "local"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+        ),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the previous run.")
@@ -1367,4 +1374,3 @@ def _merge_strings(*groups: list[str]) -> list[str]:
 def main() -> None:
     """Console-script entry point."""
     app()
-
