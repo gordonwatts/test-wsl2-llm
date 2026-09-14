@@ -4,6 +4,7 @@ import logging
 import posixpath
 import subprocess
 import sys
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -30,6 +31,7 @@ from test_wsl2_llm.config import (
 )
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
+    CancellationCoordinator,
     WslClient,
     _is_uninformative_progress,
     create_execution_target,
@@ -275,9 +277,14 @@ def run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
+        coordinator = CancellationCoordinator()
+
         def run_one(
             index: int, run_output: str, repeat_display: _RepeatDisplay | None
-        ) -> tuple[int, Path, Path, int]:
+        ) -> tuple[int, Path | None, Path | None, int, str | None]:
+            job_id = f"repeat-{index}"
+            if not coordinator.claim(job_id):
+                return index, None, None, 130, "not started: cancellation requested"
             run_config = resolved.model_copy(update={"output": run_output})
             result = run_test(
                 run_config,
@@ -289,23 +296,62 @@ def run(
                 report_callback=lambda collected: write_reports(
                     collected, run_output, resolved.overwrite
                 ),
+                cancellation=coordinator,
+                job_id=job_id,
             )
             markdown_path, yaml_path = write_reports(result, run_output, True)
-            return index, markdown_path, yaml_path, result.run.exit_code
+            return index, markdown_path, yaml_path, result.run.exit_code, None
 
         exit_codes: list[int] = []
-        completed_runs: list[tuple[int, Path, Path, int]] = []
+        completed_runs: list[tuple[int, Path | None, Path | None, int, str | None]] = []
+        worker_errors: list[str] = []
 
         def collect_runs(repeat_display: _RepeatDisplay | None) -> None:
-            with ThreadPoolExecutor(max_workers=min(threads, repeat)) as executor:
-                futures = [
-                    executor.submit(run_one, index, run_output, repeat_display)
-                    for index, run_output in enumerate(run_outputs, start=1)
-                ]
+            executor = ThreadPoolExecutor(max_workers=min(threads, repeat))
+            future_jobs = {
+                executor.submit(run_one, index, run_output, repeat_display): index
+                for index, run_output in enumerate(run_outputs, start=1)
+            }
+            futures = list(future_jobs)
+            seen: set[object] = set()
+
+            def record(future: object) -> None:
+                if future in seen:
+                    return
+                seen.add(future)
+                try:
+                    completed_runs.append(future.result())  # type: ignore[attr-defined]
+                except BaseException as exc:
+                    worker_errors.append(str(exc) or exc.__class__.__name__)
+                if repeat_display is not None:
+                    repeat_display.advance()
+
+            try:
                 for future in as_completed(futures):
-                    completed_runs.append(future.result())
-                    if repeat_display is not None:
-                        repeat_display.advance()
+                    record(future)
+                executor.shutdown(wait=True)
+            except KeyboardInterrupt:
+                coordinator.cancel()
+                for future in futures:
+                    future.cancel()
+                deadline = time.monotonic() + coordinator.grace_seconds
+                while time.monotonic() < deadline and any(not future.done() for future in futures):
+                    time.sleep(0.02)
+                for future in futures:
+                    if future.cancelled():
+                        completed_runs.append(
+                            (
+                                future_jobs[future],
+                                None,
+                                None,
+                                130,
+                                "not started: cancellation requested",
+                            )
+                        )
+                    elif future.done():
+                        record(future)
+                executor.shutdown(wait=False, cancel_futures=True)
+                worker_errors.append("batch interrupted by keyboard interrupt")
 
         if repeat > 1:
             with _RepeatDisplay(console, repeat) as repeat_display:
@@ -313,13 +359,19 @@ def run(
         else:
             collect_runs(None)
 
-        for index, markdown_path, yaml_path, exit_code in sorted(completed_runs):
+        for index, markdown_path, yaml_path, exit_code, message in sorted(completed_runs):
             if repeat > 1:
                 console.print(f"Repeat {index}/{repeat}")
-            console.print(f"Markdown result: {markdown_path}")
-            console.print(f"YAML result: {yaml_path}")
+            if message:
+                console.print(message)
+            elif markdown_path is not None and yaml_path is not None:
+                console.print(f"Markdown result: {markdown_path}")
+                console.print(f"YAML result: {yaml_path}")
             if exit_code:
                 exit_codes.append(exit_code)
+        for error in worker_errors:
+            console.print(f"[red]Error:[/red] {error}")
+            exit_codes.append(130 if "interrupted" in error else 1)
         if exit_codes:
             raise typer.Exit(exit_codes[0])
     except (OSError, ValueError, ValidationError) as exc:
@@ -683,13 +735,26 @@ def template_run(
         from test_wsl2_llm.report import write_reports
         from test_wsl2_llm.runner import run_test
 
+        coordinator = CancellationCoordinator()
+
         def run_one(
             question_index: int,
             identifier: str,
             repetition: int,
             run_config: TestConfig,
             repeat_display: _RepeatDisplay | None,
-        ) -> tuple[int, str, int, Path, Path, int]:
+        ) -> tuple[int, str, int, Path | None, Path | None, int, str | None]:
+            job_id = f"template-{identifier}-{repetition}"
+            if not coordinator.claim(job_id):
+                return (
+                    question_index,
+                    identifier,
+                    repetition,
+                    None,
+                    None,
+                    130,
+                    "not started: cancellation requested",
+                )
             def persist(collected: TestResult) -> None:
                 collected.template_cell = template_cell_metadata(identifier, repetition, run_config)
                 write_reports(collected, run_config.output, resolved_base.overwrite)
@@ -702,6 +767,8 @@ def template_run(
                 log_callback=repeat_display.log if repeat_display is not None else None,
                 invocation=sys.argv,
                 report_callback=persist,
+                cancellation=coordinator,
+                job_id=job_id,
             )
             result.template_cell = template_cell_metadata(identifier, repetition, run_config)
             markdown_path, yaml_path = write_reports(result, run_config.output, True)
@@ -712,22 +779,63 @@ def template_run(
                 markdown_path,
                 yaml_path,
                 result.run.exit_code,
+                None,
             )
 
-        completed_runs: list[tuple[int, str, int, Path, Path, int]] = []
+        completed_runs: list[tuple[int, str, int, Path | None, Path | None, int, str | None]] = []
+        worker_errors: list[str] = []
 
         def collect_runs(repeat_display: _RepeatDisplay | None) -> None:
-            with ThreadPoolExecutor(max_workers=min(effective_threads, len(jobs))) as executor:
-                futures = [
-                    executor.submit(
-                        run_one, question_index, identifier, repetition, run_config, repeat_display
-                    )
-                    for question_index, identifier, repetition, run_config in jobs
-                ]
+            executor = ThreadPoolExecutor(max_workers=min(effective_threads, len(jobs)))
+            future_jobs = {
+                executor.submit(
+                    run_one, question_index, identifier, repetition, run_config, repeat_display
+                ): (question_index, identifier, repetition)
+                for question_index, identifier, repetition, run_config in jobs
+            }
+            futures = list(future_jobs)
+            seen: set[object] = set()
+
+            def record(future: object) -> None:
+                if future in seen:
+                    return
+                seen.add(future)
+                try:
+                    completed_runs.append(future.result())  # type: ignore[attr-defined]
+                except BaseException as exc:
+                    worker_errors.append(str(exc) or exc.__class__.__name__)
+                if repeat_display is not None:
+                    repeat_display.advance()
+
+            try:
                 for future in as_completed(futures):
-                    completed_runs.append(future.result())
-                    if repeat_display is not None:
-                        repeat_display.advance()
+                    record(future)
+                executor.shutdown(wait=True)
+            except KeyboardInterrupt:
+                coordinator.cancel()
+                for future in futures:
+                    future.cancel()
+                deadline = time.monotonic() + coordinator.grace_seconds
+                while time.monotonic() < deadline and any(not future.done() for future in futures):
+                    time.sleep(0.02)
+                for future in futures:
+                    if future.cancelled():
+                        question_index, identifier, repetition = future_jobs[future]
+                        completed_runs.append(
+                            (
+                                question_index,
+                                identifier,
+                                repetition,
+                                None,
+                                None,
+                                130,
+                                "not started: cancellation requested",
+                            )
+                        )
+                    elif future.done():
+                        record(future)
+                executor.shutdown(wait=False, cancel_futures=True)
+                worker_errors.append("batch interrupted by keyboard interrupt")
 
         if len(jobs) > 1:
             with _RepeatDisplay(console, len(jobs)) as repeat_display:
@@ -736,15 +844,27 @@ def template_run(
             collect_runs(None)
 
         exit_codes: list[int] = []
-        for question_index, identifier, repetition, markdown_path, yaml_path, exit_code in sorted(
-            completed_runs
-        ):
+        for (
+            question_index,
+            identifier,
+            repetition,
+            markdown_path,
+            yaml_path,
+            exit_code,
+            message,
+        ) in sorted(completed_runs):
             del question_index
             console.print(f"Question {identifier} (repeat {repetition}/{effective_repeat})")
-            console.print(f"Markdown result: {markdown_path}")
-            console.print(f"YAML result: {yaml_path}")
+            if message:
+                console.print(message)
+            elif markdown_path is not None and yaml_path is not None:
+                console.print(f"Markdown result: {markdown_path}")
+                console.print(f"YAML result: {yaml_path}")
             if exit_code:
                 exit_codes.append(exit_code)
+        for error in worker_errors:
+            console.print(f"[red]Error:[/red] {error}")
+            exit_codes.append(130 if "interrupted" in error else 1)
         if exit_codes:
             raise typer.Exit(exit_codes[0])
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
