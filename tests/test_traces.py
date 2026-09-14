@@ -40,3 +40,26 @@ def test_malformed_json_and_final_message() -> None:
     assert parse_json_line("not json") is None
     events = [{"type": "item.completed", "item": {"type": "agent_message", "text": "done"}}]
     assert final_message_from_events(events) == "done"
+
+
+def test_missing_usage_is_unavailable_not_zero() -> None:
+    assert usage_from_events([{"type": "turn.completed", "usage": {}}], "claude-sonnet") == []
+
+
+def test_claude_usage_aliases_are_reported() -> None:
+    usage = usage_from_events(
+        [
+            {
+                "type": "turn.completed",
+                "usage": {
+                    "input_tokens": 10,
+                    "cache_read_input_tokens": 4,
+                    "output_tokens": 3,
+                },
+            }
+        ],
+        "claude-sonnet",
+    )
+    assert usage[0].input_tokens == 10
+    assert usage[0].cached_input_tokens == 4
+    assert usage[0].output_tokens == 3

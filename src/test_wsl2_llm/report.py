@@ -92,7 +92,8 @@ def render_markdown(
     if result.result.timed_out:
         lines.extend(
             [
-                "> **TIMEOUT:** Codex execution reached the configured timeout. "
+                f"> **TIMEOUT:** {result.run.agent.title()} execution reached the "
+                "configured timeout. "
                 "The model output below may be incomplete.",
                 "",
             ]
@@ -135,15 +136,14 @@ def render_markdown(
             f"| Started | {_local_clock(run.started_at)} |",
             f"| Finished | {_local_clock(run.finished_at)} |",
             f"| Total duration | {_duration(run.total_duration_seconds)} |",
-            f"| Codex execution | {_duration(run.codex_execution_seconds)} |",
-            f"| {run.agent.title()} execution | "
-            f"{_duration(agent_execution_seconds)} |",
+            f"| {run.agent.title()} execution | {_duration(agent_execution_seconds)} |",
             f"| Status | {run.status} |",
             f"| Exit code | {run.exit_code} |",
             f"| Timed out | {run.timed_out} |",
             f"| Execution target | {run.target} |",
             f"| Distribution | {run.distro or '(default)'} |",
-            f"| Codex version | {run.codex_version or '(unavailable)'} |",
+            f"| {run.agent.title()} version | "
+            f"{run.agent_version or run.codex_version or '(unavailable)'} |",
             f"| Agent version | {run.agent_version or run.codex_version or '(unavailable)'} |",
             f"| Workspace | {run.workspace_path or workspace_label} |",
             f"| Workspace retained | {run.workspace_retained} |",
@@ -570,8 +570,15 @@ def _activity_section(result: TestResult) -> list[str]:
 
 
 def _codex_execution_offset(result: TestResult) -> float:
-    """Return seconds from run start to Codex execution start when timestamps allow it."""
-    phase = next((item for item in result.timing.phases if item.name == "codex_execution"), None)
+    """Return seconds from run start to agent execution start when timestamps allow it."""
+    phase = next(
+        (
+            item
+            for item in result.timing.phases
+            if item.name in {"codex_execution", f"{result.run.agent}_execution"}
+        ),
+        None,
+    )
     if phase is None:
         return 0.0
     try:

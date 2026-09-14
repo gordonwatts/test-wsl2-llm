@@ -786,6 +786,7 @@ def _remove_auth(
     client: WslClient,
     codex_home: str | None,
     *,
+    auth_filename: str = "auth.json",
     state: RunState,
     error: str | None,
     exit_code: int,
@@ -801,9 +802,9 @@ def _remove_auth(
                 else None
             )
             if callable(remover):
-                remover(f"{codex_home}/auth.json")
+                remover(f"{codex_home}/{auth_filename}")
             else:
-                client.bash('rm -f -- "$1/auth.json"', codex_home, check=False)
+                client.bash('rm -f -- "$1/$2"', codex_home, auth_filename, check=False)
     except (Exception, KeyboardInterrupt) as auth_error:
         error = _append_failure(error, "auth cleanup", auth_error)
         exit_code = exit_code or 1
@@ -885,7 +886,7 @@ def run_test(
         with state.phase("workspace_creation"):
             run_root = client.create_workspace(resolved_parent)
             workspace_path = f"{run_root}/workspace"
-            codex_home = f"{run_root}/.harness/codex-home"
+            codex_home = f"{run_root}/.harness/{adapter.home_name}"
 
         with state.phase("input_transfer"):
             _write_wsl_file(client, f"{run_root}/.harness/inputs/prompt.md", config.prompt)
@@ -899,9 +900,11 @@ def run_test(
             )
             _transfer_files(client, config.copy_files, workspace_path)
 
-        with state.phase("codex_home_setup"):
+        with state.phase(f"{adapter.name}_home_setup"):
             if adapter.capabilities.requires_auth:
                 _copy_auth(client, resolved_auth, codex_home)
+            else:
+                client.bash('mkdir -p -- "$1"', codex_home)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -933,7 +936,7 @@ def run_test(
                 skill_directories.extend(line for line in client.text(found).splitlines() if line)
             skill_directories = sorted(set(skill_directories))
 
-        with state.phase("codex_execution"):
+        with state.phase(f"{adapter.name}_execution"):
             if cancellation is not None and cancellation.cancelled:
                 raise KeyboardInterrupt
             codex_started = time.perf_counter()
@@ -944,7 +947,7 @@ def run_test(
                 reasoning_effort=config.reasoning_effort,
                 workspace=workspace_path,
             )
-            LOGGER.info("Codex command: %s", _display_command(command_argv))
+            LOGGER.info("%s command: %s", adapter.name.title(), _display_command(command_argv))
             (
                 exit_code,
                 stdout,
@@ -965,15 +968,16 @@ def run_test(
                 log_callback=log_callback,
                 cancellation=cancellation,
                 job_id=job_id,
+                agent_name=adapter.name,
             )
             codex_seconds = time.perf_counter() - codex_started
-            timed_out = _is_timeout(exit_code, stderr)
+            timed_out = _is_timeout(exit_code, stderr, adapter.name)
             if timed_out:
-                error = _timeout_error(stderr)
+                error = _timeout_error(stderr, adapter.name)
             elif exit_code:
-                error = f"Codex exited with status {exit_code}"
+                error = f"{adapter.name.title()} exited with status {exit_code}"
 
-            if timed_out and state.phases and state.phases[-1].name == "codex_execution":
+            if timed_out and state.phases and state.phases[-1].name == f"{adapter.name}_execution":
                 state.phases[-1].timed_out = True
 
     except (Exception, KeyboardInterrupt) as exc:  # Preserve a report even on interruption.
@@ -997,7 +1001,12 @@ def run_test(
             exit_code=exit_code,
         )
         error, exit_code = _remove_auth(
-            client, codex_home, state=state, error=error, exit_code=exit_code
+            client,
+            codex_home,
+            auth_filename=adapter.auth_filename,
+            state=state,
+            error=error,
+            exit_code=exit_code,
         )
         # A run workspace is retained until the report has been persisted.
         retained = run_root is not None
@@ -1102,7 +1111,7 @@ def continue_test(
         raise ValueError("the result workspace was not retained; rerun without --cleanup")
 
     validate_configuration(config.validators)
-    adapter = validate_agent_capabilities(config)
+    adapter = validate_agent_capabilities(config, interactive_follow_up=True)
     console = console or Console(stderr=True)
     client = (
         target
@@ -1119,7 +1128,7 @@ def continue_test(
         )
     )
     run_root = workspace_path.rsplit("/", 1)[0]
-    codex_home = f"{run_root}/.harness/codex-home"
+    codex_home = f"{run_root}/.harness/{adapter.home_name}"
     state = RunState()
     history = list(previous.conversation) or [
         ConversationTurn(prompt=previous.prompt, final_response=previous.result.final_message)
@@ -1181,9 +1190,11 @@ def continue_test(
             ]
             _transfer_files(client, new_copy_files, workspace_path)
 
-        with state.phase("codex_home_setup"):
+        with state.phase(f"{adapter.name}_home_setup"):
             if adapter.capabilities.requires_auth:
                 _copy_auth(client, resolved_auth, codex_home)
+            else:
+                client.bash('mkdir -p -- "$1"', codex_home)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1213,7 +1224,7 @@ def continue_test(
                 _skill_directories(client, codex_home, installed_plugin_roots)
             )
 
-        with state.phase("codex_execution"):
+        with state.phase(f"{adapter.name}_execution"):
             codex_started = time.perf_counter()
             command_argv = adapter.command(
                 client,
@@ -1222,7 +1233,7 @@ def continue_test(
                 reasoning_effort=config.reasoning_effort,
                 workspace=workspace_path,
             )
-            LOGGER.info("Codex command: %s", _display_command(command_argv))
+            LOGGER.info("%s command: %s", adapter.name.title(), _display_command(command_argv))
             (
                 exit_code,
                 stdout,
@@ -1239,15 +1250,16 @@ def continue_test(
                 timeout_seconds=config.timeout_seconds,
                 verbosity=verbosity,
                 console=console,
+                agent_name=adapter.name,
             )
             codex_seconds = time.perf_counter() - codex_started
-            timed_out = _is_timeout(exit_code, stderr)
+            timed_out = _is_timeout(exit_code, stderr, adapter.name)
             if timed_out:
-                error = _timeout_error(stderr)
+                error = _timeout_error(stderr, adapter.name)
             elif exit_code:
-                error = f"Codex exited with status {exit_code}"
+                error = f"{adapter.name.title()} exited with status {exit_code}"
 
-            if timed_out and state.phases and state.phases[-1].name == "codex_execution":
+            if timed_out and state.phases and state.phases[-1].name == f"{adapter.name}_execution":
                 state.phases[-1].timed_out = True
 
     except (Exception, KeyboardInterrupt) as exc:  # A continuation should still produce a report.
@@ -1271,7 +1283,12 @@ def continue_test(
             exit_code=exit_code,
         )
         error, exit_code = _remove_auth(
-            client, codex_home, state=state, error=error, exit_code=exit_code
+            client,
+            codex_home,
+            auth_filename=adapter.auth_filename,
+            state=state,
+            error=error,
+            exit_code=exit_code,
         )
 
     finished_at = utc_now()
@@ -1929,6 +1946,7 @@ def _stream_codex(
     log_callback: Callable[[str], None] | None = None,
     cancellation: CancellationCoordinator | None = None,
     job_id: str = "single",
+    agent_name: str = "codex",
 ) -> tuple[int, str, str, list[TraceEvent], list[dict[str, Any]]]:
     if target is not None:
         process = target.start_process(
@@ -2070,7 +2088,7 @@ def _stream_codex(
             if verbosity >= 2:
                 LOGGER.debug("[%s] %s", stream, line.rstrip("\r\n"))
             elif live:
-                live.update(_progress_panel(recent, latest_meaningful))
+                live.update(_progress_panel(recent, latest_meaningful, agent_name))
             elif not live_progress:
                 if log_callback is not None:
                     log_callback(display)
@@ -2081,7 +2099,7 @@ def _stream_codex(
         consume(None)
     else:
         with Live(
-            Panel("Starting Codex...", title="Codex progress"),
+            Panel(f"Starting {agent_name.title()}...", title=f"{agent_name.title()} progress"),
             console=console,
             refresh_per_second=8,
         ) as live:
@@ -2109,10 +2127,14 @@ def _stream_codex(
         exit_code = 130
     if timed_out:
         exit_code = 124
-        raw["stderr"].append(f"{TIMEOUT_ERROR_PREFIX}{timeout_seconds:g} seconds.\n")
+        raw["stderr"].append(
+            f"{_timeout_prefix(agent_name)}{timeout_seconds:g} seconds.\n"
+        )
     elif interrupted:
         exit_code = 130
-        raw["stderr"].append("[test-wsl2-llm] Codex run interrupted by keyboard interrupt.\n")
+        raw["stderr"].append(
+            f"[test-wsl2-llm] {agent_name.title()} run interrupted by keyboard interrupt.\n"
+        )
     if cancellation is not None and process_registered:
         cancellation.unregister_process(job_id)
     return (
@@ -2124,17 +2146,22 @@ def _stream_codex(
     )
 
 
-def _is_timeout(exit_code: int, stderr: str) -> bool:
+def _timeout_prefix(agent_name: str = "codex") -> str:
+    return f"[test-wsl2-llm] {agent_name.title()} timed out after "
+
+
+def _is_timeout(exit_code: int, stderr: str, agent_name: str = "codex") -> bool:
     """Recognize a timeout without treating an unrelated exit 124 as one."""
-    return exit_code == 124 and TIMEOUT_ERROR_PREFIX in stderr
+    return exit_code == 124 and _timeout_prefix(agent_name) in stderr
 
 
-def _timeout_error(stderr: str) -> str:
+def _timeout_error(stderr: str, agent_name: str = "codex") -> str:
     """Return the concise timeout error while retaining the configured duration."""
+    prefix = _timeout_prefix(agent_name)
     for line in stderr.splitlines():
-        if line.startswith(TIMEOUT_ERROR_PREFIX):
+        if line.startswith(prefix):
             return line.removeprefix("[test-wsl2-llm] ").rstrip(".")
-    return "Codex execution timed out"
+    return f"{agent_name.title()} execution timed out"
 
 
 def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
@@ -2177,13 +2204,15 @@ def _is_uninformative_progress(description: str) -> bool:
     return description.casefold() in {"started mcp tool call", "completed mcp tool call"}
 
 
-def _progress_panel(recent: list[str], latest_meaningful: str | None) -> Panel:
+def _progress_panel(
+    recent: list[str], latest_meaningful: str | None, agent_name: str = "codex"
+) -> Panel:
     """Render a bounded event log with a persistent summary of useful activity."""
     latest = latest_meaningful or "No meaningful activity yet."
-    detail = "\n".join(recent) or "Starting Codex..."
+    detail = "\n".join(recent) or f"Starting {agent_name.title()}..."
     return Panel(
         f"Latest meaningful activity: {latest}\n\n{detail}",
-        title="Codex progress",
+        title=f"{agent_name.title()} progress",
     )
 
 
