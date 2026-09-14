@@ -595,7 +595,7 @@ class LinuxClient:
                     continue
                 if entry.is_symlink():
                     entry_type = "symlink"
-                    symlink_target = os.readlink(entry)
+                    symlink_target = _normalize_symlink_target(os.readlink(entry))
                 elif entry.is_dir():
                     entry_type = "directory"
                     symlink_target = None
@@ -1304,6 +1304,15 @@ def _skill_directories(
         )
         found.extend(line for line in client.text(result).splitlines() if line)
     return _unique(found)
+
+
+def _normalize_symlink_target(target: str) -> str:
+    """Remove Windows extended-path syntax from inventory evidence."""
+    if target.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + target[8:]
+    if target.startswith("\\\\?\\"):
+        return target[4:]
+    return target
 
 
 def _unique(values: list[str]) -> list[str]:
