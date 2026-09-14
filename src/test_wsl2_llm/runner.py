@@ -827,6 +827,7 @@ def run_test(
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
     adapter = validate_agent_capabilities(config)
+    mcp_payload = adapter.mcp_config(config)
     console = console or Console(stderr=True)
     client = (
         target
@@ -863,6 +864,7 @@ def run_test(
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
     runtime_marketplaces: list[str] = []
+    mcp_config_path: str | None = None
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
     resolved_parent = config.wsl_parent
@@ -899,32 +901,20 @@ def run_test(
                 client, config.marketplaces, runtime_marketplaces
             )
             _transfer_files(client, config.copy_files, workspace_path)
-
+            if mcp_payload:
+                mcp_config_path = f"{run_root}/.harness/inputs/claude-mcp.json"
+                _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
-            installed_plugin_roots: list[str] = []
-            for source in runtime_marketplaces:
-                client.login_bash(
-                    'env CODEX_HOME="$1" codex plugin marketplace add "$2" --json',
-                    codex_home,
-                    source,
-                )
-            for plugin in config.plugins:
-                installed = client.login_bash(
-                    'env CODEX_HOME="$1" codex plugin add "$2" --json',
-                    codex_home,
-                    plugin,
-                )
-                roots = _installed_paths_from_json(client.text(installed))
-                installed_plugin_roots.extend(roots)
-                for root in roots:
-                    version = _plugin_manifest_version(client, root)
-                    if version is not None:
-                        plugin_versions[plugin] = version
+            plugin_setup = adapter.install_plugins(
+                client, codex_home, runtime_marketplaces, config.plugins
+            )
+            installed_plugin_roots = list(plugin_setup.installed_roots)
+            plugin_versions.update(plugin_setup.plugin_versions)
             for installed_root in sorted(set(installed_plugin_roots)):
                 found = client.bash(
                     'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
@@ -932,7 +922,6 @@ def run_test(
                 )
                 skill_directories.extend(line for line in client.text(found).splitlines() if line)
             skill_directories = sorted(set(skill_directories))
-
         with state.phase(f"{adapter.name}_execution"):
             if cancellation is not None and cancellation.cancelled:
                 raise KeyboardInterrupt
@@ -943,6 +932,7 @@ def run_test(
                 model=config.model,
                 reasoning_effort=config.reasoning_effort,
                 workspace=workspace_path,
+                mcp_config=mcp_config_path,
             )
             LOGGER.info("%s command: %s", adapter.name.title(), _display_command(command_argv))
             (
@@ -1109,6 +1099,7 @@ def continue_test(
 
     validate_configuration(config.validators)
     adapter = validate_agent_capabilities(config, interactive_follow_up=True)
+    mcp_payload = adapter.mcp_config(config)
     console = console or Console(stderr=True)
     client = (
         target
@@ -1140,6 +1131,7 @@ def continue_test(
     parsed_events: list[dict[str, Any]] = []
     session_traces: list[SessionTrace] = []
     runtime_marketplaces: list[str] = []
+    mcp_config_path: str | None = None
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
     skill_directories: list[str] = list(previous.skills.directories)
@@ -1186,38 +1178,25 @@ def continue_test(
                 source for source in config.copy_files if source not in prior_copy_files
             ]
             _transfer_files(client, new_copy_files, workspace_path)
-
+            if mcp_payload:
+                mcp_config_path = f"{run_root}/.harness/inputs/claude-mcp.json"
+                _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
-            installed_plugin_roots: list[str] = []
-            for source in runtime_marketplaces:
-                client.login_bash(
-                    'env CODEX_HOME="$1" codex plugin marketplace add "$2" --json',
-                    codex_home,
-                    source,
-                )
             prior_plugins = set(previous.skills.plugins)
             new_plugins = [plugin for plugin in config.plugins if plugin not in prior_plugins]
-            for plugin in new_plugins:
-                installed = client.login_bash(
-                    'env CODEX_HOME="$1" codex plugin add "$2" --json',
-                    codex_home,
-                    plugin,
-                )
-                roots = _installed_paths_from_json(client.text(installed))
-                installed_plugin_roots.extend(roots)
-                for root in roots:
-                    version = _plugin_manifest_version(client, root)
-                    if version is not None:
-                        plugin_versions[plugin] = version
+            plugin_setup = adapter.install_plugins(
+                client, codex_home, runtime_marketplaces, new_plugins
+            )
+            installed_plugin_roots = list(plugin_setup.installed_roots)
+            plugin_versions.update(plugin_setup.plugin_versions)
             skill_directories.extend(
                 _skill_directories(client, codex_home, installed_plugin_roots)
             )
-
         with state.phase(f"{adapter.name}_execution"):
             codex_started = time.perf_counter()
             command_argv = adapter.command(
@@ -1226,6 +1205,7 @@ def continue_test(
                 model=config.model,
                 reasoning_effort=config.reasoning_effort,
                 workspace=workspace_path,
+                mcp_config=mcp_config_path,
             )
             LOGGER.info("%s command: %s", adapter.name.title(), _display_command(command_argv))
             (
@@ -1834,6 +1814,77 @@ def _installed_paths_from_json(output: str) -> list[str]:
 
     visit(payload)
     return paths
+
+
+def _claude_mcp_source() -> Path:
+    """Return the host Claude JSON config without reading any credentials."""
+    configured = os.environ.get("CLAUDE_CONFIG_DIR")
+    if configured:
+        path = Path(configured).expanduser()
+        return path if path.suffix.casefold() == ".json" else path / ".claude.json"
+    return Path.home() / ".claude.json"
+
+
+def _load_claude_mcp_servers(names: list[str]) -> dict[str, Any]:
+    """Load selected Claude MCP servers and reject unsupported configuration early."""
+    if not names:
+        return {}
+    source = _claude_mcp_source()
+    try:
+        document = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        raise ValueError(
+            f"Cannot read local Claude MCP configuration '{source}' as JSON; "
+            "check that the file exists and is valid."
+        ) from None
+    servers = document.get("mcpServers") if isinstance(document, dict) else None
+    if not isinstance(servers, dict):
+        raise ValueError(f"Claude MCP configuration '{source}' has no mcpServers object.")
+    selected: dict[str, Any] = {}
+    for name in names:
+        if not re.fullmatch(r"[A-Za-z0-9_-]+", name):
+            raise ValueError(
+                f"Claude MCP server '{name}' is invalid; names may contain only letters, "
+                "numbers, hyphens, and underscores."
+            )
+        value = servers.get(name)
+        if not isinstance(value, dict):
+            raise ValueError(f"MCP server '{name}' was not found in '{source}'.")
+        _validate_claude_mcp_server(name, value, source)
+        selected[name] = value
+    return selected
+
+
+def _validate_claude_mcp_server(name: str, value: dict[str, Any], source: Path) -> None:
+    """Validate the Claude JSON MCP shape without exposing values in errors."""
+    transport = value.get("type")
+    if transport in {None, "stdio"}:
+        if not isinstance(value.get("command"), str) or not value["command"].strip():
+            raise ValueError(f"Claude MCP server '{name}' in '{source}' needs a command.")
+        if "url" in value:
+            raise ValueError(f"Claude MCP server '{name}' mixes command and url settings.")
+    elif transport in {"http", "streamable-http", "sse", "ws"}:
+        if not isinstance(value.get("url"), str) or not value["url"].strip():
+            raise ValueError(f"Claude MCP server '{name}' in '{source}' needs a URL.")
+        if "command" in value:
+            raise ValueError(f"Claude MCP server '{name}' mixes URL and command settings.")
+    else:
+        raise ValueError(
+            f"Claude MCP server '{name}' in '{source}' uses unsupported transport "
+            f"'{transport}'."
+        )
+    if "args" in value and (
+        not isinstance(value["args"], list)
+        or any(not isinstance(item, str) for item in value["args"])
+    ):
+        raise ValueError(f"Claude MCP server '{name}' in '{source}' has invalid args.")
+    for field in ("env", "headers"):
+        if field in value and (
+            not isinstance(value[field], dict)
+            or any(not isinstance(key, str) or not isinstance(item, str)
+                   for key, item in value[field].items())
+        ):
+            raise ValueError(f"Claude MCP server '{name}' in '{source}' has invalid {field}.")
 
 
 def _codex_config(config: TestConfig) -> str:
