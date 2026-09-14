@@ -127,3 +127,31 @@ def test_ssh_target_can_be_selected_with_public_connection_settings() -> None:
     assert isinstance(client, SshTarget)
     assert client.destination == "runner@build-alias"
     assert client.remote_workspace_parent == "/srv/runs"
+
+
+def test_local_inventory_reports_unicode_spaces_and_symlinks(tmp_path) -> None:
+    client = LinuxClient()
+    run_root = client.create_workspace(str(tmp_path / "parent with spaces"))
+    workspace = Path(run_root) / "workspace"
+    nested = workspace / "資料 café"
+    nested.mkdir()
+    source = nested / "input $x.txt"
+    source.write_text("hello", encoding="utf-8")
+    link = workspace / "alias café.txt"
+    try:
+        link.symlink_to(source)
+    except (OSError, NotImplementedError):
+        link = None
+
+    inventory = client.inventory(str(workspace))
+    paths = {entry.path: entry for entry in inventory}
+    assert "資料 café/input $x.txt" in paths
+    if link is not None:
+        assert paths[link.name].type == "symlink"
+        assert paths[link.name].symlink_target == str(source)
+    client.cleanup_workspace(run_root)
+
+
+def test_local_target_aliases_are_native() -> None:
+    assert isinstance(create_execution_target(execution_target="local"), LinuxClient)
+    assert isinstance(create_execution_target(execution_target="macos"), LinuxClient)

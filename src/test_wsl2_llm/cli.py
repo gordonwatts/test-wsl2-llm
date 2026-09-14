@@ -21,6 +21,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.agents import get_agent_adapter
+from test_wsl2_llm.compatibility import load_result_yaml
 from test_wsl2_llm.config import (
     build_config,
     load_config_file,
@@ -128,9 +129,9 @@ def run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux", "ssh"] | None,
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or passwordless SSH."
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
         ),
     ] = None,
     distro: Annotated[
@@ -457,8 +458,10 @@ def template_run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux", "ssh"] | None,
-        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+        ),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the template value.")
@@ -952,9 +955,9 @@ def connect(
     _configure_logging(verbose)
     try:
         result = _load_result_yaml(input_yaml)
+        workspace = result.run.workspace_path
         if str(result.configuration.get("target", "wsl")) == "ssh":
             raise ValueError("interactive connect is deferred for the SSH target")
-        workspace = result.run.workspace_path
         if not workspace:
             raise ValueError("no retained workspace path; rerun with --keep-workspace")
         if not result.run.workspace_retained:
@@ -1041,8 +1044,10 @@ def continue_work(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux", "ssh"] | None,
-        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
+        Literal["wsl", "linux", "macos", "local", "ssh"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+        ),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to the previous run.")
@@ -1127,7 +1132,8 @@ def continue_work(
         # not an input accepted by ``TestConfig``. Keep it out of the inherited
         # settings so a continuation can itself be continued.
         previous_values = {
-            key: value for key, value in previous.configuration.items() if key != "continuation_of"
+            key: value for key, value in previous.configuration.items()
+            if key not in {"continuation_of", "schema_version"}
         }
         defaults = merge_config_values(load_default_config(), previous_values)
         defaults = merge_config_values(defaults, file_values)
@@ -1360,11 +1366,8 @@ class _RepeatDisplay:
 
 
 def _load_result_yaml(path: Path) -> TestResult:
-    """Load a result YAML file with an actionable error for the wrong file type."""
-    try:
-        return TestResult.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-    except yaml.YAMLError as exc:
-        raise ValueError(f"while trying to parse file '{path}' as YAML: {exc}") from exc
+    """Load and validate a result through the compatibility boundary."""
+    return load_result_yaml(path)
 
 
 def _merge_strings(*groups: list[str]) -> list[str]:
