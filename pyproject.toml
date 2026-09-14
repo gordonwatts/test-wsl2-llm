@@ -69,6 +69,7 @@ addopts = "-ra"
 testpaths = ["tests"]
 markers = [
   "wsl_acceptance: token-consuming tests that invoke real Codex in WSL2",
+  "ssh_integration: tests that exercise a disposable Linux OpenSSH server",
 ]
 
 [tool.ruff]

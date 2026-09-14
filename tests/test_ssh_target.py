@@ -138,3 +138,15 @@ def test_cancellation_uses_owned_remote_pid(monkeypatch) -> None:
     assert process.terminated
     assert remote_calls and "kill -TERM" in remote_calls[0]
     assert ".harness/ssh-owner-" in remote_calls[0]
+
+
+def test_command_can_use_isolated_identity_and_known_hosts_files() -> None:
+    target = SshTarget(
+        "host",
+        identity_file="C:/tmp/id_ed25519",
+        known_hosts_file="C:/tmp/known_hosts",
+    )
+    command = target.command(["true"])
+
+    assert "-i" in command and "C:/tmp/id_ed25519" in command
+    assert "UserKnownHostsFile=C:/tmp/known_hosts" in command

@@ -77,6 +77,8 @@ class SshTarget:
     port: int | None = None
     remote_workspace_parent: str = "/tmp"
     connect_timeout_seconds: float = 10.0
+    identity_file: str | None = None
+    known_hosts_file: str | None = None
     source_environment: Mapping[str, str] | None = None
     _owned_workspace_tokens: dict[str, str] = field(default_factory=dict, init=False, repr=False)
     _process_owner_files: dict[int, str] = field(default_factory=dict, init=False, repr=False)
@@ -95,6 +97,12 @@ class SshTarget:
             raise ValueError("remote workspace parent must not be empty")
         if not math.isfinite(self.connect_timeout_seconds) or self.connect_timeout_seconds <= 0:
             raise ValueError("SSH connect timeout must be finite and greater than zero")
+        for name, value in (
+            ("identity_file", self.identity_file),
+            ("known_hosts_file", self.known_hosts_file),
+        ):
+            if value is not None and not value.strip():
+                raise ValueError(f"{name} must not be empty")
 
     @property
     def environment(self) -> Mapping[str, str]:
@@ -115,6 +123,10 @@ class SshTarget:
             "-o",
             f"ConnectTimeout={math.ceil(self.connect_timeout_seconds)}",
         ]
+        if self.identity_file is not None:
+            options.extend(["-i", self.identity_file])
+        if self.known_hosts_file is not None:
+            options.extend(["-o", f"UserKnownHostsFile={self.known_hosts_file}"])
         if self.port is not None:
             options.extend(["-p", str(self.port)])
         return options
