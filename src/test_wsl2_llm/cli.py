@@ -33,10 +33,10 @@ from test_wsl2_llm.config import (
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     CancellationCoordinator,
-    WslClient,
     _is_uninformative_progress,
     create_execution_target,
 )
+from test_wsl2_llm.target import ExecutionTarget
 from test_wsl2_llm.template import (
     ensure_template_schema,
     inspect_template_result,
@@ -1211,7 +1211,7 @@ def _connect_command(
     *,
     resume: bool,
     access: Literal["codex", "shell"] = "codex",
-    client: WslClient | None = None,
+    client: ExecutionTarget | None = None,
 ) -> list[str]:
     """Build the interactive WSL command without interpolating report values into a shell."""
     workspace = result.run.workspace_path
