@@ -27,6 +27,7 @@ from rich.console import Console
 from rich.live import Live
 from rich.panel import Panel
 
+from test_wsl2_llm.agents import AgentAdapter, validate_agent_capabilities
 from test_wsl2_llm.config import output_stem
 from test_wsl2_llm.models import (
     CommandResult,
@@ -497,6 +498,7 @@ def run_test(
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
+    adapter = validate_agent_capabilities(config)
     console = console or Console(stderr=True)
     client = (
         target if target is not None else create_execution_target(config.distro, config.environment)
@@ -531,14 +533,14 @@ def run_test(
     pricing_valid = False
 
     try:
-        codex_configuration = _codex_config(config)
+        codex_configuration = _codex_config(config) if adapter.name == "codex" else ""
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
-            codex_version = client.text(client.login_bash("codex --version")).strip()
-            client.login_bash("codex plugin --help")
+            codex_version = adapter.preflight(client).version
             resolved_parent = _resolve_wsl_path(client, config.wsl_parent, require_directory=True)
-            resolved_auth = _resolve_wsl_path(client, config.auth_source)
+            if adapter.capabilities.requires_auth:
+                resolved_auth = _resolve_wsl_path(client, config.auth_source)
 
         with state.phase("workspace_creation"):
             run_root = client.create_workspace(resolved_parent)
@@ -555,12 +557,14 @@ def run_test(
             _transfer_files(client, config.copy_files, workspace_path)
 
         with state.phase("codex_home_setup"):
-            client.bash(
-                'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
-                codex_home,
-                resolved_auth,
-            )
-            _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
+            if adapter.capabilities.requires_auth:
+                client.bash(
+                    'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
+                    codex_home,
+                    resolved_auth,
+                )
+            if codex_configuration:
+                _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
             installed_plugin_roots: list[str] = []
@@ -589,16 +593,12 @@ def run_test(
             if cancellation is not None and cancellation.cancelled:
                 raise KeyboardInterrupt
             codex_started = time.perf_counter()
-            command_argv = client.command(
-                client.shell_command(
-                    'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
-                    '--model "$2" --config "$3" --cd "$4" -',
-                    codex_home,
-                    config.model,
-                    f'model_reasoning_effort="{config.reasoning_effort}"',
-                    workspace_path,
-                    interactive_login=True,
-                )
+            command_argv = adapter.command(
+                client,
+                home=codex_home,
+                model=config.model,
+                reasoning_effort=config.reasoning_effort,
+                workspace=workspace_path,
             )
             LOGGER.info("Codex command: %s", _display_command(command_argv))
             (
@@ -611,6 +611,7 @@ def run_test(
                 command_argv,
                 config.prompt,
                 target=client,
+                adapter=adapter,
                 environment=client.environment,
                 progress_lines=config.progress_lines,
                 timeout_seconds=config.timeout_seconds,
@@ -682,7 +683,10 @@ def run_test(
             distro=config.distro,
             workspace_path=workspace_path,
             workspace_retained=retained,
-            codex_version=codex_version,
+            codex_version=codex_version if adapter.name == "codex" else None,
+            agent=config.agent,
+            agent_version=codex_version,
+            agent_execution_seconds=codex_seconds,
             error=error,
             timed_out=timed_out,
         ),
@@ -746,6 +750,7 @@ def continue_test(
         raise ValueError("the result workspace was not retained; rerun without --cleanup")
 
     validate_configuration(config.validators)
+    adapter = validate_agent_capabilities(config)
     console = console or Console(stderr=True)
     client = (
         target
@@ -782,13 +787,13 @@ def continue_test(
     pricing_valid = False
 
     try:
-        codex_configuration = _codex_config(config)
+        codex_configuration = _codex_config(config) if adapter.name == "codex" else ""
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
-            codex_version = client.text(client.login_bash("codex --version")).strip()
-            client.login_bash("codex plugin --help")
-            resolved_auth = _resolve_wsl_path(client, config.auth_source)
+            codex_version = adapter.preflight(client).version
+            if adapter.capabilities.requires_auth:
+                resolved_auth = _resolve_wsl_path(client, config.auth_source)
 
         with state.phase("input_transfer"):
             continuation_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -811,12 +816,14 @@ def continue_test(
             _transfer_files(client, new_copy_files, workspace_path)
 
         with state.phase("codex_home_setup"):
-            client.bash(
-                'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
-                codex_home,
-                resolved_auth,
-            )
-            _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
+            if adapter.capabilities.requires_auth:
+                client.bash(
+                    'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
+                    codex_home,
+                    resolved_auth,
+                )
+            if codex_configuration:
+                _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
             installed_plugin_roots: list[str] = []
@@ -841,16 +848,12 @@ def continue_test(
 
         with state.phase("codex_execution"):
             codex_started = time.perf_counter()
-            command_argv = client.command(
-                client.shell_command(
-                    'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
-                    '--model "$2" --config "$3" --cd "$4" -',
-                    codex_home,
-                    config.model,
-                    f'model_reasoning_effort="{config.reasoning_effort}"',
-                    workspace_path,
-                    interactive_login=True,
-                )
+            command_argv = adapter.command(
+                client,
+                home=codex_home,
+                model=config.model,
+                reasoning_effort=config.reasoning_effort,
+                workspace=workspace_path,
             )
             LOGGER.info("Codex command: %s", _display_command(command_argv))
             (
@@ -863,6 +866,7 @@ def continue_test(
                 command_argv,
                 effective_prompt,
                 target=client,
+                adapter=adapter,
                 environment=client.environment,
                 progress_lines=config.progress_lines,
                 timeout_seconds=config.timeout_seconds,
@@ -933,7 +937,10 @@ def continue_test(
             distro=config.distro or previous.run.distro,
             workspace_path=workspace_path,
             workspace_retained=True,
-            codex_version=codex_version or previous.run.codex_version,
+            codex_version=codex_version if adapter.name == "codex" else previous.run.codex_version,
+            agent=config.agent,
+            agent_version=codex_version or previous.run.agent_version or previous.run.codex_version,
+            agent_execution_seconds=codex_seconds,
             error=error,
             timed_out=timed_out,
         ),
@@ -1448,6 +1455,7 @@ def _stream_codex(
     prompt: str,
     *,
     target: ExecutionTarget | None = None,
+    adapter: AgentAdapter | None = None,
     environment: Mapping[str, str] | None = None,
     progress_lines: int,
     timeout_seconds: float | None = 1800.0,
@@ -1566,10 +1574,11 @@ def _stream_codex(
             raw[stream].append(line)
             parsed = parse_json_line(line)
             if parsed:
-                parsed_events.append(parsed)
+                normalized = adapter.normalize_event(parsed) if adapter is not None else parsed
+                parsed_events.append(normalized)
                 trace_events.append(
                     trace_event_from_json(
-                        parsed,
+                        normalized,
                         source="stdout_jsonl" if stream == "stdout" else "stderr",
                         sequence=sequences[stream],
                         stream=stream,

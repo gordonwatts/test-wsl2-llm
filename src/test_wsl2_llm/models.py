@@ -71,6 +71,7 @@ class TestConfig(BaseModel):
 
     prompt: str
     title: str = "# WSL2 Codex test result"
+    agent: str = "codex"
     model: str
     reasoning_effort: ReasoningEffort = "medium"
     marketplaces: list[str] = Field(default_factory=list)
@@ -119,7 +120,7 @@ class TestConfig(BaseModel):
             normalized["reasoning_effort"] = selection.reasoning_effort
         return normalized
 
-    @field_validator("prompt", "model")
+    @field_validator("prompt", "model", "agent")
     @classmethod
     def non_empty(cls, value: str) -> str:
         if not value.strip():
@@ -244,6 +245,9 @@ class RunResult(BaseModel):
     workspace_path: str | None
     workspace_retained: bool
     codex_version: str | None
+    agent: str = "codex"
+    agent_version: str | None = None
+    agent_execution_seconds: float | None = None
     error: str | None = None
     timed_out: bool = False
 

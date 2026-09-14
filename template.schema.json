@@ -41,6 +41,12 @@
       "default": 1,
       "description": "Maximum number of model/question/repetition jobs run concurrently."
     },
+    "agent": {
+      "type": "string",
+      "minLength": 1,
+      "default": "codex",
+      "description": "Agent adapter used for execution. The default is codex."
+    },
     "title": {
       "type": "string",
       "default": "# WSL2 Codex test result",
