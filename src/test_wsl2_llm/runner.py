@@ -53,6 +53,7 @@ from test_wsl2_llm.models import (
     WorkspaceResult,
 )
 from test_wsl2_llm.pricing import load_and_calculate_costs
+from test_wsl2_llm.provenance import build_provenance
 from test_wsl2_llm.target import ExecutionTarget, SshTarget
 from test_wsl2_llm.traces import (
     final_message_from_events,
@@ -861,6 +862,8 @@ def run_test(
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
     runtime_marketplaces: list[str] = []
+    marketplace_versions: dict[str, str] = {}
+    plugin_versions: dict[str, str] = {}
     resolved_parent = config.wsl_parent
     resolved_auth = config.auth_source
     model_information = ModelInformation(
@@ -891,6 +894,9 @@ def run_test(
             )
             _write_wsl_file(client, f"{run_root}/.harness/inputs/config.yaml", resolved_yaml)
             runtime_marketplaces = _transfer_marketplaces(client, config.marketplaces, run_root)
+            marketplace_versions = _resolved_marketplace_versions(
+                client, config.marketplaces, runtime_marketplaces
+            )
             _transfer_files(client, config.copy_files, workspace_path)
 
         with state.phase("codex_home_setup"):
@@ -913,8 +919,18 @@ def run_test(
                     codex_home,
                     plugin,
                 )
-                installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
-            skill_directories.extend(_skill_directories(client, "", installed_plugin_roots))
+                roots = _installed_paths_from_json(client.text(installed))
+                installed_plugin_roots.extend(roots)
+                for root in roots:
+                    version = _plugin_manifest_version(client, root)
+                    if version is not None:
+                        plugin_versions[plugin] = version
+            for installed_root in sorted(set(installed_plugin_roots)):
+                found = client.bash(
+                    'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
+                    installed_root,
+                )
+                skill_directories.extend(line for line in client.text(found).splitlines() if line)
             skill_directories = sorted(set(skill_directories))
 
         with state.phase("codex_execution"):
@@ -1020,6 +1036,14 @@ def run_test(
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=configuration_snapshot(config),
+        provenance=build_provenance(
+            config,
+            agent_version=codex_version,
+            target="wsl2" if type(client).__name__ == "WslClient" else type(client).__name__,
+            target_version=None,
+            marketplace_versions=marketplace_versions,
+            plugin_versions=plugin_versions,
+        ),
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message, timed_out=timed_out),
@@ -1110,6 +1134,8 @@ def continue_test(
     parsed_events: list[dict[str, Any]] = []
     session_traces: list[SessionTrace] = []
     runtime_marketplaces: list[str] = []
+    marketplace_versions: dict[str, str] = {}
+    plugin_versions: dict[str, str] = {}
     skill_directories: list[str] = list(previous.skills.directories)
     codex_seconds = 0.0
     exit_code = 1
@@ -1146,6 +1172,9 @@ def continue_test(
             runtime_marketplaces = _transfer_marketplaces(
                 client, new_marketplaces, run_root, append=True
             )
+            marketplace_versions = _resolved_marketplace_versions(
+                client, new_marketplaces, runtime_marketplaces
+            )
             prior_copy_files = set(previous.configuration.get("copy_files", []))
             new_copy_files = [
                 source for source in config.copy_files if source not in prior_copy_files
@@ -1174,8 +1203,15 @@ def continue_test(
                     codex_home,
                     plugin,
                 )
-                installed_plugin_roots.extend(_installed_paths_from_json(client.text(installed)))
-            skill_directories.extend(_skill_directories(client, codex_home, installed_plugin_roots))
+                roots = _installed_paths_from_json(client.text(installed))
+                installed_plugin_roots.extend(roots)
+                for root in roots:
+                    version = _plugin_manifest_version(client, root)
+                    if version is not None:
+                        plugin_versions[plugin] = version
+            skill_directories.extend(
+                _skill_directories(client, codex_home, installed_plugin_roots)
+            )
 
         with state.phase("codex_execution"):
             codex_started = time.perf_counter()
@@ -1278,6 +1314,14 @@ def continue_test(
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=configuration_snapshot(continuation_config),
+        provenance=build_provenance(
+            config,
+            agent_version=codex_version or previous.run.agent_version,
+            target="wsl2" if type(client).__name__ == "WslClient" else type(client).__name__,
+            target_version=None,
+            marketplace_versions=marketplace_versions,
+            plugin_versions=plugin_versions,
+        ),
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message, timed_out=timed_out),
@@ -1722,6 +1766,39 @@ def _parse_git_marketplace_source(source: str) -> tuple[str, str | None]:
             return repository, branch
     return source, None
 
+
+def _resolved_marketplace_versions(
+    client: ExecutionTarget, sources: list[str], runtime_paths: list[str]
+) -> dict[str, str]:
+    """Resolve Git marketplace checkouts to commit IDs without publishing checkout paths."""
+    versions: dict[str, str] = {}
+    for source, runtime_path in zip(sources, runtime_paths, strict=False):
+        try:
+            completed = client.bash(
+                'git -C "$1" rev-parse HEAD 2>/dev/null', runtime_path, check=False
+            )
+            commit = client.text(completed).strip()
+        except (AttributeError, OSError, RuntimeError):
+            commit = ""
+        if re.fullmatch(r"[0-9a-fA-F]{40}", commit):
+            versions[source] = commit.lower()
+    return versions
+
+
+def _plugin_manifest_version(client: ExecutionTarget, installed_root: str) -> str | None:
+    """Read only the version field from an installed plugin manifest."""
+    try:
+        completed = client.bash(
+            'for file in "$1/.codex-plugin/plugin.json" "$1/plugin.json"; do '
+            'if test -r "$file"; then cat -- "$file"; break; fi; done',
+            installed_root,
+            check=False,
+        )
+        payload = json.loads(client.text(completed))
+    except (AttributeError, OSError, RuntimeError, json.JSONDecodeError):
+        return None
+    version = payload.get("version") if isinstance(payload, dict) else None
+    return str(version) if isinstance(version, (str, int, float)) and str(version) else None
 
 def _installed_paths_from_json(output: str) -> list[str]:
     """Return installedPath values from a Codex CLI JSON response."""

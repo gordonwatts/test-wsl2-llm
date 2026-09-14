@@ -1,7 +1,5 @@
 """Configuration and rendering helpers for template-driven batch runs."""
 
-import hashlib
-import json
 import os
 import re
 from dataclasses import dataclass
@@ -15,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from test_wsl2_llm.compatibility import load_result_yaml
 from test_wsl2_llm.config import load_config_file, output_stem
 from test_wsl2_llm.models import TemplateCell, TestConfig, ValidatorConfig
+from test_wsl2_llm.provenance import effective_configuration_hash
 from test_wsl2_llm.validation import validate_configuration
 
 _FIELD = re.compile(r"{{\s*([A-Za-z0-9][A-Za-z0-9._-]*)\s*}}")
@@ -34,13 +33,8 @@ class TemplateCellCheck:
 
 
 def template_cell_fingerprint(config: TestConfig) -> str:
-    """Hash the effective cell settings, excluding destination-only controls."""
-    values = config.model_dump(mode="json")
-    values.pop("output", None)
-    values.pop("overwrite", None)
-    encoded = json.dumps(values, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
-
+    """Hash effective settings using the same canonical identity as run provenance."""
+    return effective_configuration_hash(config)
 
 def template_cell_metadata(question_id: str, repetition: int, config: TestConfig) -> TemplateCell:
     """Build the persisted identity for one expanded template cell."""
