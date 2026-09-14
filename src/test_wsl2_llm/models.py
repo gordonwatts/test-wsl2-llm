@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 ReasoningEffort = Literal["minimal", "low", "medium", "high", "xhigh"]
+ExecutionTargetName = Literal["wsl", "linux"]
 
 
 @dataclass(frozen=True)
@@ -65,7 +66,7 @@ class ValidationResult(BaseModel):
 
 
 class TestConfig(BaseModel):
-    """All behavior-affecting settings for one WSL Codex test."""
+    """All behavior-affecting settings for one isolated Codex test."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -89,6 +90,7 @@ class TestConfig(BaseModel):
     network: bool = True
     approval_policy: Literal["untrusted", "on-request", "never"] = "on-request"
     approvals_reviewer: Literal["auto_review", "user"] = "auto_review"
+    target: ExecutionTargetName = "wsl"
     auth_source: str = "~/.codex/auth.json"
     pricing_file: str | None = None
     progress_lines: int = 5
@@ -241,6 +243,7 @@ class RunResult(BaseModel):
     codex_execution_seconds: float
     status: Literal["succeeded", "failed"]
     exit_code: int
+    target: ExecutionTargetName = "wsl"
     distro: str | None
     workspace_path: str | None
     workspace_retained: bool
@@ -269,6 +272,7 @@ class TemplateCell(BaseModel):
     model_selector: str
     repetition: int
     fingerprint: str
+
 
 class ConversationTurn(BaseModel):
     """One prompt and the response produced while working in a workspace."""
