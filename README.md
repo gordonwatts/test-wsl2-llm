@@ -582,3 +582,6 @@ reference value. With a zero reference or zero tolerance, only exact equality pa
 Tolerances must be finite and nonnegative; expected numbers must be finite.
 Markdown files are rendered inline as indented Markdown content in the report; other text files
 remain available as a compact first-ten-lines preview.
+### Experimental SSH command target
+
+Issue #83 provides `SshTarget` for passwordless, noninteractive command execution through an existing OpenSSH configuration. Configure an SSH host alias (and optionally a user, port, and remote workspace parent); the adapter uses `BatchMode=yes` and a bounded `ConnectTimeout` while leaving host-key verification enabled. Saved target metadata contains only the alias and public connection settings; passwords and private keys are intentionally unsupported. Workspace transfer, remote ownership, collection, and cancellation are tracked separately in issue #84.
