@@ -115,7 +115,7 @@ error's nearest matching remedy:
 | `connect`/`continue` says the workspace was not retained | Rerun with `--keep-workspace` or `cleanup: false`; a cleaned run cannot be reopened. |
 
 See [`RELEASING.md`](RELEASING.md) for the version, tag, changelog, artifact,
-clean-install, and publication checklist. It does not publish a release.
+GitHub-install, and publication checklist. It does not publish a release.
 
 ## Install and Run
 
