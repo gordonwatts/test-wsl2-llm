@@ -94,13 +94,20 @@ def check_scenario(name: str, data: dict[str, Any]) -> None:
 
 def version_record(data: dict[str, Any]) -> dict[str, Any]:
     run = data.get("run", {})
+    provenance = data.get("provenance") or {}
     return {
-        "harness": __version__,
+        "harness": provenance.get("harness_version") or __version__,
         "python": platform.python_version(),
         "platform": platform.platform(aliased=True),
-        "agent": run.get("agent", data.get("configuration", {}).get("agent", "unknown")),
-        "agent_version": run.get("agent_version") or run.get("codex_version") or "unknown",
-        "target": run.get("target", "unknown"),
+        "agent": provenance.get(
+            "agent", run.get("agent", data.get("configuration", {}).get("agent", "unknown"))
+        ),
+        "agent_version": provenance.get("agent_version")
+        or run.get("agent_version")
+        or run.get("codex_version")
+        or "unknown",
+        "target": provenance.get("target") or run.get("target", "unknown"),
+        "target_version": provenance.get("target_version", "unknown"),
         "distribution": run.get("distro"),
     }
 
@@ -110,6 +117,9 @@ def build_bundle(results: dict[str, Path], output: Path) -> None:
     missing = REQUIRED_SCENARIOS - results.keys()
     if missing:
         raise ValueError(f"missing required scenarios: {', '.join(sorted(missing))}")
+    unexpected = results.keys() - REQUIRED_SCENARIOS
+    if unexpected:
+        raise ValueError(f"unexpected scenarios: {', '.join(sorted(unexpected))}")
     output.mkdir(parents=True, exist_ok=True)
     scenario_dir = output / "scenarios"
     scenario_dir.mkdir(exist_ok=True)
@@ -134,7 +144,7 @@ def build_bundle(results: dict[str, Path], output: Path) -> None:
             encoding="utf-8",
         )
         (scenario_dir / f"{name}.artifacts.yaml").write_text(
-            yaml.safe_dump(artifact_manifest(data), sort_keys=False), encoding="utf-8"
+            yaml.safe_dump(sanitize(artifact_manifest(data)), sort_keys=False), encoding="utf-8"
         )
         versions[name] = version_record(data)
         summary["scenarios"][name] = {
@@ -170,6 +180,10 @@ def main(argv: list[str] | None = None) -> int:
         help="repeat for success, validation-failure, timeout, and retained-continuation",
     )
     args = parser.parse_args(argv)
+    names = [name for name, _ in args.result]
+    duplicates = sorted({name for name in names if names.count(name) > 1})
+    if duplicates:
+        parser.error(f"duplicate scenarios: {', '.join(duplicates)}")
     try:
         build_bundle(dict(args.result), args.output)
     except (OSError, ValueError, KeyError, yaml.YAMLError) as exc:
