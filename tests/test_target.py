@@ -112,3 +112,18 @@ def test_linux_target_workspace_and_transfers_preserve_unicode_and_symlinks(tmp_
     assert destination.read_text(encoding="utf-8") == "hello"
     client.cleanup_workspace(run_root)
     assert not Path(run_root).exists()
+
+
+def test_ssh_target_can_be_selected_with_public_connection_settings() -> None:
+    from test_wsl2_llm.target import SshTarget
+
+    client = create_execution_target(
+        execution_target="ssh",
+        ssh_host="build-alias",
+        ssh_user="runner",
+        ssh_port=2222,
+        remote_workspace_parent="/srv/runs",
+    )
+    assert isinstance(client, SshTarget)
+    assert client.destination == "runner@build-alias"
+    assert client.remote_workspace_parent == "/srv/runs"

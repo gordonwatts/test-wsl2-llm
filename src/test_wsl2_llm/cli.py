@@ -33,7 +33,6 @@ from test_wsl2_llm.config import (
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     CancellationCoordinator,
-    WslClient,
     _is_uninformative_progress,
     create_execution_target,
 )
@@ -129,8 +128,10 @@ def run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux"] | None,
-        typer.Option("--target", help="Execution target: wsl (default) or native linux."),
+        Literal["wsl", "linux", "ssh"] | None,
+        typer.Option(
+            "--target", help="Execution target: wsl (default), native linux, or passwordless SSH."
+        ),
     ] = None,
     distro: Annotated[
         str | None, typer.Option(help="WSL distribution; defaults to WSL default.")
@@ -456,7 +457,7 @@ def template_run(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux"] | None,
+        Literal["wsl", "linux", "ssh"] | None,
         typer.Option("--target", help="Execution target: wsl (default) or native linux."),
     ] = None,
     distro: Annotated[
@@ -771,6 +772,7 @@ def template_run(
                     130,
                     "not started: cancellation requested",
                 )
+
             def persist(collected: TestResult) -> None:
                 collected.template_cell = template_cell_metadata(identifier, repetition, run_config)
                 write_reports(collected, run_config.output, resolved_base.overwrite)
@@ -950,6 +952,8 @@ def connect(
     _configure_logging(verbose)
     try:
         result = _load_result_yaml(input_yaml)
+        if str(result.configuration.get("target", "wsl")) == "ssh":
+            raise ValueError("interactive connect is deferred for the SSH target")
         workspace = result.run.workspace_path
         if not workspace:
             raise ValueError("no retained workspace path; rerun with --keep-workspace")
@@ -1037,7 +1041,7 @@ def continue_work(
         ),
     ] = None,
     target: Annotated[
-        Literal["wsl", "linux"] | None,
+        Literal["wsl", "linux", "ssh"] | None,
         typer.Option("--target", help="Execution target: wsl (default) or native linux."),
     ] = None,
     distro: Annotated[
@@ -1113,6 +1117,8 @@ def continue_work(
     _configure_logging(verbose)
     try:
         previous = _load_result_yaml(input_yaml)
+        if str(previous.configuration.get("target", "wsl")) == "ssh":
+            raise ValueError("continue is deferred for the SSH target")
         if not previous.run.workspace_path or not previous.run.workspace_retained:
             raise ValueError("the result workspace was not retained; rerun with --keep-workspace")
         file_values = load_config_file(config) if config else {}
@@ -1369,4 +1375,3 @@ def _merge_strings(*groups: list[str]) -> list[str]:
 def main() -> None:
     """Console-script entry point."""
     app()
-

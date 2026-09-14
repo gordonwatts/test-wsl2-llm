@@ -11,7 +11,8 @@ The support boundary is intentionally explicit:
 | Codex CLI (non-interactive `codex exec`) | Windows host with a WSL2 distribution | Supported |
 | Codex CLI (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Supported |
 | Claude Code | Any target | Not implemented in this package |
-| Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
+| Codex CLI (non-interactive `codex exec`) | Passwordless SSH to a Linux host | Supported; interactive access deferred |
+| Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
 
 The package name and `test-wsl2-llm` command are stable. The target and agent
 rows above describe the current release boundary; they are not promises about
@@ -326,7 +327,7 @@ The top-level template fields are:
 | `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
 | `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
 | `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
-| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default) or native `linux`; WSL distribution, temporary-run parent, and result stem. |
+| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), native `linux`, or passwordless `ssh`; WSL distribution, target temporary-run parent, and result stem. |
 | `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
 | `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
 
@@ -730,6 +731,8 @@ reference value. With a zero reference or zero tolerance, only exact equality pa
 Tolerances must be finite and nonnegative; expected numbers must be finite.
 Markdown files are rendered inline as indented Markdown content in the report; other text files
 remain available as a compact first-ten-lines preview.
-### Experimental SSH command target
+### SSH execution target
 
-Issue #83 provides `SshTarget` for passwordless, noninteractive command execution through an existing OpenSSH configuration. Configure an SSH host alias (and optionally a user, port, and remote workspace parent); the adapter uses `BatchMode=yes` and a bounded `ConnectTimeout` while leaving host-key verification enabled. Saved target metadata contains only the alias and public connection settings; passwords and private keys are intentionally unsupported. Workspace transfer, remote ownership, collection, and cancellation are tracked separately in issue #84.
+The `ssh` target runs a complete isolated test on a Linux host through the existing passwordless OpenSSH configuration. Set `target: ssh` and `ssh_host` in a saved YAML configuration; optional `ssh_user`, `ssh_port`, `remote_workspace_parent`, and `ssh_connect_timeout_seconds` select the destination. The client uses `BatchMode=yes`, bounded connection setup, and normal host-key verification. Password provisioning and private-key management are intentionally out of scope; configure authentication in the user's SSH agent/configuration first.
+
+Workspace input and artifact collection use tar streams over SSH, and require a remote POSIX shell with `mkdir`, `mktemp`, `tar`, `cat`, `find`, `realpath`, `setsid`, and `rm`. Each run writes an ownership marker below its generated `test-wsl2-llm-*` root. Cleanup verifies that marker before deleting and reports the remote path as retained if deletion cannot be confirmed. Codex is wrapped in an owned remote process group; timeout and Ctrl-C cancellation target only that group. Interactive `connect`/`continue` is deferred for SSH because those commands need a terminal-aware SSH session; use a retained remote workspace with a manually opened SSH session instead.
