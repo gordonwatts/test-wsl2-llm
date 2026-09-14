@@ -1,5 +1,6 @@
 """Validated configuration and result schemas."""
 
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -154,6 +155,75 @@ class TestConfig(BaseModel):
         if value < 1:
             raise ValueError("must be at least 1")
         return value
+
+
+class ConfigurationSnapshot(BaseModel, Mapping[str, Any]):
+    """Typed, persisted view of a resolved ``TestConfig``.
+
+    Result files are an API. Known configuration fields are typed while
+    extra fields are retained so a newer producer can be inspected by an
+    older reader without silently discarding data.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    schema_version: Literal[1] = 1
+    prompt: str | None = None
+    title: str | None = None
+    agent: str | None = None
+    model: str | None = None
+    reasoning_effort: ReasoningEffort | None = None
+    marketplaces: list[str] = Field(default_factory=list)
+    plugins: list[str] = Field(default_factory=list)
+    mcp_servers: list[str] = Field(default_factory=list)
+    copy_files: list[str] = Field(default_factory=list)
+    copy_back: list[str] = Field(default_factory=list)
+    validators: list[ValidatorConfig] = Field(default_factory=list)
+    environment: EnvironmentPolicy = Field(default_factory=EnvironmentPolicy)
+    distro: str | None = None
+    wsl_parent: str | None = None
+    output: str | None = None
+    overwrite: bool | None = None
+    sandbox: str | None = None
+    network: bool | None = None
+    approval_policy: str | None = None
+    approvals_reviewer: str | None = None
+    auth_source: str | None = None
+    pricing_file: str | None = None
+    progress_lines: int | None = None
+    timeout_seconds: float | None = None
+    max_copy_back_files: int | None = None
+    cleanup: bool | None = None
+
+    def __getitem__(self, key: str) -> Any:
+        return self.model_dump(mode="json", exclude_none=True)[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        setattr(self, key, value)
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.model_dump(mode="json", exclude_none=True))
+
+    def __len__(self) -> int:
+        return len(self.model_dump(mode="json", exclude_none=True))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.model_dump(mode="json", exclude_none=True).get(key, default)
+
+    def items(self):
+        return self.model_dump(mode="json", exclude_none=True).items()
+
+    def keys(self):
+        return self.model_dump(mode="json", exclude_none=True).keys()
+
+    def values(self):
+        return self.model_dump(mode="json", exclude_none=True).values()
+
+    def update(self, values: Mapping[str, Any] | None = None, **kwargs: Any) -> None:
+        updates = dict(values or {})
+        updates.update(kwargs)
+        for key, value in updates.items():
+            setattr(self, key, value)
 
 
 class PhaseTiming(BaseModel):
@@ -313,7 +383,7 @@ class TestResult(BaseModel):
     skills: SkillsResult
     run: RunResult
     timing: TimingResult
-    configuration: dict[str, Any]
+    configuration: ConfigurationSnapshot
     usage: list[UsageRecord]
     model_information: ModelInformation
     result: FinalResult

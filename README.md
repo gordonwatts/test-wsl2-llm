@@ -481,6 +481,30 @@ in a Markdown details section. The previous result must retain its workspace.
 
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
+## Saved-data compatibility
+
+The 1.0 compatibility contract has two versioned wire formats:
+
+- Configuration YAML is `schema_version: 1`. Files created before this contract
+  (without a version marker) are accepted as legacy pre-1.0 input and migrated
+  in memory; they are never silently treated as a future version. `run
+  --save-config` writes the v1 marker.
+- Result YAML is `schema_version: 2`, the current result format. The `generate`,
+  `connect`, `continue`, and template-resume commands all use the same loader.
+  Unknown or missing result versions fail with an actionable upgrade message
+  instead of being interpreted as a compatible result.
+
+Within the v1 configuration contract, model selectors are serialized as one
+canonical `MODEL:EFFORT` string (with `medium` when omitted), and template model
+matrices retain that selector in each result cell. The typed configuration
+snapshot in a result is intended for inspection and continuation; unknown
+fields are retained for forward-compatible diagnostics.
+
+The package promises that a 1.x reader will continue to read v1 configurations
+and v2 results produced by this package, and that 1.x writers will not change
+those formats incompatibly. A future schema requires an explicit migration or
+a major-version reader; no automatic migration is attempted for future data.
+
 ## YAML configuration
 
 Before loading an explicit `--config` file or template, the CLI looks for the optional user

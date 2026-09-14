@@ -21,6 +21,7 @@ from rich.panel import Panel
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 
 from test_wsl2_llm.agents import get_agent_adapter
+from test_wsl2_llm.compatibility import load_result_yaml
 from test_wsl2_llm.config import (
     build_config,
     load_config_file,
@@ -1102,7 +1103,8 @@ def continue_work(
         # not an input accepted by ``TestConfig``. Keep it out of the inherited
         # settings so a continuation can itself be continued.
         previous_values = {
-            key: value for key, value in previous.configuration.items() if key != "continuation_of"
+            key: value for key, value in previous.configuration.items()
+            if key not in {"continuation_of", "schema_version"}
         }
         defaults = merge_config_values(load_default_config(), previous_values)
         defaults = merge_config_values(defaults, file_values)
@@ -1332,11 +1334,8 @@ class _RepeatDisplay:
 
 
 def _load_result_yaml(path: Path) -> TestResult:
-    """Load a result YAML file with an actionable error for the wrong file type."""
-    try:
-        return TestResult.model_validate(yaml.safe_load(path.read_text(encoding="utf-8")))
-    except yaml.YAMLError as exc:
-        raise ValueError(f"while trying to parse file '{path}' as YAML: {exc}") from exc
+    """Load and validate a result through the compatibility boundary."""
+    return load_result_yaml(path)
 
 
 def _merge_strings(*groups: list[str]) -> list[str]:

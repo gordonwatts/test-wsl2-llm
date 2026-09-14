@@ -11,7 +11,9 @@ from pathlib import Path
 from urllib.parse import quote
 
 import yaml
+from pydantic import BaseModel
 
+from test_wsl2_llm.compatibility import serialize_result
 from test_wsl2_llm.config import output_paths, output_stem
 from test_wsl2_llm.models import TestResult
 
@@ -24,7 +26,7 @@ def write_reports(result: TestResult, output: str, overwrite: bool = False) -> t
         if existing:
             raise FileExistsError(f"result file already exists: {', '.join(existing)}")
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    data = result.model_dump(mode="json")
+    data = serialize_result(result)
     yaml_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
     markdown_text = render_markdown(result, report_path=markdown_path)
     staged: list[tuple[Path, Path]] = []
@@ -617,6 +619,8 @@ def _display_skill_directory(value: str) -> str:
 
 
 def _yaml(value: object) -> str:
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
     return yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=1000).rstrip()
 
 

@@ -8,6 +8,7 @@ from typing import Any
 
 import yaml
 
+from test_wsl2_llm.compatibility import normalize_config_values, serialize_config
 from test_wsl2_llm.models import TestConfig
 
 LOGGER = logging.getLogger(__name__)
@@ -50,8 +51,7 @@ def load_config_file(path: Path) -> dict[str, Any]:
     """Load YAML and resolve file-bearing values relative to the YAML file."""
     path = path.resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(raw, dict):
-        raise ValueError("configuration YAML must contain a mapping")
+    raw = normalize_config_values(raw, source=str(path))
     base = path.parent
     if raw.get("prompt_file") is not None:
         if raw.get("prompt") is not None:
@@ -119,7 +119,7 @@ def save_config(config: TestConfig, path: Path) -> None:
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False, allow_unicode=True),
+        yaml.safe_dump(serialize_config(config), sort_keys=False, allow_unicode=True),
         encoding="utf-8",
     )
 
