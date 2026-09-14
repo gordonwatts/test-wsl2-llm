@@ -19,20 +19,31 @@ the future target work tracked in the project.
 
 ## Clean-install quickstart
 
-Install from the package index in a directory that is not a source checkout:
+Install directly from the GitHub repository in a directory that is not a source
+checkout. PyPI publication is not part of the current distribution plan:
 
 ```powershell
-python -m pip install test-wsl2-llm
-# Or install an already-built wheel:
-python -m pip install C:\path\to\test_wsl2_llm-0.1.0-py3-none-any.whl
-```
-
-The `uv` tool installation is convenient for an isolated command:
-
-```powershell
-uv tool install test-wsl2-llm
+uv tool install git+https://github.com/gordonwatts/test-wsl2-llm.git
 test-wsl2-llm --help
 ```
+
+Pin the install to a reviewed tag or commit when reproducibility matters:
+
+```powershell
+uv tool install git+https://github.com/gordonwatts/test-wsl2-llm.git@v0.1.0
+test-wsl2-llm --help
+```
+
+For a one-shot invocation without installing a persistent tool, use `uvx`:
+
+```powershell
+uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm --help
+```
+
+The wheel and source distribution built by CI are validation artifacts for
+clean-install checks; they are not currently uploaded to PyPI. A locally built
+wheel can still be installed with `python -m pip install PATH\\TO\\wheel.whl`
+when inspecting an artifact.
 
 To verify an installed wheel without relying on the source tree, run this
 from a fresh directory:
@@ -123,7 +134,7 @@ Python 3.11 or newer is required. Install the package with the [uv tool](https:/
 which creates or uses an appropriate Python environment automatically:
 
 ```powershell
-uvx test-wsl2-llm run `
+uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm run `
   --distro atlas_al9 `
   --model MODEL[:EFFORT] `
   --copy-file .\servicex.yaml `
