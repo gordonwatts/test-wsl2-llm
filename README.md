@@ -85,8 +85,8 @@ Claude Code reads authentication from the inherited `ANTHROPIC_API_KEY` or
 from credentials configured in an isolated `CLAUDE_CONFIG_DIR` under the run
 root. The runner never reuses the normal Claude configuration directory. A
 Claude model selector is passed directly to Claude; the Codex `MODEL[:EFFORT]`
-setting is not translated. Claude plugin installation, MCP servers, and
-interactive follow-up are intentionally unsupported and fail clearly.
+setting is not translated. Claude plugin/MCP configuration is supported with
+Claude-native files; connect/continue remains unsupported and fails clearly.
 
 ### One short validated run
 
@@ -650,6 +650,33 @@ Cleanup failures are included in the report and leave the workspace marked retai
 
 If report writing fails, the workspace is preserved for recovery. Reports are then
 updated after cleanup to record whether removal succeeded.
+## Claude plugins and MCP servers
+
+Claude runs use Claude-native configuration, not Codex TOML. Marketplace sources
+are copied into the temporary run root and registered with the Claude plugin
+marketplace command; each plugin selector is installed into the isolated
+CLAUDE_CONFIG_DIR. Reports record requested marketplace and plugin identities
+only; they never include plugin files, MCP command arguments, URLs, headers, or
+environment values.
+
+For Claude, named MCP entries are selected from ~/.claude.json (or
+CLAUDE_CONFIG_DIR/.claude.json when that environment variable names a source
+directory). Selected entries are written to a temporary JSON file and passed
+with Claude's --mcp-config option. Only Claude-supported stdio,
+http/streamable-http, sse, and ws entries are accepted; malformed or
+unsupported entries fail before the Claude model command starts. Names are
+persisted in YAML and reports, while credentials remain in the temporary
+configuration and are never reported.
+
+The opt-in live smoke verifies both surfaces with a local fixture marketplace
+and an MCP server that exposes one tool:
+
+    $env:TEST_WSL2_LLM_CLAUDE_SMOKE = "1"
+    uv run pytest --run-wsl-acceptance -q tests/test_claude_acceptance.py -m live
+
+The smoke requires a Claude Code installation, valid authentication, and a
+fixture marketplace/MCP command available in the WSL distribution. It is
+intentionally skipped in normal CI.
 ## Named MCP servers
 
 Use repeatable `--mcp NAME` on `run`, `template run`, or `continue` to import a

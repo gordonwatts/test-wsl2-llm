@@ -54,6 +54,7 @@ class AgentAdapter(Protocol):
         model: str,
         reasoning_effort: str,
         workspace: str,
+        mcp_config: str | None = None,
     ) -> list[str]: ...
 
     def normalize_event(self, value: dict[str, object]) -> dict[str, object]: ...
@@ -88,7 +89,9 @@ class CodexAgentAdapter:
         model: str,
         reasoning_effort: str,
         workspace: str,
+        mcp_config: str | None = None,
     ) -> list[str]:
+        del mcp_config
         return target.command(
             target.shell_command(
                 'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
@@ -131,8 +134,9 @@ class FakeAgentAdapter:
         model: str,
         reasoning_effort: str,
         workspace: str,
+        mcp_config: str | None = None,
     ) -> list[str]:
-        del home, model, reasoning_effort, workspace
+        del home, model, reasoning_effort, workspace, mcp_config
         event = json.dumps(
             {
                 "type": "item.completed",
@@ -152,8 +156,8 @@ class ClaudeCodeAgentAdapter:
     home_name = "claude-home"
     auth_filename = ".credentials.json"
     capabilities = AgentCapabilities(
-        plugins=False,
-        mcp=False,
+        plugins=True,
+        mcp=True,
         # Claude model selection is independent of Codex reasoning effort. The
         # compatibility value is accepted but never forwarded to Claude.
         reasoning_efforts=frozenset({"minimal", "low", "medium", "high", "xhigh"}),
@@ -173,16 +177,19 @@ class ClaudeCodeAgentAdapter:
         model: str,
         reasoning_effort: str,
         workspace: str,
+        mcp_config: str | None = None,
     ) -> list[str]:
         del reasoning_effort
         return target.command(
             target.shell_command(
-                'cd -- "$3" && env CLAUDE_CONFIG_DIR="$1" claude --print '
-                '--output-format stream-json --verbose --model "$2" '
-                '--permission-mode bypassPermissions',
+                'cd -- "$3" && args=(--print --output-format stream-json --verbose '
+                '--model "$2" --permission-mode bypassPermissions); '
+                'if test -n "$4"; then args+=(--mcp-config "$4"); fi; '
+                'exec env CLAUDE_CONFIG_DIR="$1" claude "${args[@]}"',
                 home,
                 model,
                 workspace,
+                mcp_config or "",
                 interactive_login=True,
             )
         )

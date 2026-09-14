@@ -119,9 +119,15 @@ def test_claude_events_normalize_success_and_preserve_unknown() -> None:
     assert adapter.normalize_event(unknown) == unknown
 
 
-def test_claude_rejects_plugins_mcp_and_follow_up() -> None:
-    for field in ("plugins", "marketplaces", "mcp_servers"):
-        with pytest.raises(ValueError):
-            validate_agent_capabilities(config(agent="claude", **{field: ["x"]}))
+def test_claude_accepts_plugins_and_mcp_but_rejects_follow_up() -> None:
+    adapter = validate_agent_capabilities(
+        config(
+            agent="claude",
+            plugins=["demo@marketplace"],
+            marketplaces=["marketplace"],
+            mcp_servers=["server"],
+        )
+    )
+    assert adapter.name == "claude"
     with pytest.raises(ValueError, match="interactive follow-up"):
         validate_agent_capabilities(config(agent="claude"), interactive_follow_up=True)
