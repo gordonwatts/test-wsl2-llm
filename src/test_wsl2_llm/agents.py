@@ -41,6 +41,8 @@ class AgentAdapter(Protocol):
 
     name: str
     capabilities: AgentCapabilities
+    home_name: str
+    auth_filename: str
 
     def preflight(self, target: ExecutionTarget) -> AgentPreflight: ...
 
@@ -61,6 +63,8 @@ class CodexAgentAdapter:
     """Adapter for the existing Codex CLI behavior."""
 
     name = "codex"
+    home_name = "codex-home"
+    auth_filename = "auth.json"
     capabilities = AgentCapabilities(
         plugins=True,
         mcp=True,
@@ -105,6 +109,8 @@ class FakeAgentAdapter:
     """Deterministic second adapter used to exercise dispatch without credentials."""
 
     name = "fake"
+    home_name = "fake-home"
+    auth_filename = "auth.json"
     capabilities = AgentCapabilities(
         plugins=False,
         mcp=False,
@@ -139,9 +145,112 @@ class FakeAgentAdapter:
         return value
 
 
-_ADAPTERS: dict[str, type[CodexAgentAdapter] | type[FakeAgentAdapter]] = {
+class ClaudeCodeAgentAdapter:
+    """Adapter for one noninteractive Claude Code ``--print`` run."""
+
+    name = "claude"
+    home_name = "claude-home"
+    auth_filename = ".credentials.json"
+    capabilities = AgentCapabilities(
+        plugins=False,
+        mcp=False,
+        # Claude model selection is independent of Codex reasoning effort. The
+        # compatibility value is accepted but never forwarded to Claude.
+        reasoning_efforts=frozenset({"minimal", "low", "medium", "high", "xhigh"}),
+        interactive_follow_up=False,
+        requires_auth=False,
+    )
+
+    def preflight(self, target: ExecutionTarget) -> AgentPreflight:
+        version = target.text(target.login_bash("claude --version")).strip()
+        return AgentPreflight(version=version)
+
+    def command(
+        self,
+        target: ExecutionTarget,
+        *,
+        home: str,
+        model: str,
+        reasoning_effort: str,
+        workspace: str,
+    ) -> list[str]:
+        del reasoning_effort
+        return target.command(
+            target.shell_command(
+                'cd -- "$3" && env CLAUDE_CONFIG_DIR="$1" claude --print '
+                '--output-format stream-json --verbose --model "$2" '
+                '--permission-mode bypassPermissions',
+                home,
+                model,
+                workspace,
+                interactive_login=True,
+            )
+        )
+
+    def normalize_event(self, value: dict[str, object]) -> dict[str, object]:
+        event_type = value.get("type")
+        if event_type == "assistant":
+            message = value.get("message")
+            normalized = dict(value)
+            normalized["type"] = "item.completed"
+            text = _claude_text(message.get("content")) if isinstance(message, dict) else ""
+            normalized["item"] = {"type": "agent_message", "text": text}
+            if isinstance(message, dict) and isinstance(message.get("usage"), dict):
+                normalized["usage"] = _claude_usage(message["usage"])
+            return normalized
+        if event_type == "result":
+            normalized = dict(value)
+            normalized["type"] = "turn.completed"
+            result = value.get("result")
+            if isinstance(result, str):
+                normalized["item"] = {"type": "agent_message", "text": result}
+            if isinstance(value.get("usage"), dict):
+                normalized["usage"] = _claude_usage(value["usage"])
+            return normalized
+        if event_type == "system":
+            normalized = dict(value)
+            normalized["type"] = "session.started"
+            return normalized
+        # Retain unknown events for diagnostics; shared extractors ignore them.
+        return value
+
+
+def _claude_text(content: object) -> str:
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        block["text"]
+        for block in content
+        if isinstance(block, dict) and isinstance(block.get("text"), str)
+    )
+
+
+def _claude_usage(value: dict[str, object]) -> dict[str, int]:
+    """Map Claude usage names onto the runner's canonical token fields."""
+    def integer(*names: str) -> int:
+        for name in names:
+            item = value.get(name)
+            if isinstance(item, int):
+                return item
+        return 0
+
+    return {
+        "input_tokens": integer("input_tokens"),
+        "cached_input_tokens": integer(
+            "cached_input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"
+        ),
+        "output_tokens": integer("output_tokens"),
+        "reasoning_output_tokens": integer("reasoning_output_tokens"),
+    }
+
+
+_ADAPTERS: dict[str, type[AgentAdapter]] = {
     "codex": CodexAgentAdapter,
     "fake": FakeAgentAdapter,
+    "claude": ClaudeCodeAgentAdapter,
+    "claude-code": ClaudeCodeAgentAdapter,
 }
 
 
@@ -183,6 +292,7 @@ __all__ = [
     "AgentCapabilities",
     "AgentPreflight",
     "CodexAgentAdapter",
+    "ClaudeCodeAgentAdapter",
     "FakeAgentAdapter",
     "get_agent_adapter",
     "validate_agent_capabilities",

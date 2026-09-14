@@ -1,6 +1,6 @@
 # test-wsl2-llm
 
-`test-wsl2-llm` runs the Codex CLI from Windows inside a fresh WSL2 workspace. It copies Windows-side prompts and local plugin marketplaces into WSL, isolates Codex configuration while reusing a protected copy of existing authentication, and writes matching Markdown and YAML results.
+`test-wsl2-llm` runs a supported coding-agent CLI from Windows inside a fresh WSL2 workspace. It copies Windows-side prompts and local plugin marketplaces into WSL, isolates agent configuration, and writes matching Markdown and YAML results.
 
 ## Supported environments
 
@@ -10,7 +10,8 @@ The support boundary is intentionally explicit:
 | --- | --- | --- |
 | Codex CLI (non-interactive `codex exec`) | Windows host with a WSL2 distribution | Supported |
 | Codex CLI (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Supported |
-| Claude Code | Any target | Not implemented in this package |
+| Claude Code (non-interactive `claude --print`) | Windows host with a WSL2 distribution | Supported for one prompt |
+| Claude Code (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Not supported; fails clearly |
 | Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
 
 The package name and `test-wsl2-llm` command are stable. The target and agent
@@ -56,11 +57,12 @@ test-wsl2-llm template init .\questions.yaml
 ### Prerequisites and authentication
 
 The supported target needs Windows WSL2, a running Linux distribution with
-`bash`, and the Codex CLI on that distribution's login-shell `PATH`:
+`bash`, and the selected CLI on that distribution's login-shell `PATH`:
 
 ```powershell
 wsl --install
 wsl -d <distribution> -- bash -lic "codex --version"
+wsl -d <distribution> -- bash -lic "claude --version"
 ```
 
 Log Codex into that distribution before running a test. By default the
@@ -70,6 +72,19 @@ cleanup. Use `--auth-source PATH` (or `auth_source` in YAML) when the readable
 WSL auth file is elsewhere. Authentication files and their contents are never
 written to reports. A real Codex account and model access are required for a
 live run; normal CI tests do not make model calls.
+
+To run Claude Code, select it explicitly and provide a Claude model name:
+
+```powershell
+test-wsl2-llm run --agent claude --model claude-sonnet-4-5 --prompt "Create hello.txt containing READY" --output .\results\claude
+```
+
+Claude Code reads authentication from the inherited `ANTHROPIC_API_KEY` or
+from credentials configured in an isolated `CLAUDE_CONFIG_DIR` under the run
+root. The runner never reuses the normal Claude configuration directory. A
+Claude model selector is passed directly to Claude; the Codex `MODEL[:EFFORT]`
+setting is not translated. Claude plugin installation, MCP servers, and
+interactive follow-up are intentionally unsupported and fail clearly.
 
 ### One short validated run
 

@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from test_wsl2_llm.agents import (
+    ClaudeCodeAgentAdapter,
     FakeAgentAdapter,
     get_agent_adapter,
     validate_agent_capabilities,
@@ -70,3 +71,57 @@ def test_fake_agent_command_is_deterministic() -> None:
 
     assert command[0] == 'printf "%s\\n" "$1"'
     assert command[1].startswith('{"type": "item.completed"')
+
+
+def test_claude_adapter_builds_isolated_noninteractive_command() -> None:
+    adapter = get_agent_adapter("claude")
+    assert isinstance(adapter, ClaudeCodeAgentAdapter)
+    assert adapter.home_name == "claude-home"
+    assert adapter.auth_filename == ".credentials.json"
+    command = adapter.command(
+        CommandTarget(),
+        home="/run/claude-home",
+        model="claude-sonnet-4-5",
+        reasoning_effort="high",
+        workspace="/run/workspace",
+    )
+    assert "CLAUDE_CONFIG_DIR" in command[0]
+    assert "--print" in command[0]
+    assert "--output-format stream-json" in command[0]
+    assert "--model \"$2\"" in command[0]
+    assert "bypassPermissions" in command[0]
+    assert "--config" not in command[0]
+
+
+def test_claude_events_normalize_success_and_preserve_unknown() -> None:
+    adapter = get_agent_adapter("claude")
+    assistant = adapter.normalize_event(
+        {
+            "type": "assistant",
+            "message": {
+                "content": [{"type": "text", "text": "hello"}],
+                "usage": {"input_tokens": 11, "output_tokens": 3},
+            },
+        }
+    )
+    assert assistant["type"] == "item.completed"
+    assert assistant["item"] == {"type": "agent_message", "text": "hello"}
+    assert assistant["usage"] == {
+        "input_tokens": 11,
+        "cached_input_tokens": 0,
+        "output_tokens": 3,
+        "reasoning_output_tokens": 0,
+    }
+    result = adapter.normalize_event({"type": "result", "result": "done"})
+    assert result["type"] == "turn.completed"
+    assert result["item"] == {"type": "agent_message", "text": "done"}
+    unknown = {"type": "future_event", "payload": {"ok": True}}
+    assert adapter.normalize_event(unknown) == unknown
+
+
+def test_claude_rejects_plugins_mcp_and_follow_up() -> None:
+    for field in ("plugins", "marketplaces", "mcp_servers"):
+        with pytest.raises(ValueError):
+            validate_agent_capabilities(config(agent="claude", **{field: ["x"]}))
+    with pytest.raises(ValueError, match="interactive follow-up"):
+        validate_agent_capabilities(config(agent="claude"), interactive_follow_up=True)

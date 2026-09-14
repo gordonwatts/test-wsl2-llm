@@ -75,11 +75,25 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
     for event in events:
         if event.get("type") != "turn.completed" or not isinstance(event.get("usage"), dict):
             continue
-        found = True
-        for key in totals:
-            value = event["usage"].get(key, 0)
-            if isinstance(value, int):
-                totals[key] += value
+        usage = event["usage"]
+        aliases = {
+            "input_tokens": ("input_tokens",),
+            "cached_input_tokens": (
+                "cached_input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            ),
+            "output_tokens": ("output_tokens",),
+            "reasoning_output_tokens": ("reasoning_output_tokens",),
+        }
+        event_found = False
+        for key, names in aliases.items():
+            values = [usage.get(name) for name in names]
+            integers = [value for value in values if isinstance(value, int)]
+            if integers:
+                event_found = True
+                totals[key] += sum(integers)
+        found = found or event_found
     if not found:
         return []
     return [
@@ -96,12 +110,14 @@ def final_message_from_events(events: list[dict[str, Any]]) -> str | None:
     for event in events:
         item = event.get("item")
         if (
-            event.get("type") == "item.completed"
+            event.get("type") in {"item.completed", "turn.completed"}
             and isinstance(item, dict)
             and item.get("type") == "agent_message"
             and isinstance(item.get("text"), str)
         ):
             messages.append(item["text"])
+        elif event.get("type") == "turn.completed" and isinstance(event.get("result"), str):
+            messages.append(event["result"])
     return messages[-1] if messages else None
 
 
