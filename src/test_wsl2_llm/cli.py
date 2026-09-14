@@ -33,7 +33,6 @@ from test_wsl2_llm.config import (
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     CancellationCoordinator,
-    WslClient,
     _is_uninformative_progress,
     create_execution_target,
 )
