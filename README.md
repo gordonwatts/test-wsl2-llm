@@ -2,13 +2,139 @@
 
 `test-wsl2-llm` runs the Codex CLI from Windows inside a fresh WSL2 workspace. It copies Windows-side prompts and local plugin marketplaces into WSL, isolates Codex configuration while reusing a protected copy of existing authentication, and writes matching Markdown and YAML results.
 
+## Supported environments
+
+The support boundary is intentionally explicit:
+
+| Agent | Execution target | Status |
+| --- | --- | --- |
+| Codex CLI (non-interactive `codex exec`) | Windows host with a WSL2 distribution | Supported |
+| Codex CLI (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Supported |
+| Claude Code | Any target | Not implemented in this package |
+| Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
+
+The package name and `test-wsl2-llm` command are stable. The target and agent
+rows above describe the current release boundary; they are not promises about
+the future target work tracked in the project.
+
+## Clean-install quickstart
+
+Install directly from the GitHub repository in a directory that is not a source
+checkout. PyPI publication is not part of the current distribution plan:
+
+```powershell
+uv tool install git+https://github.com/gordonwatts/test-wsl2-llm.git
+test-wsl2-llm --help
+```
+
+Pin the install to a reviewed tag or commit when reproducibility matters:
+
+```powershell
+uv tool install git+https://github.com/gordonwatts/test-wsl2-llm.git@v0.1.0
+test-wsl2-llm --help
+```
+
+For a one-shot invocation without installing a persistent tool, use `uvx`:
+
+```powershell
+uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm --help
+```
+
+The wheel and source distribution built by CI are validation artifacts for
+clean-install checks; they are not currently uploaded to PyPI. A locally built
+wheel can still be installed with `python -m pip install PATH\\TO\\wheel.whl`
+when inspecting an artifact.
+
+To verify an installed wheel without relying on the source tree, run this
+from a fresh directory:
+
+```powershell
+python -c "from importlib.resources import files; p=files('test_wsl2_llm'); assert (p/'template.schema.json').is_file(); assert (p/'model-pricing.yaml').is_file()"
+test-wsl2-llm template init .\questions.yaml
+```
+
+### Prerequisites and authentication
+
+The supported target needs Windows WSL2, a running Linux distribution with
+`bash`, and the Codex CLI on that distribution's login-shell `PATH`:
+
+```powershell
+wsl --install
+wsl -d <distribution> -- bash -lic "codex --version"
+```
+
+Log Codex into that distribution before running a test. By default the
+harness reads the WSL file `~/.codex/auth.json`, copies it into a temporary
+isolated Codex home with restrictive permissions, and removes the copy during
+cleanup. Use `--auth-source PATH` (or `auth_source` in YAML) when the readable
+WSL auth file is elsewhere. Authentication files and their contents are never
+written to reports. A real Codex account and model access are required for a
+live run; normal CI tests do not make model calls.
+
+### One short validated run
+
+Create a YAML file outside the repository so the run validates both the model
+response and a returned artifact:
+
+```yaml
+prompt: |
+  Create hello.txt in the workspace containing exactly "Hello from WSL".
+  In your final response include the word READY.
+model: MODEL:medium
+copy_back:
+  - hello.txt
+validators:
+  - name: require_string
+    arguments:
+      string: READY
+output: .\results\hello
+```
+
+Run it from PowerShell:
+
+```powershell
+test-wsl2-llm run --config .\quickstart.yaml
+```
+
+Success means `results\hello.yaml` records a passed `require_string` check,
+`results\hello.md` is readable, and `results\hello.output.hello.txt` contains
+the requested file. Add `distro: <distribution>` when the WSL default is not
+the distribution where Codex is installed.
+
+### Templates and retained workspaces
+
+`template init questions.yaml` creates a starter batch. `template run` skips
+matching valid result pairs on a later invocation; use `--force` to rerun all
+selected cells or `--retry failed`/`--retry incomplete` for targeted recovery.
+For interactive inspection, run with `--keep-workspace` (equivalently,
+`cleanup: false` in YAML), then use `connect result.yaml --resume` or
+`continue result.yaml --prompt "Review the result." --output results\review`.
+Without retention, the temporary WSL workspace is intentionally removed after
+the report and copied-back artifacts are saved.
+
+### When setup fails
+
+The first setup check is intentionally before workspace creation. Use the
+error's nearest matching remedy:
+
+| Error or symptom | Setup to check |
+| --- | --- |
+| `wsl.exe` is not found or the WSL command cannot start | Install/enable WSL2 and confirm `wsl -l -v` lists the chosen distribution. |
+| `codex --version` fails or Codex exits before a response | Install Codex in the WSL distribution's login shell and confirm model/account access with `wsl -d <distribution> -- bash -lic "codex --version"`. |
+| `Codex auth file not found` | Log in inside that WSL distribution or pass the correct readable WSL path with `--auth-source`. |
+| Marketplace/plugin installation fails | Check the Git URL, optional `@branch`, and `plugin-name@marketplace-name` selector; run without those options to isolate the base setup. |
+| `connect`/`continue` says the workspace was not retained | Rerun with `--keep-workspace` or `cleanup: false`; a cleaned run cannot be reopened. |
+
+See [`RELEASING.md`](RELEASING.md) for the version, tag, changelog, artifact,
+GitHub-install, and publication checklist. It does not publish a release.
+
 ## Install and Run
 
 Python 3.11 or newer is required. Install the package with the [uv tool](https://docs.astral.sh/uv/),
 which creates or uses an appropriate Python environment automatically:
 
 ```powershell
-uvx test-wsl2-llm run `
+uvx --from git+https://github.com/gordonwatts/test-wsl2-llm.git test-wsl2-llm run `
   --distro atlas_al9 `
   --model MODEL[:EFFORT] `
   --copy-file .\servicex.yaml `

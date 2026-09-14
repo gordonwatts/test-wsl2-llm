@@ -104,6 +104,8 @@ jobs:
         run: |
           if (-not (Get-ChildItem dist -Filter *.whl)) { throw 'uv build did not produce a wheel' }
           if (-not (Get-ChildItem dist -Filter *.tar.gz)) { throw 'uv build did not produce an sdist' }
+      - name: Verify package data in wheel and sdist
+        run: uv run python scripts/verify_package.py dist
       - name: Smoke-install wheel outside the checkout (Unix)
         if: runner.os != 'Windows'
         shell: bash
