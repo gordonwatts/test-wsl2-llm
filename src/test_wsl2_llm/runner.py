@@ -827,9 +827,7 @@ def run_test(
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
     adapter = validate_agent_capabilities(config)
-    claude_mcp_servers = (
-        _load_claude_mcp_servers(config.mcp_servers) if adapter.name == 'claude' else {}
-    )
+    mcp_payload = adapter.mcp_config(config)
     console = console or Console(stderr=True)
     client = (
         target
@@ -870,7 +868,7 @@ def run_test(
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
     resolved_parent = config.wsl_parent
-    resolved_auth = config.auth_source
+    resolved_auth: str | None = config.auth_source
     model_information = ModelInformation(
         pricing_file=config.pricing_file or "bundled:model-pricing.yaml",
         currency="USD",
@@ -878,14 +876,14 @@ def run_test(
     pricing_valid = False
 
     try:
-        codex_configuration = _codex_config(config) if adapter.name == "codex" else ""
+        codex_configuration = adapter.configuration(config)
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
             codex_version = adapter.preflight(client).version
             resolved_parent = _resolve_wsl_path(client, config.wsl_parent, require_directory=True)
             if adapter.capabilities.requires_auth:
-                resolved_auth = _resolve_wsl_path(client, config.auth_source)
+                resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
 
         with state.phase("workspace_creation"):
             run_root = client.create_workspace(resolved_parent)
@@ -903,55 +901,20 @@ def run_test(
                 client, config.marketplaces, runtime_marketplaces
             )
             _transfer_files(client, config.copy_files, workspace_path)
-            if claude_mcp_servers:
+            if mcp_payload:
                 mcp_config_path = f"{run_root}/.harness/inputs/claude-mcp.json"
-                _write_wsl_file(
-                    client,
-                    mcp_config_path,
-                    json.dumps({"mcpServers": claude_mcp_servers}, sort_keys=True),
-                )
+                _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
-            if adapter.capabilities.requires_auth:
-                _copy_auth(client, resolved_auth, codex_home)
-            else:
-                client.bash('mkdir -p -- "$1"', codex_home)
+            adapter.setup_home(client, codex_home, resolved_auth or "")
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
-            installed_plugin_roots: list[str] = []
-            if adapter.name == "claude":
-                for source in runtime_marketplaces:
-                    client.login_bash(
-                        'env CLAUDE_CONFIG_DIR="$1" claude plugin marketplace add "$2"',
-                        codex_home,
-                        source,
-                    )
-                for plugin in config.plugins:
-                    client.login_bash(
-                        'env CLAUDE_CONFIG_DIR="$1" claude plugin install "$2" --scope user --yes',
-                        codex_home,
-                        plugin,
-                    )
-            else:
-                for source in runtime_marketplaces:
-                    client.login_bash(
-                        'env CODEX_HOME="$1" codex plugin marketplace add "$2" --json',
-                        codex_home,
-                        source,
-                    )
-                for plugin in config.plugins:
-                    installed = client.login_bash(
-                        'env CODEX_HOME="$1" codex plugin add "$2" --json',
-                        codex_home,
-                        plugin,
-                    )
-                    roots = _installed_paths_from_json(client.text(installed))
-                    installed_plugin_roots.extend(roots)
-                    for root in roots:
-                        version = _plugin_manifest_version(client, root)
-                        if version is not None:
-                            plugin_versions[plugin] = version
+            plugin_setup = adapter.install_plugins(
+                client, codex_home, runtime_marketplaces, config.plugins
+            )
+            installed_plugin_roots = list(plugin_setup.installed_roots)
+            plugin_versions.update(plugin_setup.plugin_versions)
             for installed_root in sorted(set(installed_plugin_roots)):
                 found = client.bash(
                     'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
@@ -959,7 +922,6 @@ def run_test(
                 )
                 skill_directories.extend(line for line in client.text(found).splitlines() if line)
             skill_directories = sorted(set(skill_directories))
-
         with state.phase(f"{adapter.name}_execution"):
             if cancellation is not None and cancellation.cancelled:
                 raise KeyboardInterrupt
@@ -1061,7 +1023,7 @@ def run_test(
             distro=config.distro,
             workspace_path=workspace_path,
             workspace_retained=retained,
-            codex_version=codex_version if adapter.name == "codex" else None,
+            codex_version=adapter.result_version(codex_version),
             agent=config.agent,
             agent_version=codex_version,
             agent_execution_seconds=codex_seconds,
@@ -1137,9 +1099,7 @@ def continue_test(
 
     validate_configuration(config.validators)
     adapter = validate_agent_capabilities(config, interactive_follow_up=True)
-    claude_mcp_servers = (
-        _load_claude_mcp_servers(config.mcp_servers) if adapter.name == 'claude' else {}
-    )
+    mcp_payload = adapter.mcp_config(config)
     console = console or Console(stderr=True)
     client = (
         target
@@ -1163,7 +1123,7 @@ def continue_test(
     ]
     effective_prompt = continuation_prompt(history, prompt)
     codex_version: str | None = None
-    resolved_auth = config.auth_source
+    resolved_auth: str | None = config.auth_source
     command_argv: list[str] = []
     stdout = ""
     stderr = ""
@@ -1188,13 +1148,13 @@ def continue_test(
     pricing_valid = False
 
     try:
-        codex_configuration = _codex_config(config) if adapter.name == "codex" else ""
+        codex_configuration = adapter.configuration(config)
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
             codex_version = adapter.preflight(client).version
             if adapter.capabilities.requires_auth:
-                resolved_auth = _resolve_wsl_path(client, config.auth_source)
+                resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
 
         with state.phase("input_transfer"):
             continuation_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -1218,61 +1178,25 @@ def continue_test(
                 source for source in config.copy_files if source not in prior_copy_files
             ]
             _transfer_files(client, new_copy_files, workspace_path)
-            if claude_mcp_servers:
+            if mcp_payload:
                 mcp_config_path = f"{run_root}/.harness/inputs/claude-mcp.json"
-                _write_wsl_file(
-                    client,
-                    mcp_config_path,
-                    json.dumps({"mcpServers": claude_mcp_servers}, sort_keys=True),
-                )
+                _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
-            if adapter.capabilities.requires_auth:
-                _copy_auth(client, resolved_auth, codex_home)
-            else:
-                client.bash('mkdir -p -- "$1"', codex_home)
+            adapter.setup_home(client, codex_home, resolved_auth or "")
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
         with state.phase("plugin_installation"):
-            installed_plugin_roots: list[str] = []
             prior_plugins = set(previous.skills.plugins)
             new_plugins = [plugin for plugin in config.plugins if plugin not in prior_plugins]
-            if adapter.name == "claude":
-                for source in runtime_marketplaces:
-                    client.login_bash(
-                        'env CLAUDE_CONFIG_DIR="$1" claude plugin marketplace add "$2"',
-                        codex_home,
-                        source,
-                    )
-                for plugin in new_plugins:
-                    client.login_bash(
-                        'env CLAUDE_CONFIG_DIR="$1" claude plugin install "$2" --scope user --yes',
-                        codex_home,
-                        plugin,
-                    )
-            else:
-                for source in runtime_marketplaces:
-                    client.login_bash(
-                        'env CODEX_HOME="$1" codex plugin marketplace add "$2" --json',
-                        codex_home,
-                        source,
-                    )
-                for plugin in new_plugins:
-                    installed = client.login_bash(
-                        'env CODEX_HOME="$1" codex plugin add "$2" --json',
-                        codex_home,
-                        plugin,
-                    )
-                    roots = _installed_paths_from_json(client.text(installed))
-                    installed_plugin_roots.extend(roots)
-                    for root in roots:
-                        version = _plugin_manifest_version(client, root)
-                        if version is not None:
-                            plugin_versions[plugin] = version
+            plugin_setup = adapter.install_plugins(
+                client, codex_home, runtime_marketplaces, new_plugins
+            )
+            installed_plugin_roots = list(plugin_setup.installed_roots)
+            plugin_versions.update(plugin_setup.plugin_versions)
             skill_directories.extend(
                 _skill_directories(client, codex_home, installed_plugin_roots)
             )
-
         with state.phase(f"{adapter.name}_execution"):
             codex_started = time.perf_counter()
             command_argv = adapter.command(
@@ -1372,7 +1296,7 @@ def continue_test(
             distro=config.distro or previous.run.distro,
             workspace_path=workspace_path,
             workspace_retained=True,
-            codex_version=codex_version if adapter.name == "codex" else previous.run.codex_version,
+            codex_version=adapter.result_version(codex_version) or previous.run.codex_version,
             agent=config.agent,
             agent_version=codex_version or previous.run.agent_version or previous.run.codex_version,
             agent_execution_seconds=codex_seconds,

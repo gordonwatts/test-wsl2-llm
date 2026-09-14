@@ -78,6 +78,7 @@ def test_claude_adapter_builds_isolated_noninteractive_command() -> None:
     assert isinstance(adapter, ClaudeCodeAgentAdapter)
     assert adapter.home_name == "claude-home"
     assert adapter.auth_filename == ".credentials.json"
+    assert adapter.capabilities.requires_auth
     command = adapter.command(
         CommandTarget(),
         home="/run/claude-home",
