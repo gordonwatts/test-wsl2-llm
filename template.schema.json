@@ -7,6 +7,12 @@
   "additionalProperties": false,
   "required": ["prompt_template", "questions"],
   "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "default": 1,
+      "description": "Version 1 configuration contract. Older unversioned files are migrated on load."
+    },
     "prompt_template": {
       "type": "string",
       "minLength": 1,

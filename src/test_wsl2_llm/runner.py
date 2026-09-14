@@ -31,6 +31,7 @@ from rich.live import Live
 from rich.panel import Panel
 
 from test_wsl2_llm.agents import AgentAdapter, validate_agent_capabilities
+from test_wsl2_llm.compatibility import configuration_snapshot, serialize_config
 from test_wsl2_llm.config import output_stem
 from test_wsl2_llm.models import (
     CommandResult,
@@ -875,7 +876,7 @@ def run_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=config.model_dump(mode="json"),
+        configuration=configuration_snapshot(config),
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message, timed_out=timed_out),
@@ -1099,7 +1100,7 @@ def continue_test(
     all_marketplaces = _unique([*previous.skills.marketplaces, *config.marketplaces])
     all_plugins = _unique([*previous.skills.plugins, *config.plugins])
     conversation = [*history, ConversationTurn(prompt=prompt, final_response=final_message)]
-    continuation_config = config.model_dump(mode="json")
+    continuation_config = serialize_config(config)
     continuation_config["continuation_of"] = workspace_path
     result = TestResult(
         prompt=prompt,
@@ -1130,7 +1131,7 @@ def continue_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=continuation_config,
+        configuration=configuration_snapshot(continuation_config),
         usage=usage,
         model_information=model_information,
         result=FinalResult(final_message=final_message, timed_out=timed_out),
