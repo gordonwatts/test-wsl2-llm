@@ -1,0 +1,62 @@
+schema_version: 1
+contract: 1.0
+candidate_version: 0.1.0
+
+# Supported rows are release blockers until their live smoke passes.
+targets:
+  - id: codex-wsl
+    agent: codex
+    target: wsl
+    status: supported
+    blocker: true
+    smoke: success
+    notes: Windows host, WSL2 distribution, and non-interactive codex exec.
+  - id: codex-wsl-plugin-mcp
+    agent: codex
+    target: wsl
+    status: supported
+    blocker: true
+    smoke: plugin-mcp
+    notes: One local plugin and one named MCP server in the isolated run home.
+  - id: codex-wsl-retained
+    agent: codex
+    target: wsl
+    status: supported
+    blocker: true
+    smoke: retained-continuation
+    notes: connect/continue against a retained WSL workspace.
+  - id: claude-wsl
+    agent: claude
+    target: wsl
+    status: supported
+    blocker: true
+    smoke: claude
+    notes: One non-interactive claude --print run; credentials are environment-specific.
+  - id: codex-ssh
+    agent: codex
+    target: ssh
+    status: experimental
+    blocker: false
+    smoke: ssh
+    notes: Non-interactive passwordless SSH transfer is implemented; interactive SSH is deferred.
+  - id: codex-native-linux
+    agent: codex
+    target: local
+    status: experimental
+    blocker: false
+    smoke: native-linux
+    notes: Native Linux target is available but not part of the first release blocker set.
+  - id: codex-native-macos
+    agent: codex
+    target: macos
+    status: deferred
+    blocker: false
+    smoke: none
+    notes: No macOS host is available in the supported validation environment.
+  - id: claude-interactive-or-plugins
+    agent: claude
+    target: wsl
+    status: deferred
+    blocker: false
+    smoke: none
+    notes: Claude interactive follow-up, plugin installation, and MCP are explicitly rejected.
