@@ -866,7 +866,7 @@ def run_test(
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
     resolved_parent = config.wsl_parent
-    resolved_auth = config.auth_source
+    resolved_auth: str | None = config.auth_source
     model_information = ModelInformation(
         pricing_file=config.pricing_file or "bundled:model-pricing.yaml",
         currency="USD",
@@ -874,14 +874,14 @@ def run_test(
     pricing_valid = False
 
     try:
-        codex_configuration = _codex_config(config) if adapter.name == "codex" else ""
+        codex_configuration = adapter.configuration(config)
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
             codex_version = adapter.preflight(client).version
             resolved_parent = _resolve_wsl_path(client, config.wsl_parent, require_directory=True)
             if adapter.capabilities.requires_auth:
-                resolved_auth = _resolve_wsl_path(client, config.auth_source)
+                resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
 
         with state.phase("workspace_creation"):
             run_root = client.create_workspace(resolved_parent)
@@ -901,10 +901,7 @@ def run_test(
             _transfer_files(client, config.copy_files, workspace_path)
 
         with state.phase(f"{adapter.name}_home_setup"):
-            if adapter.capabilities.requires_auth:
-                _copy_auth(client, resolved_auth, codex_home)
-            else:
-                client.bash('mkdir -p -- "$1"', codex_home)
+            adapter.setup_home(client, codex_home, resolved_auth or "")
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1036,7 +1033,7 @@ def run_test(
             distro=config.distro,
             workspace_path=workspace_path,
             workspace_retained=retained,
-            codex_version=codex_version if adapter.name == "codex" else None,
+            codex_version=adapter.result_version(codex_version),
             agent=config.agent,
             agent_version=codex_version,
             agent_execution_seconds=codex_seconds,
@@ -1135,7 +1132,7 @@ def continue_test(
     ]
     effective_prompt = continuation_prompt(history, prompt)
     codex_version: str | None = None
-    resolved_auth = config.auth_source
+    resolved_auth: str | None = config.auth_source
     command_argv: list[str] = []
     stdout = ""
     stderr = ""
@@ -1159,13 +1156,13 @@ def continue_test(
     pricing_valid = False
 
     try:
-        codex_configuration = _codex_config(config) if adapter.name == "codex" else ""
+        codex_configuration = adapter.configuration(config)
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
             codex_version = adapter.preflight(client).version
             if adapter.capabilities.requires_auth:
-                resolved_auth = _resolve_wsl_path(client, config.auth_source)
+                resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
 
         with state.phase("input_transfer"):
             continuation_id = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
@@ -1191,10 +1188,7 @@ def continue_test(
             _transfer_files(client, new_copy_files, workspace_path)
 
         with state.phase(f"{adapter.name}_home_setup"):
-            if adapter.capabilities.requires_auth:
-                _copy_auth(client, resolved_auth, codex_home)
-            else:
-                client.bash('mkdir -p -- "$1"', codex_home)
+            adapter.setup_home(client, codex_home, resolved_auth or "")
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1322,7 +1316,7 @@ def continue_test(
             distro=config.distro or previous.run.distro,
             workspace_path=workspace_path,
             workspace_retained=True,
-            codex_version=codex_version if adapter.name == "codex" else previous.run.codex_version,
+            codex_version=adapter.result_version(codex_version) or previous.run.codex_version,
             agent=config.agent,
             agent_version=codex_version or previous.run.agent_version or previous.run.codex_version,
             agent_execution_seconds=codex_seconds,

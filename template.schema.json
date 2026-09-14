@@ -166,8 +166,7 @@
     },
     "auth_source": {
       "type": "string",
-      "default": "~/.codex/auth.json",
-      "description": "Readable WSL-side Codex auth.json source copied into the isolated run CODEX_HOME."
+      "description": "Optional host or target credential file. Codex defaults to ~/.codex/auth.json; Claude defaults to the invocation environment's Windows .claude\\.credentials.json."
     },
     "pricing_file": {
       "type": ["string", "null"],

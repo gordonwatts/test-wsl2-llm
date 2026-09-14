@@ -97,7 +97,7 @@ class TestConfig(BaseModel):
     ssh_port: int | None = None
     remote_workspace_parent: str = "/tmp"
     ssh_connect_timeout_seconds: float = 10.0
-    auth_source: str = "~/.codex/auth.json"
+    auth_source: str | None = None
     pricing_file: str | None = None
     progress_lines: int = 5
     timeout_seconds: float | None = 1800.0

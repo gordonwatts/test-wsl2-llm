@@ -67,26 +67,29 @@ wsl -d <distribution> -- bash -lic "codex --version"
 wsl -d <distribution> -- bash -lic "claude --version"
 ```
 
-Log Codex into that distribution before running a test. By default the
-harness reads the WSL file `~/.codex/auth.json`, copies it into a temporary
-isolated Codex home with restrictive permissions, and removes the copy during
-cleanup. Use `--auth-source PATH` (or `auth_source` in YAML) when the readable
-WSL auth file is elsewhere. Authentication files and their contents are never
-written to reports. A real Codex account and model access are required for a
-live run; normal CI tests do not make model calls.
+Before running a live test, make sure the selected CLI is logged in. Codex uses
+`~/.codex/auth.json` in the target distribution by default; override it with
+`--auth-source PATH` (or `auth_source` in YAML). The file is copied into a
+run-specific isolated home with mode `0600` and removed during finalization.
+Authentication files and their contents are never written to reports.
 
-To run Claude Code, select it explicitly and provide a Claude model name:
+To run Claude Code from Windows, select it explicitly and provide a Claude
+model name:
 
 ```powershell
 test-wsl2-llm run --agent claude --model claude-sonnet-4-5 --prompt "Create hello.txt containing READY" --output .\results\claude
 ```
 
-Claude Code reads authentication from the inherited `ANTHROPIC_API_KEY` or
-from credentials configured in an isolated `CLAUDE_CONFIG_DIR` under the run
-root. The runner never reuses the normal Claude configuration directory. A
-Claude model selector is passed directly to Claude; the Codex `MODEL[:EFFORT]`
-setting is not translated. Claude plugin installation, MCP servers, and
-interactive follow-up are intentionally unsupported and fail clearly.
+Claude credentials are required. When `--auth-source` is omitted, the harness
+looks in the invocation environment's `%USERPROFILE%\.claude\.credentials.json`
+(the standard Windows Claude Code location); `CLAUDE_CONFIG_DIR` and `HOME` are
+also honored. An explicit `--auth-source PATH` works for other host layouts.
+Only `.credentials.json` is copied into the isolated `CLAUDE_CONFIG_DIR` under
+the run root, with restrictive permissions, and the copy is removed during
+finalization. The source file is never changed, and credentials are excluded
+from reports. A missing source fails before the agent starts with the checked
+locations in the diagnostic. Claude plugin installation, MCP servers, and
+interactive follow-up remain intentionally unsupported.
 
 ### One short validated run
 

@@ -1,4 +1,5 @@
 import logging
+import os
 import queue
 import re
 import subprocess
@@ -272,6 +273,54 @@ def test_progress_panel_explains_when_no_meaningful_activity_has_arrived() -> No
     rendered = str(_progress_panel([], None).renderable)
     assert "Latest meaningful activity: No meaningful activity yet." in rendered
     assert "Starting Codex..." in rendered
+
+def test_claude_auth_source_uses_windows_invocation_environment(tmp_path: Path) -> None:
+    from test_wsl2_llm.agents import _resolve_claude_auth_source
+
+    credentials = tmp_path / ".claude" / ".credentials.json"
+    credentials.parent.mkdir()
+    credentials.write_text("{\"token\":\"secret\"}", encoding="utf-8")
+
+    resolved = _resolve_claude_auth_source(
+        None, environment={"USERPROFILE": str(tmp_path), "HOME": r"C:\unrelated"}
+    )
+
+    assert Path(resolved) == credentials.resolve()
+
+
+def test_claude_auth_source_explicit_windows_path_wins(tmp_path: Path) -> None:
+    from test_wsl2_llm.agents import _resolve_claude_auth_source
+
+    credentials = tmp_path / "custom-credentials.json"
+    credentials.write_text("secret", encoding="utf-8")
+
+    resolved = _resolve_claude_auth_source(str(credentials), environment={})
+
+    assert Path(resolved) == credentials.resolve()
+
+
+def test_claude_auth_source_missing_is_actionable(tmp_path: Path) -> None:
+    from test_wsl2_llm.agents import _resolve_claude_auth_source
+
+    with pytest.raises(FileNotFoundError, match="Expected %USERPROFILE%"):
+        _resolve_claude_auth_source(None, environment={"USERPROFILE": str(tmp_path)})
+
+
+def test_claude_auth_copy_uses_required_filename_and_restrictive_mode(tmp_path: Path) -> None:
+    from test_wsl2_llm.agents import _copy_host_auth
+    from test_wsl2_llm.runner import LinuxClient
+
+    source = tmp_path / "override.json"
+    source.write_text("secret", encoding="utf-8")
+    target_home = tmp_path / "isolated"
+
+    _copy_host_auth(LinuxClient(), str(source), str(target_home), ".credentials.json")
+
+    copied = target_home / ".credentials.json"
+    assert copied.read_text(encoding="utf-8") == "secret"
+    if os.name != "nt":
+        assert copied.stat().st_mode & 0o777 == 0o600
+    assert source.read_text(encoding="utf-8") == "secret"
 
 def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) -> None:
     config = WslTestConfig(

@@ -182,7 +182,7 @@ def run(
     ] = None,
     auth_source: Annotated[
         str | None,
-        typer.Option(help="Readable WSL Codex auth file copied into isolated CODEX_HOME."),
+        typer.Option(help="Host or target credential file copied into the agent's isolated home."),
     ] = None,
     pricing_file: Annotated[
         Path | None,
@@ -515,7 +515,7 @@ def template_run(
     ] = None,
     auth_source: Annotated[
         str | None,
-        typer.Option(help="Readable WSL Codex auth file copied into isolated CODEX_HOME."),
+        typer.Option(help="Host or target credential file copied into the agent's isolated home."),
     ] = None,
     pricing_file: Annotated[Path | None, typer.Option(help="Model token pricing YAML.")] = None,
     progress_lines: Annotated[
@@ -1077,7 +1077,7 @@ def continue_work(
     ] = None,
     auth_source: Annotated[
         str | None,
-        typer.Option(help="Readable WSL Codex auth file copied into isolated CODEX_HOME."),
+        typer.Option(help="Host or target credential file copied into the agent's isolated home."),
     ] = None,
     pricing_file: Annotated[
         Path | None,
