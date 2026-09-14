@@ -62,11 +62,11 @@ jobs:
         run: uv sync --locked --all-groups
       - name: Run deterministic tests (Windows)
         if: runner.os == 'Windows'
-        run: uv run pytest -m "not wsl_acceptance"
+        run: uv run pytest -m "not wsl_acceptance and not ssh_integration"
       - name: Run deterministic tests (Unix)
         if: runner.os != 'Windows'
         run: >-
-          uv run pytest -m "not wsl_acceptance"
+          uv run pytest -m "not wsl_acceptance and not ssh_integration"
           --deselect tests/test_cli.py::test_continue_config_only_uses_new_prompt_and_saved_output
           --deselect tests/test_cli.py::test_result_commands_explain_yaml_parse_failures
 
@@ -147,3 +147,21 @@ jobs:
           echo 'Live WSL acceptance tests are intentionally excluded from credential-free CI.'
           echo 'They require Windows WSL2 and a real Codex account, and can spend model tokens.'
           echo 'Run locally with: uv run pytest --run-wsl-acceptance'
+  ssh-integration:
+    name: SSH integration (Ubuntu, Docker)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: Install development environment
+        run: uv sync --locked --all-groups
+      - name: Run SSH integration tests
+        run: uv run pytest -m ssh_integration -q

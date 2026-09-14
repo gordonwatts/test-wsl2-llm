@@ -11,7 +11,9 @@ from pathlib import Path
 from urllib.parse import quote
 
 import yaml
+from pydantic import BaseModel
 
+from test_wsl2_llm.compatibility import serialize_result
 from test_wsl2_llm.config import output_paths, output_stem
 from test_wsl2_llm.models import TestResult
 
@@ -24,7 +26,7 @@ def write_reports(result: TestResult, output: str, overwrite: bool = False) -> t
         if existing:
             raise FileExistsError(f"result file already exists: {', '.join(existing)}")
     markdown_path.parent.mkdir(parents=True, exist_ok=True)
-    data = result.model_dump(mode="json")
+    data = serialize_result(result)
     yaml_text = yaml.safe_dump(data, sort_keys=False, allow_unicode=True, width=1000)
     markdown_text = render_markdown(result, report_path=markdown_path)
     staged: list[tuple[Path, Path]] = []
@@ -111,9 +113,11 @@ def render_markdown(
         lines.extend(_provenance_section(result.provenance))
 
     run = result.run
-    workspace_label = "(removed)" if any(
-        phase.name == "workspace_cleanup" for phase in result.timing.phases
-    ) else "(not created)"
+    workspace_label = (
+        "(removed)"
+        if any(phase.name == "workspace_cleanup" for phase in result.timing.phases)
+        else "(not created)"
+    )
     agent_execution_seconds = (
         run.agent_execution_seconds
         if run.agent_execution_seconds is not None
@@ -137,6 +141,7 @@ def render_markdown(
             f"| Status | {run.status} |",
             f"| Exit code | {run.exit_code} |",
             f"| Timed out | {run.timed_out} |",
+            f"| Execution target | {run.target} |",
             f"| Distribution | {run.distro or '(default)'} |",
             f"| Codex version | {run.codex_version or '(unavailable)'} |",
             f"| Agent version | {run.agent_version or run.codex_version or '(unavailable)'} |",
@@ -408,9 +413,7 @@ def _scrollable_text(content: str, *, language: str | None = None) -> list[str]:
     return [
         '<div style="position: relative;">',
         '<pre style="max-height: 12em; overflow: auto; white-space: pre-wrap; '
-        'overflow-wrap: anywhere; margin: 0;">'
-        + escaped
-        + "</pre>",
+        'overflow-wrap: anywhere; margin: 0;">' + escaped + "</pre>",
         '<div style="position: absolute; top: 0.25em; right: 0.25em;">',
         _copy_button("this.parentElement.parentElement.querySelector('pre').textContent"),
         "</div>",
@@ -487,6 +490,7 @@ def _outcome_summary(result: TestResult) -> list[str]:
         lines.extend(["", f"**Outcome detail:** {result.run.error}"])
     return lines
 
+
 def _activity_section(result: TestResult) -> list[str]:
     """Show concise progress updates with elapsed times, without raw session traces."""
     updates: list[tuple[float | None, str]] = []
@@ -495,9 +499,7 @@ def _activity_section(result: TestResult) -> list[str]:
     execution_offset = _codex_execution_offset(result)
     stdout_elapsed = {
         event.sequence: (
-            event.elapsed_seconds + execution_offset
-            if event.elapsed_seconds is not None
-            else None
+            event.elapsed_seconds + execution_offset if event.elapsed_seconds is not None else None
         )
         for event in result.timing.trace_events
         if event.source == "stdout_jsonl"
@@ -654,6 +656,8 @@ def _display_skill_directory(value: str) -> str:
 
 
 def _yaml(value: object) -> str:
+    if isinstance(value, BaseModel):
+        value = value.model_dump(mode="json")
     return yaml.safe_dump(value, sort_keys=False, allow_unicode=True, width=1000).rstrip()
 
 
@@ -766,3 +770,5 @@ def _money(value: float | None) -> str:
             return f"${value:.2e}"
         return fixed.rstrip("0").rstrip(".")
     return f"${value:.2f}"
+
+
