@@ -1,3 +1,4 @@
+import json
 import subprocess
 import tomllib
 from pathlib import Path
@@ -10,7 +11,14 @@ from typer.testing import CliRunner
 from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import build_config, load_config_file, save_config
 from test_wsl2_llm.models import TestConfig as RunConfig
-from test_wsl2_llm.runner import _codex_config, _load_mcp_servers, continue_test, run_test
+from test_wsl2_llm.runner import (
+    _claude_mcp_source,
+    _codex_config,
+    _load_claude_mcp_servers,
+    _load_mcp_servers,
+    continue_test,
+    run_test,
+)
 
 
 def local_config(monkeypatch, tmp_path, content):
@@ -168,3 +176,52 @@ def test_missing_server_fails_before_wsl(monkeypatch, tmp_path):
     assert result.run.status == "failed"
     assert "MCP server 'oops'" in result.run.error
     assert result.run.workspace_path is None
+
+def test_claude_mcp_servers_render_selected_json_without_secrets(monkeypatch, tmp_path):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / ".claude.json").write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "demo-server": {
+                        "command": "python",
+                        "args": ["-m", "demo"],
+                        "env": {"TOKEN": "fake-secret"},
+                    },
+                    "unused": {"command": "omit"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    selected = _load_claude_mcp_servers(["demo-server"])
+    assert selected == {
+        "demo-server": {
+            "command": "python",
+            "args": ["-m", "demo"],
+            "env": {"TOKEN": "fake-secret"},
+        }
+    }
+    assert "fake-secret" not in RunConfig(
+        prompt="hello", model="claude-sonnet", output="out", agent="claude",
+        mcp_servers=["demo-server"]
+    ).model_dump_json()
+    assert _claude_mcp_source() == tmp_path / ".claude.json"
+
+
+@pytest.mark.parametrize(
+    "entry",
+    [
+        {"type": "ftp", "url": "ftp://example.invalid"},
+        {"type": "http", "command": "python"},
+        {"command": ""},
+        {"command": "python", "args": ["--ok", 1]},
+    ],
+)
+def test_claude_mcp_rejects_unsupported_settings(monkeypatch, tmp_path, entry):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path))
+    (tmp_path / ".claude.json").write_text(
+        json.dumps({"mcpServers": {"demo": entry}}), encoding="utf-8"
+    )
+    with pytest.raises(ValueError, match="Claude MCP server"):
+        _load_claude_mcp_servers(["demo"])

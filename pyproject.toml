@@ -70,6 +70,8 @@ testpaths = ["tests"]
 markers = [
   "wsl_acceptance: token-consuming tests that invoke real Codex in WSL2",
   "ssh_integration: tests that exercise a disposable Linux OpenSSH server",
+  "live: opt-in token-consuming live agent smoke tests",
+  "live: opt-in token-consuming live agent smoke tests",
 ]
 
 [tool.ruff]
