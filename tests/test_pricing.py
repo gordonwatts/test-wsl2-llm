@@ -54,3 +54,42 @@ def test_unknown_model_has_explicitly_unavailable_cost(tmp_path: Path) -> None:
     assert result.models[0].pricing_available is False
     assert result.models[0].total_cost is None
     assert result.total_cost is None
+
+
+def test_bundled_catalog_includes_current_claude_models() -> None:
+    usage = [
+        UsageRecord(
+            model=model,
+            attribution="reported",
+            input_tokens=1_000_000,
+            cached_input_tokens=100_000,
+            output_tokens=1_000_000,
+        )
+        for model in (
+            "claude-fable-5-1",
+            "claude-opus-5",
+            "claude-opus-4-8",
+            "claude-sonnet-5",
+            "claude-sonnet-4-6",
+            "claude-haiku-4-5-20251001",
+        )
+    ]
+
+    result = load_and_calculate_costs(usage, None)
+
+    assert all(model.pricing_available for model in result.models)
+    assert [
+        (
+            model.input_cost_per_million_tokens,
+            model.cached_input_cost_per_million_tokens,
+            model.output_cost_per_million_tokens,
+        )
+        for model in result.models
+    ] == [
+        (10.0, 0.25, 50.0),
+        (5.0, 0.5, 25.0),
+        (5.0, 0.5, 25.0),
+        (2.0, 0.2, 10.0),
+        (3.0, 0.3, 15.0),
+        (1.0, 0.1, 5.0),
+    ]
