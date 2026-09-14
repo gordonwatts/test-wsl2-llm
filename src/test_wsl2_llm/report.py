@@ -107,6 +107,9 @@ def render_markdown(
         )
     )
 
+    if result.provenance is not None:
+        lines.extend(_provenance_section(result.provenance))
+
     run = result.run
     workspace_label = "(removed)" if any(
         phase.name == "workspace_cleanup" for phase in result.timing.phases
@@ -248,6 +251,40 @@ def render_markdown(
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
 
+
+def _provenance_section(provenance: object) -> list[str]:
+    """Render only public provenance fields and content hashes."""
+    values = provenance.model_dump(mode="json")
+    lines = [
+        "",
+        "## Provenance",
+        "",
+        "| Field | Value |",
+        "| --- | --- |",
+        f"| Harness version | `{values['harness_version']}` |",
+        f"| Agent | `{values['agent']}` (`{values['agent_version']}`) |",
+        f"| Target | `{values['target']}` (`{values['target_version']}`) |",
+        f"| Configuration identity | `{values['configuration_hash']}` |",
+        f"| Run identity | `{values['identity']}` |",
+    ]
+    for item in values.get("inputs", []):
+        lines.append(
+            f"| Input `{item['kind']}` `{item['requested']}` | "
+            f"{item.get('content_hash') or 'unknown'} |"
+        )
+    for item in values.get("marketplaces", []):
+        resolved = item.get("resolved") or "unknown"
+        version = item.get("version") or "unknown"
+        lines.append(
+            f"| Marketplace `{item['requested']}` | requested; resolved `{resolved}` "
+            f"version `{version}`; content `{item.get('content_hash') or 'unknown'}` |"
+        )
+    for item in values.get("plugins", []):
+        lines.append(
+            f"| Plugin `{item['requested']}` | resolved `{item.get('resolved') or 'unknown'}` "
+            f"version `{item.get('version') or 'unknown'}` |"
+        )
+    return lines
 
 def _copied_back_section(result: TestResult, report_path: Path | None) -> list[str]:
     """Render copied-back artifacts with links and type-specific previews."""

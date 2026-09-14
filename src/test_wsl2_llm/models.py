@@ -234,6 +234,47 @@ class SkillsResult(BaseModel):
     directories: list[str] = Field(default_factory=list)
 
 
+class InputProvenance(BaseModel):
+    """A public, content-addressed input used by a run."""
+
+    kind: str
+    requested: str
+    resolved: str | None = None
+    content_hash: str | None = None
+
+
+class MarketplaceProvenance(BaseModel):
+    """Requested marketplace source and its resolved checkout identity."""
+
+    requested: str
+    resolved: str | None = None
+    selector: str | None = None
+    version: str = "unknown"
+    content_hash: str | None = None
+
+
+class PluginProvenance(BaseModel):
+    """Requested plugin selector and resolved manifest version."""
+
+    requested: str
+    resolved: str | None = None
+    version: str = "unknown"
+
+
+class Provenance(BaseModel):
+    """Non-secret identity of the harness, runtime, and effective inputs."""
+
+    harness_version: str
+    agent: str
+    agent_version: str = "unknown"
+    target: str
+    target_version: str = "unknown"
+    configuration_hash: str
+    inputs: list[InputProvenance] = Field(default_factory=list)
+    marketplaces: list[MarketplaceProvenance] = Field(default_factory=list)
+    plugins: list[PluginProvenance] = Field(default_factory=list)
+    identity: str
+
 class RunResult(BaseModel):
     started_at: str
     finished_at: str
@@ -314,6 +355,7 @@ class TestResult(BaseModel):
     run: RunResult
     timing: TimingResult
     configuration: dict[str, Any]
+    provenance: Provenance | None = None
     usage: list[UsageRecord]
     model_information: ModelInformation
     result: FinalResult
