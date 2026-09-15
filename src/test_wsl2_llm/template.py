@@ -160,9 +160,11 @@ def load_template_file(path: Path) -> tuple[TemplateConfig, dict[str, Any], Path
     validate_questions(
         batch.prompt_template,
         batch.questions,
+        shared_copy_files=values.get("copy_files", []),
         shared_copy_back=values.get("copy_back", []),
         shared_plugins=values.get("plugins", []),
         shared_validators=values.get("validators", []),
+        base=path.parent,
     )
     return batch, values, path
 
@@ -171,9 +173,11 @@ def validate_questions(
     prompt_template: str,
     questions: list[dict[str, Any]],
     *,
+    shared_copy_files: list[str] | None = None,
     shared_copy_back: list[str] | None = None,
     shared_plugins: list[str] | None = None,
     shared_validators: list[ValidatorConfig | dict[str, Any]] | None = None,
+    base: Path | None = None,
 ) -> None:
     """Validate question records and all template fields before execution."""
     seen: set[str] = set()
@@ -200,6 +204,15 @@ def validate_questions(
                 ):
                     raise ValueError(
                         f"question {identifier} field 'copy_back' must be a list of "
+                        "non-empty strings"
+                    )
+                continue
+            if key == "copy_files":
+                if not isinstance(value, list) or any(
+                    not isinstance(source, str) or not source.strip() for source in value
+                ):
+                    raise ValueError(
+                        f"question {identifier} field 'copy_files' must be a list of "
                         "non-empty strings"
                     )
                 continue
@@ -247,6 +260,7 @@ def validate_questions(
         if identifier in question_texts:
             values["question"] = question_texts[identifier]
         render_template(prompt_template, values, identifier, question_texts=question_texts)
+        question_copy_files(list(shared_copy_files or []), question, base=base)
         question_copy_back(list(shared_copy_back or []), question)
         question_plugins(list(shared_plugins or []), question)
         effective_validators = list(shared_validators or [])
@@ -404,6 +418,42 @@ def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]
             patterns = [existing for existing in patterns if existing != remove]
         elif pattern not in patterns:
             patterns.append(pattern)
+    return patterns
+
+
+def question_copy_files(
+    shared: list[str], question: dict[str, Any], *, base: Path | None = None
+) -> list[str]:
+    """Apply a question's copy-file additions and removals to shared sources.
+
+    Relative question-level paths are resolved against ``base`` when supplied.
+    This keeps template YAML paths independent of the process working directory.
+    """
+    def normalize(source: str) -> str:
+        if base is None:
+            return source
+        path = Path(source).expanduser()
+        return str((base / path).resolve()) if not path.is_absolute() else str(path.resolve())
+
+    patterns = [normalize(source) for source in shared]
+    overrides = question.get("copy_files", [])
+    if not isinstance(overrides, list):
+        return patterns
+    for source in overrides:
+        if not isinstance(source, str) or not source.strip():
+            continue
+        if source.startswith("-") and len(source) > 1:
+            remove = normalize(source[1:])
+            if remove not in patterns:
+                raise ValueError(
+                    f"question {question.get('id', 'unknown')} copy_files removal "
+                    f"'-{source[1:]}' has no preceding file"
+                )
+            patterns = [existing for existing in patterns if existing != remove]
+        else:
+            source = normalize(source)
+            if source not in patterns:
+                patterns.append(source)
     return patterns
 
 

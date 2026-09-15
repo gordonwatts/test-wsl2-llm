@@ -283,9 +283,10 @@ mapping needs a unique, filename-safe `id`; its scalar fields are available thro
 `{{ field }}` substitutions. A question can reuse the complete `question` text from another
 mapping with `{{question-id}}` (including IDs with periods or hyphens). References may be
 nested, but cycles and references to a question without text are rejected before execution.
-Question-level `copy_back` and `plugins` fields are lists of files/wildcards and plugin
-selectors, respectively, not substitution scalars. A question-level `validators` list replaces the
-shared checks for that question; omit it to inherit shared checks or use `[]` to disable them.
+Question-level `copy_files`, `copy_back`, and `plugins` fields are lists of files,
+files/wildcards, and plugin selectors, respectively, not substitution scalars. A question-level
+`validators` list replaces the shared checks for that question; omit it to inherit shared checks
+or use `[]` to disable them.
 A question-level `distro` selects a different WSL distribution. For example:
 
 ```yaml
@@ -333,7 +334,7 @@ threads: 4
 [`template.schema.json`](template.schema.json) is the canonical machine-readable JSON Schema for
 template files. It describes the batch fields, the single-run settings that can be
 shared by every job, question value types, and the built-in validators. The schema is
-also useful as a quick reference: in a question, `id`, `copy_back`, `plugins`, `distro`, and `validators` are reserved;
+also useful as a quick reference: in a question, `id`, `copy_files`, `copy_back`, `plugins`, `distro`, and `validators` are reserved;
 every other key must be an identifier and its value must be a scalar string, number, or
 boolean. Those scalar keys are the only values that can be substituted in
 `prompt_template` with `{{ field }}`. A question `id` must be unique, and every
@@ -427,7 +428,11 @@ workspace before Codex starts. This is useful for local credentials such as a
 `servicex.yaml` file. The same option can be written in YAML as `copy_files`; paths are
 resolved relative to the input YAML file. The resolved list is saved in the YAML
 `configuration` section and in the Markdown report's expanded `Resolved configuration`
-section. The copy operation itself does not add file contents to either report.
+section. The copy operation itself does not add file contents to either report. Template
+questions may also provide a `copy_files` list; entries are added to that question's inherited
+files, while entries beginning with `-` remove an exact inherited file or earlier addition.
+Relative paths are resolved from the template YAML file, and a removal must refer to a
+file already present.
 
 Use `--copy-back PATH` (repeatable) to copy files from the WSL workspace back to Windows
 after Codex finishes. Relative paths and shell-style wildcards such as `plot_*.png` are
