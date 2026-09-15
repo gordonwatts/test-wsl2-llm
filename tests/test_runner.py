@@ -130,6 +130,40 @@ def test_wsl_client_passes_sanitized_environment_to_subprocess(monkeypatch) -> N
     assert captured["environment"] == {"Path": r"C:\Tools"}
 
 
+def test_plain_stderr_progress_does_not_reuse_a_normalized_event(monkeypatch) -> None:
+    class FakeStdin:
+        def write(self, _value: str) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    class FakeProcess:
+        stdin = FakeStdin()
+        stdout = StringIO()
+        stderr = StringIO("plain stderr first\n")
+
+        def wait(self) -> int:
+            return 0
+
+    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.Popen", lambda *_a, **_k: FakeProcess())
+    logs: list[str] = []
+    exit_code, stdout, stderr, _traces, _events = _stream_codex(
+        ["claude"],
+        "hello",
+        progress_lines=5,
+        verbosity=0,
+        console=Console(file=StringIO()),
+        live_progress=False,
+        log_callback=logs.append,
+        agent_name="claude",
+    )
+
+    assert exit_code == 0
+    assert stdout == ""
+    assert stderr == "plain stderr first\n"
+    assert any("plain stderr first" in line for line in logs)
+
 def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     class FakeStdin:
         def write(self, _value: str) -> None:
@@ -249,6 +283,32 @@ def test_progress_description_is_human_readable_and_bounded() -> None:
     assert description.startswith("Completed command (exit 0): echo")
     assert len(description) <= 120
     assert "item.completed" not in description
+
+def test_claude_progress_uses_normalized_text_and_ignores_image_only_messages() -> None:
+    description = _progress_description(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": "Inspecting the repository." },
+        },
+        "ignored",
+        agent_name="claude",
+    )
+    assert description == "Completed model message: Inspecting the repository."
+
+    image_only = _progress_description(
+        {
+            "type": "item.completed",
+            "item": {"type": "agent_message", "text": ""},
+        },
+        "ignored",
+        agent_name="claude",
+    )
+    assert image_only == "Completed model message"
+    assert _is_uninformative_progress(image_only)
+    assert _is_uninformative_progress("Claude tool result")
+    assert _progress_description(
+        {"type": "user"}, "ignored", agent_name="claude-code"
+    ) == "Claude tool result"
 
 
 def test_mcp_polling_does_not_replace_latest_meaningful_progress() -> None:

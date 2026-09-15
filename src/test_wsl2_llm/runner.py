@@ -2100,6 +2100,7 @@ def _stream_codex(
             sequences[stream] += 1
             raw[stream].append(line)
             parsed = parse_json_line(line)
+            normalized: dict[str, Any] | None = None
             if parsed:
                 normalized = adapter.normalize_event(parsed) if adapter is not None else parsed
                 parsed_events.append(normalized)
@@ -2124,7 +2125,10 @@ def _stream_codex(
                         elapsed_seconds=elapsed,
                     )
                 )
-            description = _progress_description(parsed, line)
+            # Describe the normalized event so agent adapters can remove
+            # transport-only payloads (for example Claude image blocks) before
+            # they reach the bounded live display.
+            description = _progress_description(normalized, line, agent_name=agent_name)
             display = f"{_console_time(received_at)} [{stream}] {description}"
             if not _is_uninformative_progress(description):
                 latest_meaningful = display
@@ -2209,7 +2213,12 @@ def _timeout_error(stderr: str, agent_name: str = "codex") -> str:
     return f"{agent_name.title()} execution timed out"
 
 
-def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
+def _progress_description(
+    parsed: dict[str, Any] | None,
+    raw_line: str,
+    *,
+    agent_name: str = "codex",
+) -> str:
     """Turn JSONL progress events into short, useful one-line status messages."""
     if not parsed:
         description = raw_line.rstrip()
@@ -2234,6 +2243,11 @@ def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
                 description = f"{phase} web search"
             else:
                 description = f"{phase} {item_type}"
+        elif agent_name.casefold() in {"claude", "claude-code"} and event_type == "user":
+            # Claude emits user events for tool results. They can contain
+            # screenshots and other large attachments, but do not represent
+            # useful model progress for the summary line.
+            description = "Claude tool result"
         elif isinstance(event_type, str):
             description = event_type.replace(".", " ").replace("_", " ").capitalize()
             if event_type.startswith("item."):
@@ -2246,7 +2260,13 @@ def _progress_description(parsed: dict[str, Any] | None, raw_line: str) -> str:
 
 def _is_uninformative_progress(description: str) -> bool:
     """Identify routine MCP polling entries that should not replace the summary."""
-    return description.casefold() in {"started mcp tool call", "completed mcp tool call"}
+    return description.casefold() in {
+        "started mcp tool call",
+        "completed mcp tool call",
+        "started model message",
+        "completed model message",
+        "claude tool result",
+    }
 
 
 def _progress_panel(
