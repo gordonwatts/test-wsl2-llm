@@ -43,6 +43,7 @@ from test_wsl2_llm.template import (
     inspect_template_result,
     load_template_file,
     question_copy_back,
+    question_copy_files,
     question_distro,
     question_plugins,
     question_title,
@@ -663,6 +664,9 @@ def template_run(
                             identifier, question_values, prompt_text
                         )
                     run_values["output"] = resolved_base.output
+                    run_values["copy_files"] = question_copy_files(
+                        list(shared.get("copy_files", [])), question_values, base=config.parent
+                    )
                     run_values["copy_back"] = question_copy_back(
                         list(shared.get("copy_back", [])), question_values
                     )

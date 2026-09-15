@@ -15,6 +15,7 @@ from test_wsl2_llm.template import (
     TemplateConfig,
     inspect_template_result,
     question_copy_back,
+    question_copy_files,
     question_plugins,
     question_title,
     question_validators,
@@ -181,6 +182,28 @@ def test_template_question_validation_accepts_copy_back_list() -> None:
     )
 
 
+def test_template_question_validation_accepts_copy_files_list(tmp_path: Path) -> None:
+    shared = str((tmp_path / "shared.yaml").resolve())
+    validate_questions(
+        "{{ question }}",
+        [{"id": "one", "question": "first", "copy_files": ["question.yaml", "-shared.yaml"]}],
+        shared_copy_files=[shared],
+        base=tmp_path,
+    )
+
+
+def test_question_copy_files_adds_and_removes_shared_files() -> None:
+    assert question_copy_files(
+        ["shared.yaml", "common.json"],
+        {"id": "one", "copy_files": ["question.yaml", "-common.json", "question.yaml"]},
+    ) == ["shared.yaml", "question.yaml"]
+
+
+def test_question_copy_files_rejects_unknown_removal() -> None:
+    with pytest.raises(ValueError, match="no preceding file"):
+        question_copy_files([], {"id": "one", "copy_files": ["-missing.yaml"]})
+
+
 def test_question_plugins_adds_and_removes_shared_plugins() -> None:
     assert question_plugins(
         ["base@marketplace", "shared@marketplace"],
@@ -294,6 +317,45 @@ def test_template_run_persists_linux_target(monkeypatch, tmp_path: Path) -> None
 
     assert result.exit_code == 0, result.output
     assert targets == ["linux"]
+
+
+def test_template_run_applies_question_copy_files(monkeypatch, tmp_path: Path) -> None:
+    copied_files: list[list[str]] = []
+
+    def fake_run(config, **_kwargs):
+        copied_files.append(config.copy_files)
+        return sample_result()
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    config = tmp_path / "copy-files.yaml"
+    config.write_text(
+        yaml.safe_dump(
+            {
+                "prompt_template": "Do {{ question }}",
+                "questions": [
+                    {"id": "shared", "question": "shared"},
+                    {
+                        "id": "custom",
+                        "question": "custom",
+                        "copy_files": ["question.yaml", "-shared.yaml"],
+                    },
+                ],
+                "model": "gpt-test",
+                "copy_files": ["shared.yaml"],
+                "output": "results/run",
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["template", "run", str(config)])
+
+    assert result.exit_code == 0, result.output
+    assert copied_files == [
+        [str((tmp_path / "shared.yaml").resolve())],
+        [str((tmp_path / "question.yaml").resolve())],
+    ]
 
 
 def test_template_run_applies_question_distro_override(monkeypatch, tmp_path: Path) -> None:
