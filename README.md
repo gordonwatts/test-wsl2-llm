@@ -788,3 +788,33 @@ remain available as a compact first-ten-lines preview.
 The `ssh` target runs a complete isolated test on a Linux host through the existing passwordless OpenSSH configuration. Set `target: ssh` and `ssh_host` in a saved YAML configuration; optional `ssh_user`, `ssh_port`, `remote_workspace_parent`, and `ssh_connect_timeout_seconds` select the destination. The client uses `BatchMode=yes`, bounded connection setup, and normal host-key verification. Password provisioning and private-key management are intentionally out of scope; configure authentication in the user's SSH agent/configuration first.
 
 Workspace input and artifact collection use tar streams over SSH, and require a remote POSIX shell with `mkdir`, `mktemp`, `tar`, `cat`, `find`, `realpath`, `setsid`, and `rm`. Each run writes an ownership marker below its generated `test-wsl2-llm-*` root. Cleanup verifies that marker before deleting and reports the remote path as retained if deletion cannot be confirmed. Codex is wrapped in an owned remote process group; timeout and Ctrl-C cancellation target only that group. Interactive `connect`/`continue` is deferred for SSH because those commands need a terminal-aware SSH session; use a retained remote workspace with a manually opened SSH session instead.
+
+
+## Token usage extraction
+
+Reports expose normalized token totals in the top-level YAML `usage` list. The Markdown report renders the same records in its **Token usage** table (or says that no token usage event was reported). Each record uses the canonical fields `input_tokens`, `cached_input_tokens`, `output_tokens`, and `reasoning_output_tokens`, together with the configured model and an attribution string.
+
+### Codex
+
+The Codex adapter passes captured stdout JSONL through `traces.usage_from_events(events, model)`, where each `event` is a parsed JSON object. Only events with `event["type"] == "turn.completed"` and a dictionary at `event["usage"]` contribute tokens.
+
+Within that raw `usage` dictionary, the exact keys and mappings are:
+
+| Raw key in `event["usage"]` | Canonical field |
+| --- | --- |
+| `"input_tokens"` | `input_tokens` |
+| `"cached_input_tokens"` | `cached_input_tokens` |
+| `"cache_read_input_tokens"` | `cached_input_tokens` |
+| `"cache_creation_input_tokens"` | `cached_input_tokens` |
+| `"output_tokens"` | `output_tokens` |
+| `"reasoning_output_tokens"` | `reasoning_output_tokens` |
+
+For every qualifying event, the implementation keeps only values whose Python type is `int`; missing values, strings, floats, and other types contribute zero. The three cache aliases are independent: if more than one of `"cached_input_tokens"`, `"cache_read_input_tokens"`, and `"cache_creation_input_tokens"` is an integer in one event, all of those integers are added to that event's `cached_input_tokens` total. The four canonical totals are then summed across all qualifying events. If no qualifying event contains at least one integer token value, the function returns an empty list and no usage record is rendered.
+
+When usage is found, the returned `UsageRecord` has `model` set to the configured model, `attribution` set to `"inferred - model not directly reported"`, and the four canonical integer totals (including a zero for fields that were absent). The YAML `usage` list serializes that record; Markdown's Token usage table shows its input, cached-input, output, and reasoning-output columns.
+
+### OpenCode
+
+There is currently no OpenCode adapter in this repository. The registered adapters are `codex`, `fake`, `claude`, and the `claude-code` alias; no `opencode` adapter, trace parser, return dictionary, or OpenCode raw token keys exist in the implementation. Consequently, no OpenCode cache, input, or output values are extracted or normalized, and no OpenCode-specific usage aggregation is performed. The README intentionally does not infer provider field names. If OpenCode support is added later, its exact event path and keys should be documented here alongside the implementation.
+
+For reference, the implemented non-Codex adapter is Claude Code. Its `normalize_event` converts an `assistant` event's `message["usage"]` dictionary, or a `result` event's `usage` dictionary, to a normalized `event["usage"]` dictionary before the shared extractor runs. The exact raw keys read by `_claude_usage(value)` are `"input_tokens"`, `"cached_input_tokens"`, `"cache_read_input_tokens"`, `"cache_creation_input_tokens"`, `"output_tokens"`, and `"reasoning_output_tokens"`. For each canonical field it chooses the first integer among its aliases (rather than summing aliases); missing or non-integer values become zero. The resulting normalized events then use the same canonical `UsageRecord` fields and report locations described above.
