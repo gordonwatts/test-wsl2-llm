@@ -813,8 +813,19 @@ For every qualifying event, the implementation keeps values passing Python's `is
 
 When usage is found, the returned `UsageRecord` has `model` set to the configured model, `attribution` set to `"inferred - model not directly reported"`, and the four canonical integer totals (including a zero for fields that were absent). The YAML `usage` list serializes that record; Markdown's Token usage table shows its input, cached-input, output, and reasoning-output columns.
 
-### OpenCode
+### Claude Code
 
-There is currently no OpenCode adapter in this repository. The registered adapters are `codex`, `fake`, `claude`, and the `claude-code` alias; no `opencode` adapter, trace parser, return dictionary, or OpenCode raw token keys exist in the implementation. Consequently, no OpenCode cache, input, or output values are extracted or normalized, and no OpenCode-specific usage aggregation is performed. The README intentionally does not infer provider field names. If OpenCode support is added later, its exact event path and keys should be documented here alongside the implementation.
+The Claude Code adapter's `normalize_event(value)` first reshapes Claude's stream-json events into the shared trace format. For an `assistant` event, it reads the raw usage dictionary at `value["message"]["usage"]`; for a `result` event, it reads it at `value["usage"]`. It copies the event, changes `value["type"]` to `"item.completed"` for `assistant` or `"turn.completed"` for `result`, and writes the normalized dictionary at `event["usage"]`. (A `system` event becomes `"session.started"` and has no usage mapping.)
 
-For reference, the implemented non-Codex adapter is Claude Code. Its `normalize_event` converts an `assistant` event's `message["usage"]` dictionary, or a `result` event's `usage` dictionary, to a normalized `event["usage"]` dictionary before the shared extractor runs. The exact raw keys read by `_claude_usage(value)` are `"input_tokens"`, `"cached_input_tokens"`, `"cache_read_input_tokens"`, `"cache_creation_input_tokens"`, `"output_tokens"`, and `"reasoning_output_tokens"`. For each canonical field it chooses the first integer among its aliases (rather than summing aliases); missing or non-integer values become zero. The resulting normalized events then use the same canonical `UsageRecord` fields and report locations described above.
+The exact raw keys read by `_claude_usage(value)` are `"input_tokens"`, `"cached_input_tokens"`, `"cache_read_input_tokens"`, `"cache_creation_input_tokens"`, `"output_tokens"`, and `"reasoning_output_tokens"`. The canonical mapping is:
+
+| Raw key in `value` | Canonical field in normalized `event["usage"]` |
+| --- | --- |
+| `"input_tokens"` | `"input_tokens"` |
+| `"cached_input_tokens"` | `"cached_input_tokens"` |
+| `"cache_read_input_tokens"` | `"cached_input_tokens"` |
+| `"cache_creation_input_tokens"` | `"cached_input_tokens"` |
+| `"output_tokens"` | `"output_tokens"` |
+| `"reasoning_output_tokens"` | `"reasoning_output_tokens"` |
+
+For each canonical field, `_claude_usage` checks its aliases in the order shown and returns the first value passing Python's `isinstance(item, int)` check (so Python `bool` values also pass); missing values, strings, floats, and other types become zero. It does not sum multiple cache aliases in one Claude event. After normalization, the shared `traces.usage_from_events` function applies the Codex aggregation rules described above: only normalized `"turn.completed"` events with a dictionary at `event["usage"]` contribute, and canonical integer values are summed across those events. The resulting `UsageRecord` fields and YAML/Markdown report locations are the same canonical fields described above.
