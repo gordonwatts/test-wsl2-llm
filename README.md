@@ -484,12 +484,18 @@ test-wsl2-llm performance --source .\results\batch --output .\batch-performance.
 test-wsl2-llm performance --source .\results\single.yaml --force
 ```
 
-The page shows trial, directory, model, and question totals; filters including the immediate
-parent directory; cost versus pass rate; model statistics; per-question pass fractions and
-average input plus output tokens; and a searchable trial explorer. A pass requires a
-successful run and no failed validators.
-Template runs use their question IDs; standalone runs use the custom title or prompt as
-the question label. With all directories selected, per-question tables and model coverage
+The page shows trial, directory, model, and question totals; checkbox filters for directory,
+model, question, agent, target, and outcome; cost versus pass rate; model statistics;
+per-question pass fractions and average input plus output tokens; and a searchable trial
+explorer. A pass requires a
+successful run and no failed validators. Each filter allows multiple choices: choices within
+one filter are combined with OR, and filters are combined with AND. **All** selects every
+choice; **Clear** selects none.
+Question labels use `template_cell.question_id` when present. For older standalone results,
+the page takes an ID from a `Question: <id>` title, then falls back to the YAML filename stem,
+removing a final three-digit trial index such as `-001`. Long titles and prompts remain in
+trial details but are not question labels. With multiple directories selected, per-question
+tables and model coverage
 use directory-prefixed question labels so identical IDs in separate directories remain
 distinct. Filtering to one directory shows its plain question IDs. The trial explorer
 also shows the directory. Model statistics, summaries, and cost-versus-success points

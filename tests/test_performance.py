@@ -104,7 +104,7 @@ def test_same_question_and_model_in_two_directories_stay_distinct(tmp_path: Path
     assert [record["question"] for record in records] == ["q1", "q1"]
     assert [record["question_label"] for record in records] == ["batch-a / q1", "batch-b / q1"]
     page = render_performance(records)
-    assert '<select id="directory">' in page
+    assert '<summary id="directory-summary">' in page
     assert "<th>Directory</th><th>Question</th>" in page
 
 
@@ -134,18 +134,42 @@ def test_incomplete_or_future_result_is_not_skipped(tmp_path: Path, document: st
     assert not (tmp_path / "out.html").exists()
 
 
-def test_standalone_result_uses_saved_model_prompt_and_zero_execution_time(tmp_path: Path) -> None:
+def test_standalone_result_uses_filename_id_and_zero_execution_time(tmp_path: Path) -> None:
     result = sample_result().model_copy(deep=True)
     result.configuration.model = "standalone-model:medium"
     result.run.agent_execution_seconds = 0.0
-    source = tmp_path / "standalone.yaml"
+    source = tmp_path / "standalone-001.yaml"
     source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
 
     record = load_records([source])[0]
     assert record["model"] == "standalone-model:medium"
-    assert record["question"] == result.prompt
+    assert record["question"] == "standalone"
     assert record["seconds"] == 0.0
     assert record["passed"] is True
+
+
+def test_question_id_prefers_template_then_title_then_filename(tmp_path: Path) -> None:
+    template = sample_result().model_copy(deep=True)
+    template.title = "# Question: wrong - long title"
+    template.template_cell = TemplateCell(
+        question_id="from-template", model_selector="gpt-test", repetition=1, fingerprint="abc"
+    )
+    titled = sample_result().model_copy(deep=True)
+    titled.title = "# Question: from-title - long title that should not appear as a label"
+    generic = sample_result().model_copy(deep=True)
+    paths = [
+        tmp_path / "template.yaml",
+        tmp_path / "titled.yaml",
+        tmp_path / "agc-q1-full-003.yaml",
+    ]
+    for path, result in zip(paths, [template, titled, generic], strict=True):
+        path.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+    records = load_records(paths)
+    assert [record["question"] for record in records] == [
+        "from-template", "from-title", "agc-q1-full"
+    ]
+    assert all("long title" not in record["question"] for record in records)
+    assert all("Create hello.txt" not in record["question"] for record in records)
 
 
 def test_mixed_priced_currencies_are_rejected(tmp_path: Path) -> None:

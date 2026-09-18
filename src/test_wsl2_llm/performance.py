@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
@@ -33,12 +34,10 @@ def result_paths(source: Path) -> list[Path]:
 
 def _record(result: TestResult, path: Path) -> dict[str, object]:
     cell = result.template_cell
-    title = result.title.lstrip("# ").strip()
-    question = (
-        cell.question_id
-        if cell
-        else (title if title and title != "WSL2 Codex test result" else result.prompt)
-    )
+    title_id = re.match(r"^#?\s*Question:\s*(\S+)", result.title, re.IGNORECASE)
+    # Standalone output names may end with a three-digit trial index.
+    stem_id = re.sub(r"-\d{3}$", "", path.stem)
+    question = cell.question_id if cell else (title_id.group(1) if title_id else stem_id)
     model = cell.model_selector if cell else str(result.configuration.get("model") or "unknown")
     directory = path.parent.name
     passed = result.run.status == "succeeded" and all(check.passed for check in result.validation)
