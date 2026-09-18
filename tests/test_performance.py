@@ -94,6 +94,20 @@ def test_recursive_default_cli_and_explicit_file(tmp_path: Path, monkeypatch) ->
     assert len(load_records(result_paths(Path("results/batch/one.yaml")))) == 1
 
 
+def test_same_question_and_model_in_two_directories_stay_distinct(tmp_path: Path) -> None:
+    root = tmp_path / "results"
+    _save(root / "batch-a" / "trial.yaml", model="model-a", question="q1", passed=True, cost=0.1)
+    _save(root / "batch-b" / "trial.yaml", model="model-a", question="q1", passed=False, cost=0.2)
+
+    records = load_records(result_paths(root))
+    assert [record["directory"] for record in records] == ["batch-a", "batch-b"]
+    assert [record["question"] for record in records] == ["q1", "q1"]
+    assert [record["question_label"] for record in records] == ["batch-a / q1", "batch-b / q1"]
+    page = render_performance(records)
+    assert '<select id="directory">' in page
+    assert "<th>Directory</th><th>Question</th>" in page
+
+
 def test_bad_yaml_identifies_file_and_does_not_write_page(tmp_path: Path) -> None:
     source = tmp_path / "results"
     source.mkdir()

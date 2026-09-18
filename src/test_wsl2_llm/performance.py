@@ -40,11 +40,14 @@ def _record(result: TestResult, path: Path) -> dict[str, object]:
         else (title if title and title != "WSL2 Codex test result" else result.prompt)
     )
     model = cell.model_selector if cell else str(result.configuration.get("model") or "unknown")
+    directory = path.parent.name
     passed = result.run.status == "succeeded" and all(check.passed for check in result.validation)
     tokens = sum(usage.input_tokens + usage.output_tokens for usage in result.usage)
     return {
         "file": str(path),
+        "directory": directory,
         "question": question,
+        "question_label": f"{directory} / {question}",
         "prompt": result.prompt,
         "model": model,
         "agent": result.run.agent,

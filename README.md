@@ -484,14 +484,20 @@ test-wsl2-llm performance --source .\results\batch --output .\batch-performance.
 test-wsl2-llm performance --source .\results\single.yaml --force
 ```
 
-The page shows trial, model, and question totals; filters; cost versus pass rate; model
-statistics; per-question pass fractions and average input plus output tokens; and a
-searchable trial explorer. A pass requires a successful run and no failed validators.
+The page shows trial, directory, model, and question totals; filters including the immediate
+parent directory; cost versus pass rate; model statistics; per-question pass fractions and
+average input plus output tokens; and a searchable trial explorer. A pass requires a
+successful run and no failed validators.
 Template runs use their question IDs; standalone runs use the custom title or prompt as
-the question label. Non-result YAML artifacts copied into the results tree are skipped
-and listed by the command; malformed or unsupported result YAML remains an error.
-Trials without cost data remain in pass and token statistics but are
-excluded from cost averages. The generated HTML contains prompts and final responses,
+the question label. With all directories selected, per-question tables and model coverage
+use directory-prefixed question labels so identical IDs in separate directories remain
+distinct. Filtering to one directory shows its plain question IDs. The trial explorer
+also shows the directory. Model statistics, summaries, and cost-versus-success points
+are grouped by directory and model in the all-directories view; coverage is measured
+against questions in that directory. Non-result YAML artifacts copied into the results
+tree are skipped and listed by the command; malformed or unsupported result YAML remains
+an error. Trials without cost data remain in pass and token statistics but are excluded
+from cost averages. The generated HTML contains prompts and final responses,
 so share it only when those result details are suitable to share. The command refuses to
 replace an existing page unless `--force` is supplied. Priced results must use one
 currency; mixed currencies produce an error instead of an invalid cost comparison.
