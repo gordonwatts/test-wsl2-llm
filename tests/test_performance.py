@@ -116,7 +116,7 @@ def test_incomplete_or_future_result_is_not_skipped(tmp_path: Path, document: st
         app, ["performance", "--source", str(source), "--output", str(tmp_path / "out.html")]
     )
     assert response.exit_code == 2
-    assert "broken-result.yaml" in response.output
+    assert "broken-result.yaml" in re.sub(r"\s+", "", response.output)
     assert not (tmp_path / "out.html").exists()
 
 
