@@ -4,6 +4,7 @@ import json
 import re
 from pathlib import Path
 
+import pytest
 import yaml
 from test_report import sample_result
 from typer.testing import CliRunner
@@ -88,6 +89,33 @@ def test_bad_yaml_identifies_file_and_does_not_write_page(tmp_path: Path) -> Non
     assert response.exit_code == 2
     assert "bad.yaml" in response.output
     assert not output.exists()
+
+
+def test_standalone_result_uses_saved_model_prompt_and_zero_execution_time(tmp_path: Path) -> None:
+    result = sample_result().model_copy(deep=True)
+    result.configuration.model = "standalone-model:medium"
+    result.run.agent_execution_seconds = 0.0
+    source = tmp_path / "standalone.yaml"
+    source.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+
+    record = load_records([source])[0]
+    assert record["model"] == "standalone-model:medium"
+    assert record["question"] == result.prompt
+    assert record["seconds"] == 0.0
+    assert record["passed"] is True
+
+
+def test_mixed_priced_currencies_are_rejected(tmp_path: Path) -> None:
+    usd = tmp_path / "usd.yaml"
+    eur = tmp_path / "eur.yaml"
+    _save(usd, model="a", question="q1", passed=True, cost=0.1)
+    result = sample_result().model_copy(deep=True)
+    result.model_information.currency = "EUR"
+    result.model_information.total_cost = 0.2
+    eur.write_text(yaml.safe_dump(result.model_dump(mode="json")), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="different currencies: EUR, USD"):
+        load_records([usd, eur])
 
 
 def test_embedded_records_cannot_break_script_or_markup() -> None:

@@ -53,7 +53,11 @@ def _record(result: TestResult, path: Path) -> dict[str, object]:
         "cost": result.model_information.total_cost,
         "currency": result.model_information.currency,
         "tokens": tokens,
-        "seconds": result.run.agent_execution_seconds or result.run.codex_execution_seconds,
+        "seconds": (
+            result.run.agent_execution_seconds
+            if result.run.agent_execution_seconds is not None
+            else result.run.codex_execution_seconds
+        ),
         "started": result.run.started_at,
         "validation": [
             {"name": check.name, "passed": check.passed, "message": check.message}
@@ -65,7 +69,12 @@ def _record(result: TestResult, path: Path) -> dict[str, object]:
 
 
 def load_records(paths: Iterable[Path]) -> list[dict[str, object]]:
-    return [_record(load_result_yaml(path), path) for path in paths]
+    records = [_record(load_result_yaml(path), path) for path in paths]
+    currencies = {str(record["currency"]) for record in records if record["cost"] is not None}
+    if len(currencies) > 1:
+        listed = ", ".join(sorted(currencies))
+        raise ValueError(f"cannot combine priced results in different currencies: {listed}")
+    return records
 
 
 def render_performance(records: list[dict[str, object]]) -> str:

@@ -493,7 +493,8 @@ Template runs use their question IDs; standalone runs use the custom title or pr
 the question label. Trials without cost data remain in pass and token statistics but are
 excluded from cost averages. The generated HTML contains prompts and final responses,
 so share it only when those result details are suitable to share. The command refuses to
-replace an existing page unless `--force` is supplied.
+replace an existing page unless `--force` is supplied. Priced results must use one
+currency; mixed currencies produce an error instead of an invalid cost comparison.
 
 ### Portable Markdown viewing
 
