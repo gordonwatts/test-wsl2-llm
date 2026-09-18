@@ -200,7 +200,7 @@ def test_question_copy_files_adds_and_removes_shared_files() -> None:
 
 
 def test_question_copy_files_rejects_unknown_removal() -> None:
-    with pytest.raises(ValueError, match="no preceding file"):
+    with pytest.raises(ValueError, match="no preceding item"):
         question_copy_files([], {"id": "one", "copy_files": ["-missing.yaml"]})
 
 
@@ -226,13 +226,47 @@ def test_template_question_validation_accepts_plugins_list() -> None:
 
 
 def test_question_plugins_rejects_unknown_removal() -> None:
-    with pytest.raises(ValueError, match="no preceding plugin"):
+    with pytest.raises(ValueError, match="no preceding item"):
         question_plugins([], {"id": "one", "plugins": ["-missing@marketplace"]})
 
 
 def test_question_copy_back_rejects_unknown_removal() -> None:
-    with pytest.raises(ValueError, match="no preceding pattern"):
+    with pytest.raises(ValueError, match="no preceding item"):
         question_copy_back([], {"id": "one", "copy_back": ["-missing.root"]})
+
+
+@pytest.mark.parametrize(
+    ("field", "resolve"),
+    [
+        ("copy_files", question_copy_files),
+        ("copy_back", question_copy_back),
+        ("plugins", question_plugins),
+    ],
+)
+def test_question_string_lists_apply_ordered_additions_and_removals(field, resolve) -> None:
+    assert resolve(
+        ["shared", "keep"],
+        {"id": "one", field: ["new", "-shared", "shared", "-new", "shared"]},
+    ) == ["keep", "shared"]
+    with pytest.raises(ValueError, match=f"{field} removal '-shared' has no preceding item"):
+        resolve(["shared"], {"id": "one", field: ["-shared", "-shared"]})
+    with pytest.raises(ValueError, match=f"{field} removal '-' has no preceding item"):
+        resolve([], {"id": "one", field: ["-"]})
+
+
+@pytest.mark.parametrize("field", ["copy_files", "copy_back", "plugins"])
+def test_question_string_lists_reject_invalid_items(field: str) -> None:
+    with pytest.raises(ValueError, match=f"field '{field}' must be a list of non-empty strings"):
+        validate_questions("{{ question }}", [{"id": "one", "question": "first", field: [""]}])
+
+
+def test_question_copy_files_matches_normalized_shared_paths(tmp_path: Path) -> None:
+    shared = str((tmp_path / "shared.yaml").resolve())
+    assert question_copy_files(
+        [shared],
+        {"id": "one", "copy_files": ["-shared.yaml", "added.yaml"]},
+        base=tmp_path,
+    ) == [str((tmp_path / "added.yaml").resolve())]
 
 
 def test_template_output_names_question_and_repetition() -> None:
