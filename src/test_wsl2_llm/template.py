@@ -2,6 +2,7 @@
 
 import os
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -22,6 +23,7 @@ _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 TEMPLATE_SCHEMA_NAME = "test-wsl2-llm-template.schema.json"
 _PACKAGED_SCHEMA_NAME = "template.schema.json"
 _SCHEMA_HEADER = re.compile(r"^# yaml-language-server:\s*\$schema=.*$")
+_QUESTION_STRING_LIST_FIELDS = frozenset({"copy_files", "copy_back", "plugins"})
 
 
 @dataclass(frozen=True)
@@ -198,21 +200,12 @@ def validate_questions(
         for key, value in question.items():
             if not isinstance(key, str) or not _NAME.fullmatch(key):
                 raise ValueError(f"question {identifier} field names must be identifiers")
-            if key == "copy_back":
+            if key in _QUESTION_STRING_LIST_FIELDS:
                 if not isinstance(value, list) or any(
-                    not isinstance(pattern, str) or not pattern.strip() for pattern in value
+                    not isinstance(item, str) or not item.strip() for item in value
                 ):
                     raise ValueError(
-                        f"question {identifier} field 'copy_back' must be a list of "
-                        "non-empty strings"
-                    )
-                continue
-            if key == "copy_files":
-                if not isinstance(value, list) or any(
-                    not isinstance(source, str) or not source.strip() for source in value
-                ):
-                    raise ValueError(
-                        f"question {identifier} field 'copy_files' must be a list of "
+                        f"question {identifier} field '{key}' must be a list of "
                         "non-empty strings"
                     )
                 continue
@@ -220,14 +213,6 @@ def validate_questions(
                 if not isinstance(value, str) or not value.strip():
                     raise ValueError(
                         f"question {identifier} field 'distro' must be a non-empty string"
-                    )
-                continue
-            if key == "plugins":
-                if not isinstance(value, list) or any(
-                    not isinstance(plugin, str) or not plugin.strip() for plugin in value
-                ):
-                    raise ValueError(
-                        f"question {identifier} field 'plugins' must be a list of non-empty strings"
                     )
                 continue
             if key == "validators":
@@ -399,26 +384,47 @@ def render_questions(batch: TemplateConfig) -> list[tuple[str, str, dict[str, An
     return rendered
 
 
+def _question_string_list(
+    shared: list[str],
+    question: dict[str, Any],
+    field: str,
+    *,
+    normalize: Callable[[str], str] = lambda item: item,
+) -> list[str]:
+    """Apply ordered question additions and removals to an inherited string list."""
+    items = [normalize(item) for item in shared]
+    overrides = question.get(field, [])
+    if not isinstance(overrides, list):
+        raise ValueError(f"question {question.get('id', 'unknown')} field '{field}' must be a list")
+    for override in overrides:
+        if not isinstance(override, str) or not override.strip():
+            raise ValueError(
+                f"question {question.get('id', 'unknown')} field '{field}' must be a list "
+                "of non-empty strings"
+            )
+        if override.startswith("-"):
+            if not override[1:].strip():
+                raise ValueError(
+                    f"question {question.get('id', 'unknown')} {field} removal "
+                    f"'{override}' has no preceding item"
+                )
+            removed = normalize(override[1:])
+            if removed not in items:
+                raise ValueError(
+                    f"question {question.get('id', 'unknown')} {field} removal "
+                    f"'{override}' has no preceding item"
+                )
+            items = [item for item in items if item != removed]
+        else:
+            added = normalize(override)
+            if added not in items:
+                items.append(added)
+    return items
+
+
 def question_copy_back(shared: list[str], question: dict[str, Any]) -> list[str]:
     """Apply a question's copy-back additions and removals to shared patterns."""
-    patterns = list(shared)
-    overrides = question.get("copy_back", [])
-    if not isinstance(overrides, list):
-        return patterns
-    for pattern in overrides:
-        if not isinstance(pattern, str) or not pattern.strip():
-            continue
-        if pattern.startswith("-") and len(pattern) > 1:
-            remove = pattern[1:]
-            if remove not in patterns:
-                raise ValueError(
-                    f"question {question.get('id', 'unknown')} copy_back removal "
-                    f"'-{remove}' has no preceding pattern"
-                )
-            patterns = [existing for existing in patterns if existing != remove]
-        elif pattern not in patterns:
-            patterns.append(pattern)
-    return patterns
+    return _question_string_list(shared, question, "copy_back")
 
 
 def question_copy_files(
@@ -435,26 +441,7 @@ def question_copy_files(
         path = Path(source).expanduser()
         return str((base / path).resolve()) if not path.is_absolute() else str(path.resolve())
 
-    patterns = [normalize(source) for source in shared]
-    overrides = question.get("copy_files", [])
-    if not isinstance(overrides, list):
-        return patterns
-    for source in overrides:
-        if not isinstance(source, str) or not source.strip():
-            continue
-        if source.startswith("-") and len(source) > 1:
-            remove = normalize(source[1:])
-            if remove not in patterns:
-                raise ValueError(
-                    f"question {question.get('id', 'unknown')} copy_files removal "
-                    f"'-{source[1:]}' has no preceding file"
-                )
-            patterns = [existing for existing in patterns if existing != remove]
-        else:
-            source = normalize(source)
-            if source not in patterns:
-                patterns.append(source)
-    return patterns
+    return _question_string_list(shared, question, "copy_files", normalize=normalize)
 
 
 def question_distro(shared: str | None, question: dict[str, Any]) -> str | None:
@@ -471,24 +458,7 @@ def question_distro(shared: str | None, question: dict[str, Any]) -> str | None:
 
 def question_plugins(shared: list[str], question: dict[str, Any]) -> list[str]:
     """Apply a question's plugin additions and removals to shared plugins."""
-    plugins = list(shared)
-    overrides = question.get("plugins", [])
-    if not isinstance(overrides, list):
-        return plugins
-    for plugin in overrides:
-        if not isinstance(plugin, str) or not plugin.strip():
-            continue
-        if plugin.startswith("-") and len(plugin) > 1:
-            remove = plugin[1:]
-            if remove not in plugins:
-                raise ValueError(
-                    f"question {question.get('id', 'unknown')} plugins removal "
-                    f"'-{remove}' has no preceding plugin"
-                )
-            plugins = [existing for existing in plugins if existing != remove]
-        elif plugin not in plugins:
-            plugins.append(plugin)
-    return plugins
+    return _question_string_list(shared, question, "plugins")
 
 
 def question_validators(
