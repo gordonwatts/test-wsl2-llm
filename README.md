@@ -284,8 +284,13 @@ mapping needs a unique, filename-safe `id`; its scalar fields are available thro
 mapping with `{{question-id}}` (including IDs with periods or hyphens). References may be
 nested, but cycles and references to a question without text are rejected before execution.
 Question-level `copy_files`, `copy_back`, and `plugins` fields are lists of files,
-files/wildcards, and plugin selectors, respectively, not substitution scalars. A question-level
-`validators` list replaces the shared checks for that question; omit it to inherit shared checks
+files/wildcards, and plugin selectors, respectively, not substitution scalars. Each such
+list starts with the shared list and processes its entries in order: an entry beginning
+with `-` removes the matching current item, and any other entry adds it. Removing an
+item that is not currently present is an error. Repeating an existing addition has no
+effect; removing an item and then adding it again places it at the end of the list.
+For `copy_files`, matching uses paths resolved relative to the template YAML file.
+A question-level `validators` list replaces the shared checks for that question; omit it to inherit shared checks
 or use `[]` to disable them.
 A question-level `distro` selects a different WSL distribution. For example:
 
@@ -429,10 +434,8 @@ workspace before Codex starts. This is useful for local credentials such as a
 resolved relative to the input YAML file. The resolved list is saved in the YAML
 `configuration` section and in the Markdown report's expanded `Resolved configuration`
 section. The copy operation itself does not add file contents to either report. Template
-questions may also provide a `copy_files` list; entries are added to that question's inherited
-files, while entries beginning with `-` remove an exact inherited file or earlier addition.
-Relative paths are resolved from the template YAML file, and a removal must refer to a
-file already present.
+questions may also provide a `copy_files` list using the ordered add/remove rule above.
+Relative paths are resolved from the template YAML file.
 
 Use `--copy-back PATH` (repeatable) to copy files from the WSL workspace back to Windows
 after Codex finishes. Relative paths and shell-style wildcards such as `plot_*.png` are
@@ -442,14 +445,9 @@ written beside the reports as `<output-stub>.<file-name>` (for example,
 are displayed with PNG previews embedded directly in Markdown and also have an ordinary
 file link, text files show their first ten lines, and ROOT files are inspected with
 `uproot` to list their objects plus TTree branches and event counts. The YAML form is
-`copy_back`. Template questions may also provide a `copy_back` list; entries are added to
-that question's shared patterns, while entries beginning with `-` remove an exact shared
-pattern (for example, `-ab-output.root`). A removal must refer to a shared pattern or an
-earlier addition in the same question; otherwise template loading fails with an error and the
-YAML must be corrected before the batch can run. Template questions may also provide a
-`plugins` list; entries are added to that question's shared plugin selectors, while entries
-beginning with `-` remove an exact shared selector (for example, `-shared-tools@my-marketplace`).
-A plugin removal must refer to a shared selector or an earlier addition in the same question.
+`copy_back`. Template questions may also provide `copy_back` and `plugins` lists using the
+same ordered add/remove rule (for example, `-ab-output.root` and
+`-shared-tools@my-marketplace`). Invalid removals fail before the batch starts.
 This lets each question use a different plugin set while sharing the same marketplaces.
 Template questions may also provide a `distro` string to select a different WSL
 distribution for that question. It overrides the shared YAML `distro` only for the
