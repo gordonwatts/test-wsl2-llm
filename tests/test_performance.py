@@ -43,10 +43,24 @@ def test_recursive_default_cli_and_explicit_file(tmp_path: Path, monkeypatch) ->
         passed=False,
         cost=None,
     )
+    (tmp_path / "results" / "batch" / "one.ab-config.yaml").write_text(
+        "CommonServices:\n  runSystematics: false\nJets:\n  - containerName: AnaJets\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "results" / "batch" / "two.datasets.yaml").write_text(
+        "$schema: ./datasets.schema.json\n"
+        "schema_version: '0.2.0'\n"
+        "analysis:\n  name: test\n"
+        "datasets: {}\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(tmp_path)
-    assert len(result_paths(Path("results"))) == 2
+    assert len(result_paths(Path("results"))) == 4
     response = runner.invoke(app, ["performance"])
     assert response.exit_code == 0, response.output
+    assert "Skipped 2 non-result YAML file(s)" in response.output
+    assert "one.ab-config.yaml" in response.output
+    assert "two.datasets.yaml" in response.output
     page = (tmp_path / "performance.html").read_text(encoding="utf-8")
     data = json.loads(
         re.search(r'<script id="records" type="application/json">(.*?)</script>', page, re.S).group(
@@ -89,6 +103,21 @@ def test_bad_yaml_identifies_file_and_does_not_write_page(tmp_path: Path) -> Non
     assert response.exit_code == 2
     assert "bad.yaml" in response.output
     assert not output.exists()
+
+
+@pytest.mark.parametrize(
+    "document",
+    ["schema_version: 2\nprompt: hello\n", "schema_version: 99\nprompt: hello\nrun: {}\n"],
+)
+def test_incomplete_or_future_result_is_not_skipped(tmp_path: Path, document: str) -> None:
+    source = tmp_path / "broken-result.yaml"
+    source.write_text(document, encoding="utf-8")
+    response = runner.invoke(
+        app, ["performance", "--source", str(source), "--output", str(tmp_path / "out.html")]
+    )
+    assert response.exit_code == 2
+    assert "broken-result.yaml" in response.output
+    assert not (tmp_path / "out.html").exists()
 
 
 def test_standalone_result_uses_saved_model_prompt_and_zero_execution_time(tmp_path: Path) -> None:

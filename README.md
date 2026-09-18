@@ -490,7 +490,9 @@ The page shows trial, model, and question totals; filters; cost versus pass rate
 statistics; per-question pass fractions and average input plus output tokens; and a
 searchable trial explorer. A pass requires a successful run and no failed validators.
 Template runs use their question IDs; standalone runs use the custom title or prompt as
-the question label. Trials without cost data remain in pass and token statistics but are
+the question label. Non-result YAML artifacts copied into the results tree are skipped
+and listed by the command; malformed or unsupported result YAML remains an error.
+Trials without cost data remain in pass and token statistics but are
 excluded from cost averages. The generated HTML contains prompts and final responses,
 so share it only when those result details are suitable to share. The command refuses to
 replace an existing page unless `--force` is supplied. Priced results must use one

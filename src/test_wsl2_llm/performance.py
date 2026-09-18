@@ -7,7 +7,9 @@ from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
 
-from test_wsl2_llm.compatibility import load_result_yaml
+import yaml
+
+from test_wsl2_llm.compatibility import load_result_values
 from test_wsl2_llm.models import TestResult
 
 
@@ -68,8 +70,46 @@ def _record(result: TestResult, path: Path) -> dict[str, object]:
     }
 
 
-def load_records(paths: Iterable[Path]) -> list[dict[str, object]]:
-    records = [_record(load_result_yaml(path), path) for path in paths]
+def _looks_like_result(values: object) -> bool:
+    """Distinguish harness results from YAML artifacts copied beside them."""
+    if not isinstance(values, dict):
+        return True  # A scalar/list may be a broken result; report the schema error.
+    if values.get("schema_version") == 2:
+        return True
+    markers = {
+        "prompt",
+        "run",
+        "timing",
+        "configuration",
+        "usage",
+        "model_information",
+        "result",
+        "logs",
+        "workspace",
+        "validation",
+        "template_cell",
+    }
+    present = markers.intersection(values)
+    return len(present) >= 2 and bool(
+        present.intersection({"run", "model_information", "result", "logs"})
+    )
+
+
+def load_records(
+    paths: Iterable[Path], *, skipped: list[Path] | None = None
+) -> list[dict[str, object]]:
+    records = []
+    for path in paths:
+        try:
+            values = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise ValueError(f"while trying to parse file '{path}' as YAML: {exc}") from exc
+        if not _looks_like_result(values):
+            if skipped is not None:
+                skipped.append(path)
+            continue
+        result = load_result_values(values, source=str(path))
+        records.append(_record(result, path))
     currencies = {str(record["currency"]) for record in records if record["cost"] is not None}
     if len(currencies) > 1:
         listed = ", ".join(sorted(currencies))
@@ -84,13 +124,20 @@ def render_performance(records: list[dict[str, object]]) -> str:
     return page.replace("__RECORDS__", data)
 
 
-def write_performance(source: Path, destination: Path, *, force: bool = False) -> tuple[Path, int]:
+def write_performance(
+    source: Path, destination: Path, *, force: bool = False
+) -> tuple[Path, int, list[Path]]:
     paths = result_paths(source)
     if not paths:
-        raise ValueError(f"no YAML result files found in {source}")
+        raise ValueError(f"no YAML files found in {source}")
     if destination.exists() and not force:
         raise ValueError(f"output already exists: {destination}; use --force to replace it")
-    records = load_records(paths)
+    skipped: list[Path] = []
+    records = load_records(paths, skipped=skipped)
+    if not records:
+        raise ValueError(
+            f"no result YAML files found in {source}; skipped {len(skipped)} non-result YAML files"
+        )
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(render_performance(records), encoding="utf-8")
-    return destination, len(records)
+    return destination, len(records), skipped

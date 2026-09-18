@@ -916,8 +916,14 @@ def performance(
 
     console = Console(stderr=True)
     try:
-        destination, count = write_performance(source, output, force=force)
+        destination, count, skipped = write_performance(source, output, force=force)
         console.print(f"Performance report: {destination} ({count} trials)")
+        if skipped:
+            console.print(f"Skipped {len(skipped)} non-result YAML file(s):")
+            for path in skipped[:10]:
+                console.print(f"  {path}")
+            if len(skipped) > 10:
+                console.print(f"  ... and {len(skipped) - 10} more")
     except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
         console.print(f"[red]Error:[/red] {exc}")
         raise typer.Exit(2) from exc
