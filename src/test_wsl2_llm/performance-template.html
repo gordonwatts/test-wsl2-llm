@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>LLM test performance</title>
+<style>
+:root{font-family:system-ui,sans-serif;color:#1c2937;background:#f4f7fa}*{box-sizing:border-box}
+body{max-width:1500px;margin:auto;padding:1.5rem}h1,h2{color:#173d64}h2{margin-top:2.5rem}
+.muted{color:#526579}.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:1rem}
+.card,section{background:white;border:1px solid #d6e0e8;border-radius:10px;padding:1rem;box-shadow:0 1px 3px #173d6410}
+.card strong{display:block;font-size:2rem;color:#153b63}.filters{display:flex;flex-wrap:wrap;gap:1rem;align-items:end}
+label{display:grid;gap:.3rem;font-weight:600}input{font:inherit;max-width:100%;padding:.5rem;border:1px solid #9aaebb;border-radius:5px}
+.filter{position:relative;min-width:185px;max-width:245px}.filter summary{cursor:pointer;border:1px solid #9aaebb;border-radius:5px;padding:.55rem;background:white;list-style:none}.filter summary::-webkit-details-marker{display:none}.filter summary:after{content:'▾';float:right;margin-left:.5rem}.filter[open] summary{border-color:#1676ae}.filter-menu{position:absolute;z-index:5;top:100%;left:0;min-width:100%;max-height:320px;overflow:auto;padding:.55rem;background:white;border:1px solid #9aaebb;border-radius:5px;box-shadow:0 6px 18px #173d6430}.filter-actions{display:flex;gap:.3rem;margin-bottom:.3rem}.filter-actions button{padding:.25rem .5rem}.filter-options label{display:flex;align-items:flex-start;gap:.45rem;padding:.25rem;font-weight:400;overflow-wrap:anywhere;cursor:pointer}.filter-options input{margin:.15rem 0 0;flex:none}.filter-options label:hover{background:#eaf1f7}
+.scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{padding:.55rem .7rem;border-bottom:1px solid #dce5eb;text-align:left;vertical-align:top}
+th{background:#eaf1f7;position:sticky;top:0;white-space:nowrap}td.num{text-align:right;white-space:nowrap}.empty{color:#718293}
+.heat{font-weight:600;text-align:center;white-space:nowrap}.chart{min-height:260px;position:relative}.chart svg{width:100%;height:330px}
+.legend{font-size:.85rem;color:#526579}.dot{cursor:pointer}button{font:inherit;padding:.45rem .8rem;cursor:pointer}
+details{max-width:550px}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;font-size:.85rem}
+</style></head><body>
+<h1>LLM test performance</h1><p class="muted">Results from saved YAML reports. Pass means the run succeeded and every recorded validation passed.</p>
+<div id="cards" class="cards"></div>
+<h2>Filter results</h2><section class="filters">
+<details class="filter"><summary id="directory-summary">All directories</summary><div class="filter-menu"><div class="filter-actions"><button type="button" id="directory-all">All</button><button type="button" id="directory-clear">Clear</button></div><div id="directory-options" class="filter-options"></div></div></details>
+<details class="filter"><summary id="model-summary">All models</summary><div class="filter-menu"><div class="filter-actions"><button type="button" id="model-all">All</button><button type="button" id="model-clear">Clear</button></div><div id="model-options" class="filter-options"></div></div></details>
+<details class="filter"><summary id="question-summary">All questions</summary><div class="filter-menu"><div class="filter-actions"><button type="button" id="question-all">All</button><button type="button" id="question-clear">Clear</button></div><div id="question-options" class="filter-options"></div></div></details>
+<details class="filter"><summary id="agent-summary">All agents</summary><div class="filter-menu"><div class="filter-actions"><button type="button" id="agent-all">All</button><button type="button" id="agent-clear">Clear</button></div><div id="agent-options" class="filter-options"></div></div></details>
+<details class="filter"><summary id="target-summary">All targets</summary><div class="filter-menu"><div class="filter-actions"><button type="button" id="target-all">All</button><button type="button" id="target-clear">Clear</button></div><div id="target-options" class="filter-options"></div></div></details>
+<details class="filter"><summary id="outcome-summary">All outcomes</summary><div class="filter-menu"><div class="filter-actions"><button type="button" id="outcome-all">All</button><button type="button" id="outcome-clear">Clear</button></div><div id="outcome-options" class="filter-options"></div></div></details>
+</section>
+<h2>Cost versus success</h2><section><p class="muted">Each point uses pass rate across all matching trials and average estimated cost among trials with cost data. Missing cost is excluded from the average.</p><div id="chart" class="chart"></div><div id="chart-legend" class="legend"></div></section>
+<h2>Models</h2><section class="scroll"><table><thead><tr><th>Directory / model</th><th>Pass rate</th><th>Passed / trials</th><th>Question coverage</th><th>Average cost / priced trial</th><th>Cost / passed trial</th><th>Average tokens / trial</th><th>Total estimated cost</th></tr></thead><tbody id="models"></tbody></table></section>
+<h2>Model summary</h2><section id="model-stat-summary"></section>
+<h2>Pass fraction by question</h2><section class="scroll"><p class="muted">Each cell shows pass fraction and trial count for its directory, question, and model. Directory prefixes are shown when multiple directories are selected.</p><div id="pass-matrix"></div></section>
+<h2>Average tokens per trial</h2><section class="scroll"><p class="muted">Input plus output tokens, averaged across all trials in each question and model cell.</p><div id="token-matrix"></div></section>
+<h2>Trial explorer</h2><section><label>Search trials<input id="search" type="search" placeholder="Directory, model, question, file, outcome"></label><p id="count" class="muted"></p><div class="scroll"><table><thead><tr><th>Directory</th><th>Question</th><th>Model</th><th>Trial</th><th>Outcome</th><th>Tokens</th><th>Cost</th><th>Details</th></tr></thead><tbody id="trials"></tbody></table></div><p><button id="previous">Previous</button> <span id="page"></span> <button id="next">Next</button></p></section>
+<script id="records" type="application/json">__RECORDS__</script>
+<script>
+const all=JSON.parse(document.getElementById('records').textContent), $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const currency=all.find(r=>r.cost!=null)?.currency||'USD';
+const pct=n=>`${(100*n).toFixed(1)}%`, money=n=>n==null?'—':`${currency==='USD'?'$':esc(currency)+' '}${Number(n).toFixed(n>0&&n<.01?4:2)}`;
+const avg=(rows,key)=>rows.length?rows.reduce((s,r)=>s+r[key],0)/rows.length:null;
+const sort=a=>[...a].sort((x,y)=>String(x).localeCompare(String(y),undefined,{numeric:true}));
+const fields=['directory','model','question','agent','target','outcome'];
+const names={directory:'directories',model:'models',question:'questions',agent:'agents',target:'targets',outcome:'outcomes'};
+const choices=Object.fromEntries(fields.map(k=>[k,k==='outcome'?['pass','fail']:sort(new Set(all.map(r=>r[k])))]));
+const selected=Object.fromEntries(fields.map(k=>[k,new Set(choices[k])]));
+let page=0;const pageSize=50;
+function updateFilter(key){const values=choices[key],picked=selected[key];$(key+'-summary').textContent=picked.size===values.length?'All '+names[key]:picked.size===0?'No '+names[key]:picked.size===1?`${key[0].toUpperCase()+key.slice(1)}: ${[...picked][0]}`:`${picked.size} ${names[key]} selected`;
+ for(const checkbox of $(key+'-options').querySelectorAll('input[type="checkbox"]'))checkbox.checked=picked.has(checkbox.value);
+}
+for(const key of fields){$(key+'-options').innerHTML=choices[key].map(v=>`<label><input type="checkbox" value="${esc(v)}" checked>${esc(key==='outcome'?v[0].toUpperCase()+v.slice(1):v)}</label>`).join('');
+ $(key+'-options').addEventListener('change',event=>{if(event.target.type!=='checkbox')return;event.target.checked?selected[key].add(event.target.value):selected[key].delete(event.target.value);updateFilter(key);page=0;render();});
+ $(key+'-all').addEventListener('click',()=>{selected[key]=new Set(choices[key]);updateFilter(key);page=0;render();});
+ $(key+'-clear').addEventListener('click',()=>{selected[key].clear();updateFilter(key);page=0;render();});updateFilter(key);
+}
+const questionName=(record,singleDirectory)=>singleDirectory?record.question:record.question_label;
+const modelName=(record,singleDirectory)=>singleDirectory?record.model:`${record.directory} / ${record.model}`;
+function matrix(rows,models,questions,kind,singleDirectory){let html='<table><thead><tr><th>Question</th>'+models.map(m=>`<th>${esc(m)}</th>`).join('')+'</tr></thead><tbody>';
+ for(const q of questions){html+=`<tr><th title="${esc(q)}">${esc(q)}</th>`;for(const m of models){const cell=rows.filter(r=>questionName(r,singleDirectory)===q&&r.model===m);let value='—',shade='';if(cell.length){if(kind==='pass'){const rate=cell.filter(r=>r.passed).length/cell.length;value=`${pct(rate)} (${cell.length})`;shade=`background:rgba(24,145,92,${(.08+.55*rate).toFixed(2)})`;}else value=Math.round(avg(cell,'tokens')).toLocaleString();}html+=`<td class="heat" style="${shade}">${value}</td>`;}html+='</tr>';}return html+'</tbody></table>';
+}
+function render(){let rows=all.filter(r=>fields.every(k=>selected[k].has(k==='outcome'?(r.passed?'pass':'fail'):r[k])));const singleDirectory=selected.directory.size===1;
+ const models=sort(new Set(rows.map(r=>r.model))),questions=sort(new Set(rows.map(r=>questionName(r,singleDirectory)))),directories=new Set(rows.map(r=>r.directory));const passed=rows.filter(r=>r.passed).length;
+ $('cards').innerHTML=[['Trials',rows.length],['Directories',directories.size],['Models',models.length],['Questions',questions.length],['Pass rate',rows.length?pct(passed/rows.length):'—']].map(([name,value])=>`<div class="card">${name}<strong>${value}</strong></div>`).join('');
+ const groups=sort(new Set(rows.map(r=>modelName(r,singleDirectory))));
+ const stats=groups.map(m=>{const data=rows.filter(r=>modelName(r,singleDirectory)===m),ok=data.filter(r=>r.passed),priced=data.filter(r=>r.cost!=null),available=new Set(rows.filter(r=>r.directory===data[0].directory).map(r=>r.question)).size;return {model:m,data,ok,priced,rate:ok.length/data.length,coverage:new Set(data.map(r=>r.question)).size,available,total:priced.reduce((s,r)=>s+r.cost,0)};}).sort((a,b)=>b.rate-a.rate||a.model.localeCompare(b.model));
+ $('models').innerHTML=stats.map(s=>`<tr><th>${esc(s.model)}</th><td class="num">${pct(s.rate)}</td><td class="num">${s.ok.length} / ${s.data.length}</td><td class="num">${s.coverage} / ${s.available}</td><td class="num">${money(avg(s.priced,'cost'))}</td><td class="num">${s.priced.filter(r=>r.passed).length?money(s.total/s.priced.filter(r=>r.passed).length):'—'}</td><td class="num">${Math.round(avg(s.data,'tokens')).toLocaleString()}</td><td class="num">${s.priced.length?money(s.total):'—'}</td></tr>`).join('')||'<tr><td colspan="8">No matching trials</td></tr>';
+ $('model-stat-summary').innerHTML=stats.map(s=>`<p><strong>${esc(s.model)}</strong>: ${s.ok.length} of ${s.data.length} passed (${pct(s.rate)}); ${s.coverage} of ${s.available} questions; ${s.priced.length} priced trials; ${Math.round(avg(s.data,'tokens')).toLocaleString()} average tokens per trial.</p>`).join('')||'No matching models.';
+ $('pass-matrix').innerHTML=matrix(rows,models,questions,'pass',singleDirectory);$('token-matrix').innerHTML=matrix(rows,models,questions,'tokens',singleDirectory);
+ const chart=stats.filter(s=>s.priced.length),max=Math.max(.01,...chart.map(s=>avg(s.priced,'cost'))),W=850,H=330,L=75,R=25,T=20,B=50;
+ $('chart').innerHTML=`<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Average cost versus pass rate by directory and model"><line x1="${L}" y1="${H-B}" x2="${W-R}" y2="${H-B}" stroke="#53677a"/><line x1="${L}" y1="${T}" x2="${L}" y2="${H-B}" stroke="#53677a"/><text x="${W/2}" y="${H-8}" text-anchor="middle">Pass rate</text><text x="10" y="18">Avg cost</text>${[0,.25,.5,.75,1].map(v=>`<text x="${L+v*(W-L-R)}" y="${H-B+20}" text-anchor="middle">${Math.round(v*100)}%</text>`).join('')}${[0,.5,1].map(v=>`<text x="${L-8}" y="${H-B-v*(H-T-B)+4}" text-anchor="end">${money(v*max)}</text>`).join('')}${chart.map(s=>`<circle class="dot" cx="${L+s.rate*(W-L-R)}" cy="${H-B-avg(s.priced,'cost')/max*(H-T-B)}" r="7" fill="${s.coverage===s.available?'#1676ae':'white'}" stroke="#1676ae" stroke-width="2"><title>${esc(s.model)}: ${pct(s.rate)}, ${money(avg(s.priced,'cost'))}, ${s.coverage}/${s.available} questions</title></circle>`).join('')}</svg>`;
+ $('chart-legend').textContent=`${chart.length} ${singleDirectory?'models':'directory/model groups'} with cost data. Filled circles have complete question coverage within their directory; open circles have partial coverage.`;
+ const term=$('search').value.toLowerCase();const found=rows.filter(r=>`${r.directory} ${r.model} ${r.question} ${r.file} ${r.passed?'pass':'fail'}`.toLowerCase().includes(term));const pages=Math.max(1,Math.ceil(found.length/pageSize));page=Math.min(page,pages-1);const shown=found.slice(page*pageSize,(page+1)*pageSize);
+ $('count').textContent=`Showing ${found.length?1+page*pageSize:0}–${Math.min((page+1)*pageSize,found.length)} of ${found.length} matching trials`;
+ $('trials').innerHTML=shown.map(r=>`<tr><td>${esc(r.directory)}</td><td>${esc(r.question)}</td><td>${esc(r.model)}</td><td>${r.trial??'—'}</td><td>${r.passed?'Pass':'Fail'}</td><td class="num">${Number(r.tokens).toLocaleString()}</td><td class="num">${money(r.cost)}</td><td><details><summary>View details</summary><p><strong>Directory:</strong> ${esc(r.directory)}</p><p><strong>File:</strong> ${esc(r.file)}</p><p><strong>Started:</strong> ${esc(r.started)}</p><p><strong>Agent / target:</strong> ${esc(r.agent)} / ${esc(r.target)}</p><p><strong>Execution:</strong> ${Number(r.seconds).toFixed(1)} s</p><p><strong>Validation:</strong> ${r.validation.length?r.validation.map(v=>`${esc(v.name)}: ${v.passed?'pass':'fail'} ${esc(v.message??'')}`).join('<br>'):'None recorded'}</p>${r.error?`<pre>${esc(r.error)}</pre>`:''}<p><strong>Prompt:</strong></p><pre>${esc(r.prompt)}</pre><p><strong>Final response:</strong></p><pre>${esc(r.response??'No response')}</pre></details></td></tr>`).join('')||'<tr><td colspan="8">No matching trials</td></tr>';
+ $('page').textContent=`Page ${page+1} of ${pages}`;$('previous').disabled=page===0;$('next').disabled=page>=pages-1;
+}
+$('search').addEventListener('input',()=>{page=0;render()});
+$('previous').addEventListener('click',()=>{page--;render()});$('next').addEventListener('click',()=>{page++;render()});render();
+</script></body></html>

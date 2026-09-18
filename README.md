@@ -52,7 +52,7 @@ To verify an installed wheel without relying on the source tree, run this
 from a fresh directory:
 
 ```powershell
-python -c "from importlib.resources import files; p=files('test_wsl2_llm'); assert (p/'template.schema.json').is_file(); assert (p/'model-pricing.yaml').is_file()"
+python -c "from importlib.resources import files; p=files('test_wsl2_llm'); assert (p/'template.schema.json').is_file(); assert (p/'model-pricing.yaml').is_file(); assert (p/'performance-template.html').is_file()"
 test-wsl2-llm template init .\questions.yaml
 ```
 
@@ -475,6 +475,39 @@ test-wsl2-llm generate .\results\hello.yaml `
 ```
 
 The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file.
+
+Generate a standalone performance page from all YAML results below `results`:
+
+```powershell
+test-wsl2-llm performance
+test-wsl2-llm performance --source .\results\batch --output .\batch-performance.html
+test-wsl2-llm performance --source .\results\single.yaml --force
+```
+
+The page shows trial, directory, model, and question totals; checkbox filters for directory,
+model, question, agent, target, and outcome; cost versus pass rate; model statistics;
+per-question pass fractions and average input plus output tokens; and a searchable trial
+explorer. A pass requires a
+successful run and no failed validators. Each filter allows multiple choices: choices within
+one filter are combined with OR, and filters are combined with AND. **All** selects every
+choice; **Clear** selects none.
+Question labels use `template_cell.question_id` when present. For older standalone results,
+the page takes an ID from a `Question: <id>` title, then falls back to the YAML filename stem,
+removing a final three-digit trial index such as `-001`. Long titles and prompts remain in
+trial details but are not question labels. With multiple directories selected, per-question
+tables and model coverage
+use directory-prefixed question labels so identical IDs in separate directories remain
+distinct. Filtering to one directory shows its plain question IDs. The trial explorer
+also shows the directory. Model statistics, summaries, and cost-versus-success points
+are grouped by directory and model in the all-directories view; coverage is measured
+against questions in that directory. Non-result YAML artifacts copied into the results
+tree are skipped and listed by the command; malformed or unsupported result YAML remains
+an error. Trials without cost data remain in pass and token statistics but are excluded
+from cost averages. The generated HTML contains prompts and final responses,
+so share it only when those result details are suitable to share. The command refuses to
+replace an existing page unless `--force` is supplied. Priced results must use one
+currency; mixed currencies produce an error instead of an invalid cost comparison.
+
 ### Portable Markdown viewing
 
 Reports keep the outcome, prompt, final response, validation diagnostics, and artifact
