@@ -52,7 +52,7 @@ To verify an installed wheel without relying on the source tree, run this
 from a fresh directory:
 
 ```powershell
-python -c "from importlib.resources import files; p=files('test_wsl2_llm'); assert (p/'template.schema.json').is_file(); assert (p/'model-pricing.yaml').is_file()"
+python -c "from importlib.resources import files; p=files('test_wsl2_llm'); assert (p/'template.schema.json').is_file(); assert (p/'model-pricing.yaml').is_file(); assert (p/'performance-template.html').is_file()"
 test-wsl2-llm template init .\questions.yaml
 ```
 
@@ -477,6 +477,24 @@ test-wsl2-llm generate .\results\hello.yaml `
 ```
 
 The output defaults to the YAML file's stem. Use `--force` to replace an existing Markdown file.
+
+Generate a standalone performance page from all YAML results below `results`:
+
+```powershell
+test-wsl2-llm performance
+test-wsl2-llm performance --source .\results\batch --output .\batch-performance.html
+test-wsl2-llm performance --source .\results\single.yaml --force
+```
+
+The page shows trial, model, and question totals; filters; cost versus pass rate; model
+statistics; per-question pass fractions and average input plus output tokens; and a
+searchable trial explorer. A pass requires a successful run and no failed validators.
+Template runs use their question IDs; standalone runs use the custom title or prompt as
+the question label. Trials without cost data remain in pass and token statistics but are
+excluded from cost averages. The generated HTML contains prompts and final responses,
+so share it only when those result details are suitable to share. The command refuses to
+replace an existing page unless `--force` is supplied.
+
 ### Portable Markdown viewing
 
 Reports keep the outcome, prompt, final response, validation diagnostics, and artifact

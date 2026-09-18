@@ -7,7 +7,12 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-REQUIRED = {"LICENSE", "template.schema.json", "model-pricing.yaml"}
+REQUIRED = {
+    "LICENSE",
+    "template.schema.json",
+    "model-pricing.yaml",
+    "performance-template.html",
+}
 
 
 def _check_names(names: set[str]) -> list[str]:

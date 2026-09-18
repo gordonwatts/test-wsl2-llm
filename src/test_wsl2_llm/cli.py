@@ -897,6 +897,32 @@ def template_run(
         raise typer.Exit(2) from exc
 
 
+@app.command("performance")
+def performance(
+    source: Annotated[
+        Path,
+        typer.Option("--source", "-s", help="YAML result file or directory to scan recursively."),
+    ] = Path("results"),
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Standalone HTML report destination."),
+    ] = Path("performance.html"),
+    force: Annotated[
+        bool, typer.Option("--force", help="Replace an existing HTML report.")
+    ] = False,
+) -> None:
+    """Summarize saved YAML results in an interactive HTML page."""
+    from test_wsl2_llm.performance import write_performance
+
+    console = Console(stderr=True)
+    try:
+        destination, count = write_performance(source, output, force=force)
+        console.print(f"Performance report: {destination} ({count} trials)")
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @app.command("generate")
 @app.command("generate-markdown", hidden=True)
 def generate_markdown(
