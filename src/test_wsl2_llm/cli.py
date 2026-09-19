@@ -734,7 +734,11 @@ def template_run(
                             paths[0].parent,
                         )
                     elif check.state == "stale":
-                        logger.info("Rerunning %s; saved result is stale: %s.", label, check.reason)
+                        existing = [str(path) for path in paths if path.exists()]
+                        raise FileExistsError(
+                            f"result file already exists for {label}: "
+                            f"{', '.join(existing)}; use --force to replace it"
+                        )
                     elif check.state == "incomplete":
                         logger.warning(
                             "Rerunning %s; saved result is incomplete: %s.",

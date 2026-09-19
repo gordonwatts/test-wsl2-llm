@@ -545,6 +545,47 @@ def test_template_run_force_reruns_questions_with_existing_results(
     assert "(--force)" in result.output
 
 
+def test_template_run_rejects_stale_result_before_execution_without_force(
+    monkeypatch, tmp_path: Path
+) -> None:
+    calls: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        calls.append(config.prompt)
+        return sample_result()
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    config = tmp_path / "batch.yaml"
+    config.write_text(
+        "prompt_template: 'Do {{ question }} now'\n"
+        "questions:\n  - id: q1\n    question: first\n"
+        "model: test-model\noutput: results/run\n",
+        encoding="utf-8",
+    )
+    previous_config = build_config(
+        {"prompt": "Do first", "model": "test-model", "output": str(tmp_path / "results/run")},
+        {},
+    )
+    previous_output = template_output(
+        str(tmp_path / "results/run"), "q1", 1, 1, previous_config.model_selector
+    )
+    previous_result = sample_result()
+    previous_result.template_cell = template_cell_metadata("q1", 1, previous_config)
+    write_reports(previous_result, previous_output, overwrite=True)
+
+    result = runner.invoke(app, ["template", "run", str(config)])
+
+    assert result.exit_code == 2, result.output
+    assert not calls
+    assert "result file already exists" in result.output
+    assert "--force" in result.output
+
+    forced = runner.invoke(app, ["template", "run", str(config), "--force"])
+
+    assert forced.exit_code == 0, forced.output
+    assert calls == ["Do first now"]
+
+
 def test_template_run_accepts_saved_run_config_fields(monkeypatch, tmp_path: Path) -> None:
     captured = []
 
