@@ -370,15 +370,16 @@ when it was copied from a saved `run` configuration, but those fields are ignore
 
 For editor completion and inline validation, install the **YAML** extension from
 Red Hat (`redhat.vscode-yaml`) in VS Code. `template init` creates a
-`test-wsl2-llm-template.schema.json` file beside the new YAML and writes its absolute
-path into the YAML language-server header. Every `template run` also creates or
+`test-wsl2-llm-template.schema.json` file beside the new YAML and writes its filename
+into the YAML language-server header. Every `template run` also creates or
 refreshes that file and header, so templates copied from elsewhere remain usable:
 
 ```yaml
-# yaml-language-server: $schema=C:\\path\\to\\test-wsl2-llm-template.schema.json
+# yaml-language-server: $schema=test-wsl2-llm-template.schema.json
 ```
 
-For templates in another directory, the generated absolute header needs no adjustment.
+The schema reference is local to the template YAML, so moving the pair to another
+directory needs no adjustment.
 Alternatively, associate the schema with all template files in the workspace's `.vscode/settings.json`:
 
 ```json
