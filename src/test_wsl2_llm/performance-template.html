@@ -42,15 +42,38 @@ const sort=a=>[...a].sort((x,y)=>String(x).localeCompare(String(y),undefined,{nu
 const fields=['directory','model','question','agent','target','outcome'];
 const names={directory:'directories',model:'models',question:'questions',agent:'agents',target:'targets',outcome:'outcomes'};
 const choices=Object.fromEntries(fields.map(k=>[k,k==='outcome'?['pass','fail']:sort(new Set(all.map(r=>r[k])))]));
-const selected=Object.fromEntries(fields.map(k=>[k,new Set(choices[k])]));
+// Filter state is shareable through repeated query parameters. An omitted key
+// means all choices; a key with an empty value means no choices. The trial
+// search box is intentionally local-only because it is free text, not a choice.
+const pageLocation=typeof location==='undefined'?{pathname:'',search:'',hash:''}:location;
+const selected=Object.fromEntries(fields.map(k=>{
+ const values=new URLSearchParams(pageLocation.search||'').getAll(k);
+ if(!values.length)return [k,new Set(choices[k])];
+ if(values.length===1&&values[0]==='')return [k,new Set()];
+ const valid=values.filter(value=>choices[k].includes(value));
+ return [k,new Set(valid.length?valid:choices[k])];
+}));
 let page=0;const pageSize=50;
+function updateUrl(){
+ if(typeof history==='undefined'||typeof history.replaceState!=='function')return;
+ const params=new URLSearchParams(pageLocation.search||'');
+ for(const key of fields)params.delete(key);
+ for(const key of fields){
+  const picked=selected[key];
+  if(picked.size===choices[key].length)continue;
+  if(!picked.size){params.append(key,'');continue;}
+  for(const value of choices[key])if(picked.has(value))params.append(key,value);
+ }
+ const query=params.toString();
+ history.replaceState(null,'',`${pageLocation.pathname||''}${query?'?'+query:''}${pageLocation.hash||''}`);
+}
 function updateFilter(key){const values=choices[key],picked=selected[key];$(key+'-summary').textContent=picked.size===values.length?'All '+names[key]:picked.size===0?'No '+names[key]:picked.size===1?`${key[0].toUpperCase()+key.slice(1)}: ${[...picked][0]}`:`${picked.size} ${names[key]} selected`;
  for(const checkbox of $(key+'-options').querySelectorAll('input[type="checkbox"]'))checkbox.checked=picked.has(checkbox.value);
 }
 for(const key of fields){$(key+'-options').innerHTML=choices[key].map(v=>`<label><input type="checkbox" value="${esc(v)}" checked>${esc(key==='outcome'?v[0].toUpperCase()+v.slice(1):v)}</label>`).join('');
- $(key+'-options').addEventListener('change',event=>{if(event.target.type!=='checkbox')return;event.target.checked?selected[key].add(event.target.value):selected[key].delete(event.target.value);updateFilter(key);page=0;render();});
- $(key+'-all').addEventListener('click',()=>{selected[key]=new Set(choices[key]);updateFilter(key);page=0;render();});
- $(key+'-clear').addEventListener('click',()=>{selected[key].clear();updateFilter(key);page=0;render();});updateFilter(key);
+ $(key+'-options').addEventListener('change',event=>{if(event.target.type!=='checkbox')return;event.target.checked?selected[key].add(event.target.value):selected[key].delete(event.target.value);updateFilter(key);updateUrl();page=0;render();});
+ $(key+'-all').addEventListener('click',()=>{selected[key]=new Set(choices[key]);updateFilter(key);updateUrl();page=0;render();});
+ $(key+'-clear').addEventListener('click',()=>{selected[key].clear();updateFilter(key);updateUrl();page=0;render();});updateFilter(key);
 }
 const questionName=(record,singleDirectory)=>singleDirectory?record.question:record.question_label;
 const modelName=(record,singleDirectory)=>singleDirectory?record.model:`${record.directory} / ${record.model}`;
