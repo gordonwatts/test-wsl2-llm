@@ -87,6 +87,41 @@ def test_repeat_indexes_each_run_output(monkeypatch, tmp_path: Path) -> None:
     assert "Repeat 3/3" in result.output
 
 
+def test_single_run_uses_first_indexed_output(monkeypatch, tmp_path: Path) -> None:
+    calls: list[str] = []
+    written: list[str] = []
+
+    def fake_run(config, **_kwargs):
+        calls.append(config.output)
+        return sample_result()
+
+    def fake_write(result, output, overwrite=False):
+        del result, overwrite
+        written.append(output)
+        return output_paths(output)
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    monkeypatch.setattr("test_wsl2_llm.report.write_reports", fake_write)
+
+    result = runner.invoke(
+        app,
+        [
+            "run",
+            "--prompt",
+            "hello",
+            "--model",
+            "gpt-test",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    expected = str(tmp_path / "out-001")
+    assert result.exit_code == 0, result.output
+    assert calls == [expected]
+    assert written == [expected]
+
+
 def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> None:
     barrier = Barrier(4)
     lock = Lock()
@@ -618,7 +653,7 @@ def test_config_only_requires_save_config(tmp_path: Path) -> None:
 
 
 def test_existing_result_is_rejected_before_wsl(tmp_path: Path) -> None:
-    (tmp_path / "out.md").write_text("existing", encoding="utf-8")
+    (tmp_path / "out-001.md").write_text("existing", encoding="utf-8")
     result = runner.invoke(
         app,
         [
@@ -670,6 +705,7 @@ def test_generate_defaults_to_standard_diagnostics_without_raw_details(tmp_path:
 
 
 def test_repeat_output_preserves_dotted_stems() -> None:
+    assert Path(_repeat_output("run.v1", 1, 1)).name == "run.v1-001"
     assert Path(_repeat_output("run.v1", 2, 3)).name == "run.v1-002"
     assert Path(_repeat_output("run.v1.yaml", 2, 3)).name == "run.v1-002"
 
