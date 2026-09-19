@@ -255,8 +255,9 @@ successful result is skipped; matching failed results remain skipped to preserve
 resume behavior, and can be retried explicitly with `--retry failed`. Use
 `--retry incomplete` to retry saved reports that are missing a pair, invalid, or
 missing cell metadata. Stale reports are regenerated because their effective
-prompt or settings no longer match. Supplying `--force` reruns all selected cells
-and overwrites their reports.
+prompt or settings no longer match. Stale reports are rejected before execution
+unless `--force` is supplied. Supplying `--force` reruns all selected cells and
+overwrites their reports.
 Repeat `--model` to compare model/effort combinations (this replaces the YAML
 model selection):
 
