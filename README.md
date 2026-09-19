@@ -191,9 +191,9 @@ remains the default and is still covered by the WSL tests. The Markdown report c
 Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
 YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
 `-001` (for example, `results\hello-001.md`, `results\hello-001.yaml`, and
-`results\hello-001.output.png`). The default `--repeat 1` keeps the unsuffixed output
-name. Existing indexed results are checked before the first run; use `--force` to replace
-them.
+`results\hello-001.output.png`). A single run, including the default `--repeat 1`, uses
+the `-001` suffix. Existing indexed results are checked before the first run; use
+`--force` to replace them.
 
 Use `--threads N` with `--repeat` to run up to `N` fresh WSL2 tests concurrently. For
 example, `--repeat 10 --threads 4` runs ten repetitions in batches of at most four. The

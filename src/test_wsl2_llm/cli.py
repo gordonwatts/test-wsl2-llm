@@ -149,7 +149,7 @@ def run(
         typer.Option(
             "--repeat",
             min=1,
-            help="Run the test this many times; repeated results use an -001, -002, ... suffix.",
+            help="Run the test this many times; results use an -001, -002, ... suffix.",
         ),
     ] = 1,
     threads: Annotated[
@@ -1343,9 +1343,7 @@ def _environment_cli_values(
 
 
 def _repeat_output(output: str, index: int, repeat: int) -> str:
-    """Return the result stem for one repetition, preserving single-run names."""
-    if repeat == 1:
-        return output
+    """Return the indexed result stem for one repetition."""
     path = output_stem(output)
     width = max(3, len(str(repeat)))
     return str(path.with_name(f"{path.name}-{index:0{width}d}"))
