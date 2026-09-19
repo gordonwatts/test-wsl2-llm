@@ -37,7 +37,7 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     content = destination.read_text(encoding="utf-8")
     schema = destination.with_name(TEMPLATE_SCHEMA_NAME)
     assert schema.is_file()
-    assert content.startswith(f"# yaml-language-server: $schema={schema.resolve()}\n")
+    assert content.startswith(f"# yaml-language-server: $schema={TEMPLATE_SCHEMA_NAME}\n")
     assert schema.read_text(encoding="utf-8") == (
         Path(__file__).parents[1] / "template.schema.json"
     ).read_text(encoding="utf-8")
@@ -61,19 +61,20 @@ def test_template_init_writes_starter_and_refuses_overwrite(tmp_path: Path) -> N
     assert "already exists" in second.output
 
 
-def test_template_run_repairs_adjacent_schema_and_absolute_header(
+def test_template_run_repairs_adjacent_schema_and_local_header(
     monkeypatch, tmp_path: Path
 ) -> None:
     monkeypatch.setattr("test_wsl2_llm.runner.run_test", lambda _config, **_kwargs: sample_result())
     config = tmp_path / "nested" / "batch.yaml"
     config.parent.mkdir()
+    schema = config.with_name(TEMPLATE_SCHEMA_NAME)
     config.write_text(
+        f"# yaml-language-server: $schema={schema.resolve()}\n"
         "prompt_template: '{{ question }}'\n"
         "questions:\n  - id: q1\n    question: first\n"
         "model: test-model\noutput: results/run\n",
         encoding="utf-8",
     )
-    schema = config.with_name(TEMPLATE_SCHEMA_NAME)
     schema.write_text("stale", encoding="utf-8")
 
     result = runner.invoke(app, ["template", "run", str(config)])
@@ -83,7 +84,7 @@ def test_template_run_repairs_adjacent_schema_and_absolute_header(
         Path(__file__).parents[1] / "template.schema.json"
     ).read_text(encoding="utf-8")
     assert config.read_text(encoding="utf-8").startswith(
-        f"# yaml-language-server: $schema={schema.resolve()}\n"
+        f"# yaml-language-server: $schema={TEMPLATE_SCHEMA_NAME}\n"
     )
 
 
@@ -778,7 +779,7 @@ def test_matrix_save_config_round_trip_and_single_model_override(monkeypatch, tm
     saved_schema = saved.with_name(TEMPLATE_SCHEMA_NAME)
     assert saved_schema.is_file()
     assert saved.read_text(encoding="utf-8").startswith(
-        f"# yaml-language-server: $schema={saved_schema.resolve()}\n"
+        f"# yaml-language-server: $schema={TEMPLATE_SCHEMA_NAME}\n"
     )
     values = yaml.safe_load(saved.read_text(encoding="utf-8"))
     assert values["models"] == ["test:high", "test:low"]

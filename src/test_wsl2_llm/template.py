@@ -520,7 +520,7 @@ def write_template(path: Path) -> Path:
 
 
 def ensure_template_schema(path: Path, *, update_yaml: bool = True) -> Path:
-    """Ensure the fixed-name schema and absolute YAML reference beside the path."""
+    """Ensure the fixed-name schema and local YAML reference beside the path."""
     path = path.resolve()
     if not path.exists():
         raise FileNotFoundError(f"template file does not exist: {path}")
@@ -537,7 +537,7 @@ def ensure_template_schema(path: Path, *, update_yaml: bool = True) -> Path:
 
 
 def write_template_config(path: Path, values: dict[str, Any]) -> Path:
-    """Write a resolved template YAML with its adjacent absolute schema reference."""
+    """Write a resolved template YAML with its adjacent local schema reference."""
     path = path.resolve()
     path.parent.mkdir(parents=True, exist_ok=True)
     schema_path = _schema_path(path)
@@ -562,8 +562,8 @@ def _template_text(path: Path, schema_path: Path) -> str:
 
 
 def _with_schema_header(content: str, schema_path: Path) -> str:
-    """Set or prepend the YAML language-server header using an absolute path."""
-    header = f"# yaml-language-server: $schema={schema_path.resolve()}"
+    """Set or prepend the YAML language-server header using the adjacent filename."""
+    header = f"# yaml-language-server: $schema={schema_path.name}"
     lines = content.splitlines(keepends=True)
     for index, line in enumerate(lines[:3]):
         newline = "\r\n" if line.endswith("\r\n") else "\n"
