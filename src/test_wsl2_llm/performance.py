@@ -130,9 +130,10 @@ def write_performance(
     sources: Iterable[Path], destination: Path, *, force: bool = False
 ) -> tuple[Path, int, list[Path]]:
     sources = list(sources)
-    paths = list(
-        dict.fromkeys(path.resolve() for source in sources for path in result_paths(source))
-    )
+    unique_paths = {
+        path.resolve(): path for source in sources for path in result_paths(source)
+    }
+    paths = list(unique_paths.values())
     if not paths:
         raise ValueError(f"no YAML files found in {', '.join(map(str, sources))}")
     if destination.exists() and not force:

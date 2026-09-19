@@ -108,17 +108,20 @@ def test_same_question_and_model_in_two_directories_stay_distinct(tmp_path: Path
     assert "<th>Directory</th><th>Question</th>" in page
 
 
-def test_multiple_sources_keep_parent_directory_and_deduplicate_overlap(tmp_path: Path) -> None:
+def test_multiple_sources_keep_parent_directory_and_deduplicate_overlap(
+    tmp_path: Path, monkeypatch
+) -> None:
     first = tmp_path / "batch-a"
     second = tmp_path / "batch-b"
     _save(first / "one.yaml", model="model-a", question="q1", passed=True, cost=0.1)
     _save(second / "two.yaml", model="model-a", question="q1", passed=False, cost=0.2)
     output = tmp_path / "combined.html"
 
+    monkeypatch.chdir(tmp_path)
     response = runner.invoke(
         app,
-        ["performance", "-s", str(first), "-s", str(second / "two.yaml"),
-         "-s", str(first / "one.yaml"), "-o", str(output)],
+        ["performance", "-s", "batch-a", "-s", "batch-b/two.yaml",
+         "-s", "batch-a/one.yaml", "-o", "combined.html"],
     )
     assert response.exit_code == 0, response.output
     assert "(2 trials)" in response.output
