@@ -366,7 +366,7 @@ def run(
                 worker_errors.append("batch interrupted by keyboard interrupt")
 
         if repeat > 1:
-            with _RepeatDisplay(console, repeat) as repeat_display:
+            with _RepeatDisplay(console, repeat, resolved.agent) as repeat_display:
                 collect_runs(repeat_display)
         else:
             collect_runs(None)
@@ -867,7 +867,7 @@ def template_run(
                 worker_errors.append("batch interrupted by keyboard interrupt")
 
         if len(jobs) > 1:
-            with _RepeatDisplay(console, len(jobs)) as repeat_display:
+            with _RepeatDisplay(console, len(jobs), resolved_base.agent) as repeat_display:
                 collect_runs(repeat_display)
         else:
             collect_runs(None)
@@ -1358,10 +1358,11 @@ def _repeat_output(output: str, index: int, repeat: int) -> str:
 
 
 class _RepeatDisplay:
-    """Render the repeat bar and bounded Codex log in one live terminal display."""
+    """Render the repeat bar and bounded agent log in one live terminal display."""
 
-    def __init__(self, console: Console, total: int) -> None:
+    def __init__(self, console: Console, total: int, agent_name: str = "codex") -> None:
         self._lock = Lock()
+        self._agent_name = agent_name
         self._recent: deque[str] = deque(maxlen=5)
         self._latest_meaningful: str | None = None
         self._progress = Progress(
@@ -1396,13 +1397,14 @@ class _RepeatDisplay:
             self._live.update(self._render())
 
     def _render(self) -> Group:
-        log_text = "\n".join(self._recent) or "Starting Codex..."
+        agent_title = self._agent_name.title()
+        log_text = "\n".join(self._recent) or f"Starting {agent_title}..."
         latest = self._latest_meaningful or "No meaningful activity yet."
         return Group(
             self._progress,
             Panel(
                 f"Latest meaningful activity: {latest}\n\n{log_text}",
-                title="Codex progress",
+                title=f"{agent_title} progress",
             ),
         )
 

@@ -5,11 +5,12 @@ from threading import Barrier, Lock
 
 import pytest
 import yaml
+from rich.console import Console
 from test_report import sample_result
 from typer.testing import CliRunner
 
 import test_wsl2_llm.cli as cli_module
-from test_wsl2_llm.cli import _connect_command, _repeat_output, app
+from test_wsl2_llm.cli import _connect_command, _repeat_output, _RepeatDisplay, app
 from test_wsl2_llm.config import DEFAULT_CONFIG_ENV, output_paths
 
 runner = CliRunner()
@@ -85,6 +86,16 @@ def test_repeat_indexes_each_run_output(monkeypatch, tmp_path: Path) -> None:
     assert written == expected
     assert "Repeat 1/3" in result.output
     assert "Repeat 3/3" in result.output
+
+
+def test_repeat_display_uses_configured_agent_name() -> None:
+    display = _RepeatDisplay(Console(), 2, "claude")
+
+    rendered = str(display._render().renderables[1].renderable)
+
+    assert "Starting Claude..." in rendered
+    assert display._render().renderables[1].title == "Claude progress"
+    assert "Starting Codex..." not in rendered
 
 
 def test_single_run_uses_first_indexed_output(monkeypatch, tmp_path: Path) -> None:
@@ -176,7 +187,7 @@ def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: 
     live_progress_values: list[bool] = []
 
     class RecordingRepeatDisplay:
-        def __init__(self, _console, total):
+        def __init__(self, _console, total, _agent_name):
             progress_instances.append({"total": total, "advances": 0})
             self.state = progress_instances[-1]
 
