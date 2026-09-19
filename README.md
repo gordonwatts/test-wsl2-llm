@@ -483,8 +483,14 @@ Generate a standalone performance page from all YAML results below `results`:
 ```powershell
 test-wsl2-llm performance
 test-wsl2-llm performance --source .\results\batch --output .\batch-performance.html
+test-wsl2-llm performance -s .\results\batch-a -s .\results\batch-b --output .\combined.html
 test-wsl2-llm performance --source .\results\single.yaml --force
 ```
+
+Repeat `-s` or `--source` to combine result files and directories. Directory names come
+from each result file's immediate parent, including files directly inside a selected source
+directory. Overlapping sources include each result file once. Without `-s`, the command scans
+`results`.
 
 The page shows trial, directory, model, and question totals; checkbox filters for directory,
 model, question, agent, target, and outcome; cost versus pass rate; model statistics;

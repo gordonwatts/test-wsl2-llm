@@ -108,6 +108,30 @@ def test_same_question_and_model_in_two_directories_stay_distinct(tmp_path: Path
     assert "<th>Directory</th><th>Question</th>" in page
 
 
+def test_multiple_sources_keep_parent_directory_and_deduplicate_overlap(tmp_path: Path) -> None:
+    first = tmp_path / "batch-a"
+    second = tmp_path / "batch-b"
+    _save(first / "one.yaml", model="model-a", question="q1", passed=True, cost=0.1)
+    _save(second / "two.yaml", model="model-a", question="q1", passed=False, cost=0.2)
+    output = tmp_path / "combined.html"
+
+    response = runner.invoke(
+        app,
+        ["performance", "-s", str(first), "-s", str(second / "two.yaml"),
+         "-s", str(first / "one.yaml"), "-o", str(output)],
+    )
+    assert response.exit_code == 0, response.output
+    assert "(2 trials)" in response.output
+    page = output.read_text(encoding="utf-8")
+    data = json.loads(
+        re.search(r'<script id="records" type="application/json">(.*?)</script>', page, re.S).group(
+            1
+        )
+    )
+    assert [row["directory"] for row in data] == ["batch-a", "batch-b"]
+    assert [row["question_label"] for row in data] == ["batch-a / q1", "batch-b / q1"]
+
+
 def test_bad_yaml_identifies_file_and_does_not_write_page(tmp_path: Path) -> None:
     source = tmp_path / "results"
     source.mkdir()

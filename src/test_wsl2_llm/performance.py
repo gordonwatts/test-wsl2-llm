@@ -127,18 +127,22 @@ def render_performance(records: list[dict[str, object]]) -> str:
 
 
 def write_performance(
-    source: Path, destination: Path, *, force: bool = False
+    sources: Iterable[Path], destination: Path, *, force: bool = False
 ) -> tuple[Path, int, list[Path]]:
-    paths = result_paths(source)
+    sources = list(sources)
+    paths = list(
+        dict.fromkeys(path.resolve() for source in sources for path in result_paths(source))
+    )
     if not paths:
-        raise ValueError(f"no YAML files found in {source}")
+        raise ValueError(f"no YAML files found in {', '.join(map(str, sources))}")
     if destination.exists() and not force:
         raise ValueError(f"output already exists: {destination}; use --force to replace it")
     skipped: list[Path] = []
     records = load_records(paths, skipped=skipped)
     if not records:
         raise ValueError(
-            f"no result YAML files found in {source}; skipped {len(skipped)} non-result YAML files"
+            "no result YAML files found in selected sources; "
+            f"skipped {len(skipped)} non-result YAML files"
         )
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(render_performance(records), encoding="utf-8")

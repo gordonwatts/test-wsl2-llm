@@ -904,9 +904,11 @@ def template_run(
 @app.command("performance")
 def performance(
     source: Annotated[
-        Path,
-        typer.Option("--source", "-s", help="YAML result file or directory to scan recursively."),
-    ] = Path("results"),
+        list[Path] | None,
+        typer.Option(
+            "--source", "-s", help="YAML result file or directory; repeat to scan multiple sources."
+        ),
+    ] = None,
     output: Annotated[
         Path,
         typer.Option("--output", "-o", help="Standalone HTML report destination."),
@@ -920,7 +922,9 @@ def performance(
 
     console = Console(stderr=True)
     try:
-        destination, count, skipped = write_performance(source, output, force=force)
+        destination, count, skipped = write_performance(
+            source or [Path("results")], output, force=force
+        )
         console.print(f"Performance report: {destination} ({count} trials)")
         if skipped:
             console.print(f"Skipped {len(skipped)} non-result YAML file(s):")
