@@ -50,6 +50,7 @@ const plotNumbers=[...chart().matchAll(/<text class="dot-label [^"]+"[^>]*>(\d+)
 assert.deepEqual(plotNumbers,['1','2','3','4','5','6']);
 assert.match(legend(),/batch-a \/ model-a/);
 assert.match(legend(),/batch-b \/ model-b/);
+assert.match(legend(),/Plot legend/);
 assert.equal((legend().match(/class="legend-number"/g)||[]).length,6);
 assert.equal((legend().match(/class="legend-swatch"/g)||[]).length,6);
 assert.match(legend(),/The number in each plot circle matches its legend entry/);
