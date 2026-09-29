@@ -197,6 +197,7 @@ def inspect_prompt_dataset(
     dataset = get_dataset(name=dataset_name)
     rows = dataset.to_df().to_dict("records")
     console = console or Console()
+    experiment_ids = getattr(dataset, "experiment_ids", None) or []
 
     template = prompt.template
     template_text = template if isinstance(template, str) else json.dumps(template, indent=2)
@@ -212,7 +213,9 @@ def inspect_prompt_dataset(
         Panel(
             Text(
                 f"Name: {dataset.name}\nID: {dataset.dataset_id}\n"
-                f"Digest: {dataset.digest}\nRecords: {len(rows)}"
+                f"Digest: {dataset.digest}\n"
+                f"Associated experiment IDs: {', '.join(experiment_ids) or '(none)'}\n"
+                f"Records: {len(rows)}"
             ),
             title="Evaluation dataset",
             expand=False,
