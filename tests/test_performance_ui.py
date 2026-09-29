@@ -46,7 +46,9 @@ assert.ok(chart().includes(verticalYAxisLabel));
 assert.ok(!chart().includes('<text x="10" y="18">Avg cost</text>'));
 const pointColors=[...chart().matchAll(/stroke="(#[0-9a-f]+)"/g)].map(match=>match[1]);
 assert.ok(new Set(pointColors).size>=3);
-const plotNumbers=[...chart().matchAll(/<text class="dot-label [^"]+"[^>]*>(\d+)<\/text>/g)].map(match=>match[1]);
+const plotNumbers=[...chart().matchAll(
+  /<text class="dot-label [^"]+"[^>]*>(\d+)<\/text>/g
+)].map(match=>match[1]);
 assert.deepEqual(plotNumbers,['1','2','3','4','5','6']);
 assert.match(legend(),/batch-a \/ model-a/);
 assert.match(legend(),/batch-b \/ model-b/);
