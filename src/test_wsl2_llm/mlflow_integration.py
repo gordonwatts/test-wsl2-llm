@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -26,9 +27,10 @@ from test_wsl2_llm.models import TestConfig, TestResult
 from test_wsl2_llm.provenance import content_hash
 from test_wsl2_llm.report import write_reports
 from test_wsl2_llm.runner import CancellationCoordinator, run_test
-from test_wsl2_llm.template import template_cell_metadata, template_output
+from test_wsl2_llm.template import render_template, template_cell_metadata, template_output
 
 _IGNORED_PROMPT_FIELDS = frozenset({"prompt", "prompt_file", "prompt_template", "questions"})
+_UNFILLED_PROMPT_FIELD = re.compile(r"\{\{\s*[A-Za-z_][A-Za-z0-9_]*\s*\}\}")
 
 
 class MLflowBatchConfig(BaseModel):
@@ -141,8 +143,30 @@ def prepare_records(
             raise ValueError(f"record {record_id} has invalid expectations")
         try:
             rendered = prompt.format(**inputs)
-        except (KeyError, TypeError, ValueError) as exc:
-            raise ValueError(f"record {record_id} cannot fill prompt variables: {exc}") from exc
+        except Exception as exc:
+            # MLflow's formatter is the primary path. Fall back to the harness
+            # formatter for straightforward {{ field }} variables so spacing in
+            # the registered prompt cannot leave a placeholder in the actual run.
+            template = getattr(prompt, "template", None)
+            if not isinstance(template, str):
+                raise ValueError(
+                    f"record {record_id} cannot fill prompt variables: {exc}"
+                ) from exc
+            try:
+                rendered = render_template(template, inputs, record_id)
+            except ValueError as fallback_exc:
+                raise ValueError(
+                    f"record {record_id} cannot fill prompt variables: {exc}"
+                ) from fallback_exc
+        if isinstance(rendered, str) and _UNFILLED_PROMPT_FIELD.search(rendered):
+            template = getattr(prompt, "template", None)
+            if isinstance(template, str):
+                try:
+                    rendered = render_template(template, inputs, record_id)
+                except ValueError as exc:
+                    raise ValueError(
+                        f"record {record_id} cannot fill prompt variables: {exc}"
+                    ) from exc
         if not isinstance(rendered, str) or not rendered.strip():
             raise ValueError(f"record {record_id} renders to an empty prompt")
         records.append(DatasetRecord(record_id, name, inputs, expectations, rendered))
