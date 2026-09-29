@@ -2,6 +2,7 @@
 
 import logging
 import os
+from collections.abc import Collection
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -47,11 +48,15 @@ def merge_config_values(
     return merged
 
 
-def load_config_file(path: Path) -> dict[str, Any]:
+def load_config_file(
+    path: Path, *, ignored_fields: Collection[str] = ()
+) -> dict[str, Any]:
     """Load YAML and resolve file-bearing values relative to the YAML file."""
     path = path.resolve()
     raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
     raw = normalize_config_values(raw, source=str(path))
+    for field in ignored_fields:
+        raw.pop(field, None)
     base = path.parent
     if raw.get("prompt_file") is not None:
         if raw.get("prompt") is not None:

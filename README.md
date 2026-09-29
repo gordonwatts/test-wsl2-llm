@@ -568,6 +568,59 @@ in a Markdown details section. The previous result must retain its workspace.
 
 The default Codex policy is `workspace-write` with network access, `on-request` approvals, and the `auto_review` reviewer. The normal WSL Codex home is not modified. Its `auth.json` is copied into an isolated run home with mode `0600` and removed at the end.
 
+## MLflow trials
+
+Install the optional integration with `pip install "test-wsl2-llm[mlflow]"` (or
+`uv sync --extra mlflow` in this checkout). MLflow evaluation datasets need a tracking
+server with a SQL backend; a file-based `mlruns` store is insufficient. Set
+`MLFLOW_TRACKING_URI` to that server and use MLflow's standard authentication
+environment variables if it requires credentials.
+
+Use a template YAML for the shared harness settings:
+
+```yaml
+model: gpt-5.6-luna:medium
+marketplaces: []
+plugins: []
+copy_files: []
+copy_back: [script.py, "plot_*.png"]
+validators: []
+target: wsl
+output: ./results/trial
+repeat: 1
+threads: 1
+```
+
+```powershell
+$env:MLFLOW_TRACKING_URI = "http://127.0.0.1:5000"
+test-wsl2-llm mlflow run IRIS-HEP hep-data-llm-questions .\trial.yaml
+# Run only a record ID or a unique dataset name tag:
+test-wsl2-llm mlflow run IRIS-HEP hep-data-llm-questions .\trial.yaml --question JetPtAll
+```
+
+The three positional arguments are the registered prompt name, evaluation dataset name,
+and YAML path. The command resolves the prompt's `latest` alias once, fills that
+version's variables from each dataset record's `inputs`, and executes every selected
+record for each configured model and repetition. It uses fresh local output paths on
+every invocation. Any `prompt`, `prompt_file`, `prompt_template`, or `questions` in
+the YAML are ignored. `--experiment NAME` overrides the default `test-wsl2-llm`
+experiment.
+
+MLflow receives a parent trial run, one child run and trace per cell, the exact prompt
+version, dataset ID and digest, harness configuration/provenance hashes, status, timing,
+token/cost metrics, validator feedback, dataset expectations, and each cell's existing
+YAML and Markdown reports. It does not upload copied-back files or the workspace
+separately. Reports can contain prompts and raw session logs; use a tracking server
+appropriate for that content. Failed harness cells are uploaded and cause a nonzero
+exit. A failed upload also causes a nonzero exit while leaving the local reports in
+place.
+
+The command prepares traces for later scoring; it does not choose scorers or run
+`mlflow.genai.evaluate`. Select the trial's traces in the MLflow UI or retrieve them
+with `mlflow.search_traces`, then pass them to
+[`mlflow.genai.evaluate`](https://mlflow.org/docs/latest/genai/eval-monitor/running-evaluation/traces/)
+with your chosen scorers.
+
 ## YAML configuration
 
 Before loading an explicit `--config` file or template, the CLI looks for the optional user
