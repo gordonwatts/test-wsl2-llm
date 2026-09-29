@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
@@ -15,6 +16,8 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import Console
+from rich.panel import Panel
+from rich.text import Text
 
 from test_wsl2_llm.config import (
     build_config,
@@ -141,36 +144,104 @@ def prepare_records(
         expectations = row.get("expectations") or {}
         if not isinstance(expectations, dict):
             raise ValueError(f"record {record_id} has invalid expectations")
-        try:
-            rendered = prompt.format(**inputs)
-        except Exception as exc:
-            # MLflow's formatter is the primary path. Fall back to the harness
-            # formatter for straightforward {{ field }} variables so spacing in
-            # the registered prompt cannot leave a placeholder in the actual run.
-            template = getattr(prompt, "template", None)
-            if not isinstance(template, str):
-                raise ValueError(
-                    f"record {record_id} cannot fill prompt variables: {exc}"
-                ) from exc
-            try:
-                rendered = render_template(template, inputs, record_id)
-            except ValueError as fallback_exc:
-                raise ValueError(
-                    f"record {record_id} cannot fill prompt variables: {exc}"
-                ) from fallback_exc
-        if isinstance(rendered, str) and _UNFILLED_PROMPT_FIELD.search(rendered):
-            template = getattr(prompt, "template", None)
-            if isinstance(template, str):
-                try:
-                    rendered = render_template(template, inputs, record_id)
-                except ValueError as exc:
-                    raise ValueError(
-                        f"record {record_id} cannot fill prompt variables: {exc}"
-                    ) from exc
-        if not isinstance(rendered, str) or not rendered.strip():
-            raise ValueError(f"record {record_id} renders to an empty prompt")
+        rendered = render_registered_prompt(prompt, inputs, record_id)
         records.append(DatasetRecord(record_id, name, inputs, expectations, rendered))
     return records
+
+
+def render_registered_prompt(prompt: Any, inputs: dict[str, Any], record_id: str) -> str:
+    """Render a registered text prompt, rejecting leftover simple variables."""
+    try:
+        rendered = prompt.format(**inputs)
+    except Exception as exc:
+        # Keep a compatible fallback for simple {{ field }} prompt templates.
+        template = getattr(prompt, "template", None)
+        if not isinstance(template, str):
+            raise ValueError(f"record {record_id} cannot fill prompt variables: {exc}") from exc
+        try:
+            rendered = render_template(template, inputs, record_id)
+        except ValueError as fallback_exc:
+            raise ValueError(
+                f"record {record_id} cannot fill prompt variables: {fallback_exc}"
+            ) from exc
+    if isinstance(rendered, str) and _UNFILLED_PROMPT_FIELD.search(rendered):
+        template = getattr(prompt, "template", None)
+        if isinstance(template, str):
+            rendered = render_template(template, inputs, record_id)
+    if not isinstance(rendered, str) or not rendered.strip():
+        raise ValueError(f"record {record_id} renders to an empty prompt")
+    return rendered
+
+
+def inspect_prompt_dataset(
+    prompt_name: str,
+    dataset_name: str,
+    *,
+    console: Console | None = None,
+) -> None:
+    """Fetch and display the resolved prompt and every raw evaluation record."""
+    try:
+        import mlflow
+    except ImportError as exc:
+        raise ValueError("install the MLflow extra: pip install 'test-wsl2-llm[mlflow]'") from exc
+    from mlflow import MlflowClient
+    from mlflow.genai.datasets import get_dataset
+
+    tracking_uri = os.environ.get("MLFLOW_TRACKING_URI")
+    if not tracking_uri:
+        raise ValueError("MLFLOW_TRACKING_URI is required")
+    mlflow.set_tracking_uri(tracking_uri)
+    client = MlflowClient()
+    client.search_experiments(max_results=1)
+    prompt = mlflow.genai.load_prompt(f"prompts:/{prompt_name}@latest")
+    dataset = get_dataset(name=dataset_name)
+    rows = dataset.to_df().to_dict("records")
+    console = console or Console()
+
+    template = prompt.template
+    template_text = template if isinstance(template, str) else json.dumps(template, indent=2)
+    console.print(
+        Panel(
+            Text(template_text, no_wrap=False),
+            title=f"Prompt {prompt.name} · version {prompt.version}",
+            subtitle=prompt.uri,
+            expand=False,
+        )
+    )
+    console.print(
+        Panel(
+            Text(
+                f"Name: {dataset.name}\nID: {dataset.dataset_id}\n"
+                f"Digest: {dataset.digest}\nRecords: {len(rows)}"
+            ),
+            title="Evaluation dataset",
+            expand=False,
+        )
+    )
+    for index, row in enumerate(rows, start=1):
+        record_id = str(row.get("dataset_record_id") or f"row-{index}")
+        tags = row.get("tags") or {}
+        name = tags.get("name", record_id) if isinstance(tags, dict) else record_id
+        raw_record = json.dumps(row, ensure_ascii=False, indent=2, default=str)
+        console.print(
+            Panel(
+                Text(raw_record, no_wrap=False),
+                title=f"Record {record_id} · {name}",
+                expand=False,
+            )
+        )
+        inputs = row.get("inputs")
+        if not isinstance(inputs, dict):
+            console.print("[yellow]Cannot render this record: inputs is not a mapping.[/yellow]")
+            continue
+        try:
+            rendered = render_registered_prompt(prompt, inputs, record_id)
+        except Exception as exc:
+            console.print(f"[red]Prompt rendering failed for {record_id}:[/red] {exc}")
+        else:
+            console.print(
+                Panel(Text(rendered, no_wrap=False), title="Rendered prompt", expand=False)
+            )
 
 
 def prepare_cells(
