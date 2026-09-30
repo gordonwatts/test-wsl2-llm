@@ -30,6 +30,9 @@ dependencies = [
   "uproot>=5.0",
 ]
 
+[project.optional-dependencies]
+mlflow = ["mlflow>=3.12,<4"]
+
 [project.urls]
 Homepage = "https://github.com/gordonwatts/test-wsl2-llm"
 Repository = "https://github.com/gordonwatts/test-wsl2-llm"

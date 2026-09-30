@@ -31,6 +31,7 @@ from test_wsl2_llm.config import (
     output_stem,
     save_config,
 )
+from test_wsl2_llm.mlflow_cli import mlflow_app
 from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     CancellationCoordinator,
@@ -67,6 +68,7 @@ template_app = typer.Typer(
     no_args_is_help=True,
 )
 app.add_typer(template_app, name="template")
+app.add_typer(mlflow_app, name="mlflow")
 logger = logging.getLogger(__name__)
 
 
