@@ -574,7 +574,8 @@ Install the optional integration with `pip install "test-wsl2-llm[mlflow]"` (or
 `uv sync --extra mlflow` in this checkout). MLflow evaluation datasets need a tracking
 server with a SQL backend; a file-based `mlruns` store is insufficient. Set
 `MLFLOW_TRACKING_URI` to that server and use MLflow's standard authentication
-environment variables if it requires credentials.
+environment variables if it requires credentials. The trace attachment API requires
+MLflow 3.12 or newer for both the installed SDK and tracking server.
 
 Use a template YAML for the shared harness settings:
 
@@ -612,10 +613,12 @@ token/cost metrics, validator feedback, dataset expectations, and each cell's ex
 YAML and Markdown reports. Copied-back plot images, PDFs, and HTML plots are also
 uploaded under the child run's `plots/` artifact directory. Other copied-back files
 and the workspace are not uploaded separately. The YAML report includes collected raw
-agent logs and session traces; the MLflow trace itself contains the dataset inputs,
-rendered prompt, and final response. Reports can contain prompts and raw session logs;
-use a tracking server appropriate for that content. Failed harness cells are uploaded
-and cause a nonzero exit. A failed upload also causes a nonzero exit while leaving the
+agent logs and session traces. Each MLflow trace also includes a downloadable
+`agent_trace` ZIP attachment containing captured stdout JSONL, stderr text, and session
+trace files, alongside the dataset inputs, rendered prompt, and final response. Reports and
+trace attachments can contain prompts, tool input/output, and raw session logs; use a
+tracking server appropriate for that content. Failed harness cells are uploaded and
+cause a nonzero exit. A failed upload also causes a nonzero exit while leaving the
 local reports in place.
 
 The command prepares traces for later scoring; it does not choose scorers or run

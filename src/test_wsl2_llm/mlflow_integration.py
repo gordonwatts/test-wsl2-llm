@@ -9,10 +9,12 @@ import sys
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from rich.console import Console
@@ -342,6 +344,28 @@ def _cell_metrics(result: TestResult) -> dict[str, float]:
     return metrics
 
 
+def _agent_trace_attachment(result: TestResult) -> Any | None:
+    """Bundle captured agent streams as a trace-linked MLflow attachment."""
+    trace_files: list[tuple[str, str]] = []
+    if result.logs.stdout_jsonl:
+        trace_files.append(("stdout.jsonl", result.logs.stdout_jsonl))
+    if result.logs.stderr:
+        trace_files.append(("stderr.log", result.logs.stderr))
+    for index, trace in enumerate(result.logs.session_traces, start=1):
+        basename = Path(trace.path.replace("\\", "/")).name or "session.jsonl"
+        trace_files.append((f"session-traces/{index:03d}-{basename}", trace.content))
+    if not trace_files:
+        return None
+
+    from mlflow.tracing.attachments import Attachment
+
+    archive = BytesIO()
+    with ZipFile(archive, "w", compression=ZIP_DEFLATED) as bundle:
+        for name, content in trace_files:
+            bundle.writestr(name, content)
+    return Attachment(content_type="application/zip", content_bytes=archive.getvalue())
+
+
 def _log_cell(
     mlflow: Any,
     client: Any,
@@ -427,8 +451,15 @@ def _log_cell(
             },
             start_time_ns=start_ns,
         )
+        span_outputs: dict[str, Any] = {
+            "response": result.result.final_message if result is not None else None,
+        }
+        if result is not None:
+            attachment = _agent_trace_attachment(result)
+            if attachment is not None:
+                span_outputs["agent_trace"] = attachment
         span.end(
-            outputs={"response": result.result.final_message if result is not None else None},
+            outputs=span_outputs,
             status=SpanStatusCode.OK if status == "succeeded" else SpanStatusCode.ERROR,
             end_time_ns=end_ns,
         )
