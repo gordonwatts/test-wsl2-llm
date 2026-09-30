@@ -387,6 +387,17 @@ def _log_cell(
             assert outcome.markdown is not None and outcome.yaml is not None
             mlflow.log_artifact(str(outcome.markdown))
             mlflow.log_artifact(str(outcome.yaml))
+            for copied_file in result.copied_back:
+                path = Path(copied_file.destination)
+                if copied_file.error or not path.is_file():
+                    continue
+                is_plot = copied_file.type == "image" or path.suffix.lower() in {
+                    ".pdf",
+                    ".html",
+                    ".htm",
+                }
+                if is_plot:
+                    mlflow.log_artifact(str(path), artifact_path="plots")
         elif outcome.error:
             mlflow.set_tag("execution_error", outcome.error[:500])
 

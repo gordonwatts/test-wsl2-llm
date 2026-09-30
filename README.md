@@ -609,11 +609,14 @@ experiment.
 MLflow receives a parent trial run, one child run and trace per cell, the exact prompt
 version, dataset ID and digest, harness configuration/provenance hashes, status, timing,
 token/cost metrics, validator feedback, dataset expectations, and each cell's existing
-YAML and Markdown reports. It does not upload copied-back files or the workspace
-separately. Reports can contain prompts and raw session logs; use a tracking server
-appropriate for that content. Failed harness cells are uploaded and cause a nonzero
-exit. A failed upload also causes a nonzero exit while leaving the local reports in
-place.
+YAML and Markdown reports. Copied-back plot images, PDFs, and HTML plots are also
+uploaded under the child run's `plots/` artifact directory. Other copied-back files
+and the workspace are not uploaded separately. The YAML report includes collected raw
+agent logs and session traces; the MLflow trace itself contains the dataset inputs,
+rendered prompt, and final response. Reports can contain prompts and raw session logs;
+use a tracking server appropriate for that content. Failed harness cells are uploaded
+and cause a nonzero exit. A failed upload also causes a nonzero exit while leaving the
+local reports in place.
 
 The command prepares traces for later scoring; it does not choose scorers or run
 `mlflow.genai.evaluate`. Select the trial's traces in the MLflow UI or retrieve them
