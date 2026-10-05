@@ -67,9 +67,11 @@ def test_bundled_catalog_includes_current_claude_models() -> None:
         )
         for model in (
             "claude-fable-5-1",
+            "claude-opus-5-5",
             "claude-opus-5",
             "claude-opus-4-8",
             "claude-sonnet-5",
+            "claude-sonnet-5-5",
             "claude-sonnet-4-6",
             "claude-haiku-4-5-20251001",
         )
@@ -87,9 +89,29 @@ def test_bundled_catalog_includes_current_claude_models() -> None:
         for model in result.models
     ] == [
         (10.0, 0.25, 50.0),
+        (4.0, 0.2, 20.0),
         (5.0, 0.5, 25.0),
         (5.0, 0.5, 25.0),
+        (2.0, 0.2, 10.0),
         (2.0, 0.2, 10.0),
         (3.0, 0.3, 15.0),
         (1.0, 0.1, 5.0),
     ]
+
+
+def test_bundled_catalog_distinguishes_gpt_6_cached_rates() -> None:
+    usage = [
+        UsageRecord(
+            model=model,
+            attribution="reported",
+            input_tokens=1_000_000,
+            cached_input_tokens=1_000_000,
+            output_tokens=1_000_000,
+        )
+        for model in ("gpt-6.1-sol", "gpt-6-sol", "gpt-6-luna", "gpt-6-astra")
+    ]
+
+    result = load_and_calculate_costs(usage, None)
+
+    assert all(model.pricing_available for model in result.models)
+    assert [model.total_cost for model in result.models] == [10.1, 10.2, 0.51, 51.0]
