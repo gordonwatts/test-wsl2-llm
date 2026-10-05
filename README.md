@@ -752,6 +752,13 @@ mcp_servers:
 The complete selected `[mcp_servers.NAME]` tables are copied, including nested
 settings, arguments, environment values, timeouts, tool filters, and unknown
 future options. Unselected servers and unrelated local Codex settings are excluded.
+If a name is absent from the root configuration, enabled `[plugins."NAME@MARKETPLACE"]`
+entries are searched in configuration order under `$CODEX_HOME/plugins/cache`.
+Cached version directories are searched in sorted order; the first matching server wins.
+Disabled plugins are excluded. The resolver reads `.mcp.json` or the `mcpServers`
+file reference or inline object in `.codex-plugin/plugin.json`. Plugin stdio and HTTP
+definitions are converted to Codex tables (`headers` becomes `http_headers`, while
+transport and description metadata are omitted). Root definitions take precedence.
 The CLI list replaces the YAML list for fresh runs and templates; `continue`
 inherits the previous list (a YAML override can replace it) and adds CLI names.
 Duplicate names are imported once. Missing names, unreadable files, or invalid

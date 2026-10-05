@@ -99,7 +99,9 @@ def run(
     ] = None,
     mcp: Annotated[
         list[str] | None,
-        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+        typer.Option(
+            "--mcp", help="Named server from local Codex config or enabled plugins; repeatable."
+        ),
     ] = None,
     copy_file: Annotated[
         list[str] | None,
@@ -430,7 +432,9 @@ def template_run(
     ] = None,
     mcp: Annotated[
         list[str] | None,
-        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+        typer.Option(
+            "--mcp", help="Named server from local Codex config or enabled plugins; repeatable."
+        ),
     ] = None,
     copy_file: Annotated[
         list[str] | None,
@@ -1057,7 +1061,9 @@ def continue_work(
     ] = None,
     mcp: Annotated[
         list[str] | None,
-        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+        typer.Option(
+            "--mcp", help="Named server from local Codex config or enabled plugins; repeatable."
+        ),
     ] = None,
     copy_file: Annotated[
         list[str] | None,

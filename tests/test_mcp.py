@@ -65,6 +65,121 @@ def test_default_local_codex_home(monkeypatch, tmp_path):
     assert _load_mcp_servers(["test"]) == {"test": {"command": "server"}}
 
 
+def plugin_mcp(tmp_path, plugin, entries, filename=".mcp.json"):
+    root = tmp_path / "plugins" / "cache" / "market" / plugin / "1.0.0"
+    root.mkdir(parents=True)
+    (root / filename).write_text(json.dumps({"mcpServers": entries}), encoding="utf-8")
+    return root
+
+
+def test_enabled_plugin_fallback_copies_selected_servers(monkeypatch, tmp_path):
+    local_config(
+        monkeypatch,
+        tmp_path,
+        """
+[mcp_servers.root]
+command = "root-command"
+[plugins."disabled@market"]
+enabled = false
+[plugins."first@market"]
+enabled = true
+[plugins."second@market"]
+enabled = true
+""",
+    )
+    plugin_mcp(tmp_path, "disabled", {"web": {"url": "wrong"}})
+    plugin_mcp(tmp_path, "first", {"other": {"command": "unselected"}})
+    root = plugin_mcp(
+        tmp_path,
+        "second",
+        {
+            "root": {"command": "wrong"},
+            "web": {
+                "type": "http",
+                "url": "https://example.invalid/mcp",
+                "headers": {"Authorization": "fake-secret"},
+                "description": "metadata",
+            },
+            "stdio": {
+                "type": "stdio",
+                "command": "uvx",
+                "args": ["serve"],
+                "env": {"TOKEN": "fake-secret"},
+            },
+        },
+        "servers.json",
+    )
+    (root / ".codex-plugin").mkdir()
+    (root / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps({"mcpServers": "./servers.json"}), encoding="utf-8"
+    )
+    config = RunConfig(
+        prompt="hello", model="test", output="out", mcp_servers=["root", "web", "stdio"]
+    )
+    servers = tomllib.loads(_codex_config(config))["mcp_servers"]
+    assert servers == {
+        "root": {"command": "root-command"},
+        "web": {
+            "url": "https://example.invalid/mcp",
+            "http_headers": {"Authorization": "fake-secret"},
+        },
+        "stdio": {"command": "uvx", "args": ["serve"], "env": {"TOKEN": "fake-secret"}},
+    }
+    assert "fake-secret" not in config.model_dump_json()
+
+
+def test_root_resolution_does_not_read_plugin_files(monkeypatch, tmp_path):
+    local_config(
+        monkeypatch,
+        tmp_path,
+        """
+[mcp_servers.demo]
+command = "root"
+[plugins."broken@market"]
+enabled = true
+""",
+    )
+    root = plugin_mcp(tmp_path, "broken", {})
+    (root / ".mcp.json").write_text("invalid fake-secret", encoding="utf-8")
+    assert _load_mcp_servers(["demo"]) == {"demo": {"command": "root"}}
+    with pytest.raises(ValueError, match="enabled plugin MCP configuration") as error:
+        _load_mcp_servers(["missing"])
+    assert "fake-secret" not in str(error.value)
+
+
+def test_disabled_plugin_is_not_resolved(monkeypatch, tmp_path):
+    local_config(monkeypatch, tmp_path, '[plugins."demo@market"]\nenabled = false\n')
+    plugin_mcp(tmp_path, "demo", {"demo": {"command": "wrong"}})
+    with pytest.raises(ValueError, match="enabled plugin MCP files"):
+        _load_mcp_servers(["demo"])
+
+
+@pytest.mark.parametrize("entry", [42, {"type": "sse", "url": "fake-secret"}])
+def test_plugin_rejects_invalid_selected_entry(monkeypatch, tmp_path, entry):
+    local_config(monkeypatch, tmp_path, '[plugins."demo@market"]\nenabled = true\n')
+    plugin_mcp(tmp_path, "demo", {"demo": entry})
+    with pytest.raises(ValueError, match="MCP server 'demo'") as error:
+        _load_mcp_servers(["demo"])
+    assert "fake-secret" not in str(error.value)
+
+
+def test_inline_plugin_mcp_and_first_match(monkeypatch, tmp_path):
+    local_config(monkeypatch, tmp_path, '''
+[plugins."first@market"]
+enabled = true
+[plugins."second@market"]
+enabled = true
+''')
+    root = plugin_mcp(tmp_path, "first", {})
+    (root / ".codex-plugin").mkdir()
+    (root / ".codex-plugin" / "plugin.json").write_text(
+        json.dumps({"mcpServers": {"demo": {"command": "first"}}}), encoding="utf-8"
+    )
+    root = plugin_mcp(tmp_path, "second", {})
+    (root / ".mcp.json").write_text("invalid", encoding="utf-8")
+    assert _load_mcp_servers(["demo"]) == {"demo": {"command": "first"}}
+
+
 def test_no_servers_does_not_require_local_config(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "missing"))
     assert _load_mcp_servers([]) == {}

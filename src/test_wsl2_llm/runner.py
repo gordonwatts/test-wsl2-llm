@@ -1924,15 +1924,88 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
             "as TOML; check that the file exists and is valid."
         ) from None
     servers = document.get("mcp_servers", {})
+    unresolved = [name for name in names if not isinstance(servers, dict) or name not in servers]
+    plugin_servers = _load_plugin_mcp_servers(local_home, document, unresolved)
     selected: dict[str, Any] = {}
     for name in names:
         if not isinstance(servers, dict) or name not in servers:
+            if name in plugin_servers:
+                selected[name] = plugin_servers[name]
+                continue
             raise ValueError(
-                f"MCP server '{name}' was not found in '{source}' under [mcp_servers]."
+                f"MCP server '{name}' was not found in '{source}' under [mcp_servers] "
+                "or in enabled plugin MCP files."
             )
         if not isinstance(servers[name], dict):
             raise ValueError(f"MCP server '{name}' in '{source}' must be a TOML table.")
         selected[name] = servers[name]
+    return selected
+
+
+def _load_plugin_mcp_servers(
+    local_home: Path, document: dict[str, Any], names: list[str]
+) -> dict[str, Any]:
+    """Search enabled cached plugins only when a root server is missing."""
+    selected: dict[str, Any] = {}
+    plugins = document.get("plugins", {})
+    if not names or not isinstance(plugins, dict):
+        return selected
+    for selector, settings in plugins.items():
+        if not isinstance(settings, dict) or settings.get("enabled") is not True:
+            continue
+        plugin, separator, marketplace = selector.rpartition("@")
+        if not separator or any(
+            part in {"", ".", ".."} or "/" in part or "\\" in part for part in (plugin, marketplace)
+        ):
+            continue
+        cache = local_home / "plugins" / "cache" / marketplace / plugin
+        # Each installed version has its own directory; use deterministic search order.
+        for root in sorted(cache.glob("*")):
+            source = root / ".mcp.json"
+            manifest = root / ".codex-plugin" / "plugin.json"
+            try:
+                if manifest.is_file():
+                    metadata = json.loads(manifest.read_text(encoding="utf-8"))
+                    reference = metadata.get("mcpServers", "./.mcp.json")
+                    if isinstance(reference, dict):
+                        entries = reference
+                    elif isinstance(reference, str):
+                        source = root / reference
+                        if not source.is_file():
+                            continue
+                        entries = json.loads(source.read_text(encoding="utf-8")).get(
+                            "mcpServers", {}
+                        )
+                    else:
+                        continue
+                elif source.is_file():
+                    entries = json.loads(source.read_text(encoding="utf-8")).get("mcpServers", {})
+                else:
+                    continue
+                if not isinstance(entries, dict):
+                    raise ValueError
+            except (OSError, ValueError, AttributeError):
+                raise ValueError(
+                    f"Cannot read enabled plugin MCP configuration '{source}' as JSON."
+                ) from None
+            for name in names:
+                if name in selected or name not in entries:
+                    continue
+                value = entries[name]
+                if not isinstance(value, dict):
+                    raise ValueError(f"MCP server '{name}' in '{source}' must be a JSON object.")
+                value = dict(value)
+                transport = value.pop("type", None)
+                value.pop("description", None)
+                if transport not in (None, "stdio", "http", "streamable-http"):
+                    raise ValueError(
+                        f"MCP server '{name}' in '{source}' uses unsupported transport."
+                    )
+                if "headers" in value:
+                    value["http_headers"] = value.pop("headers")
+                selected[name] = value
+            if all(name in selected for name in names):
+                return selected
     return selected
 
 
