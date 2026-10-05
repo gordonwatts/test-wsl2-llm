@@ -238,6 +238,7 @@ def test_cli_passes_server_names_without_copying_configuration(command, monkeypa
     else:
         previous = sample_result()
         previous.configuration.update(mcp_servers=["inherited"], prompt=previous.prompt)
+        previous.configuration["mcp_server_plugins"] = {"inherited": "source@market"}
         source = tmp_path / "previous.yaml"
         source.write_text(yaml.safe_dump(previous.model_dump(mode="json")))
         args = ["continue", str(source), "--prompt", "more", *args]
@@ -248,10 +249,17 @@ def test_cli_passes_server_names_without_copying_configuration(command, monkeypa
 
 
 @pytest.mark.parametrize("continuation", [False, True])
-def test_runner_writes_selected_servers_to_isolated_config(continuation, monkeypatch, tmp_path):
+@pytest.mark.parametrize("from_plugin", [False, True])
+def test_runner_writes_selected_servers_to_isolated_config(
+    continuation, from_plugin, monkeypatch, tmp_path
+):
     import test_wsl2_llm.runner as module
 
-    local_config(monkeypatch, tmp_path, '[mcp_servers.demo]\ncommand="server"\n')
+    if from_plugin:
+        local_config(monkeypatch, tmp_path, '[plugins."source@market"]\nenabled = true\n')
+        plugin_mcp(tmp_path, "source", {"demo": {"command": "server"}})
+    else:
+        local_config(monkeypatch, tmp_path, '[mcp_servers.demo]\ncommand="server"\n')
     writes = {}
 
     def fake_bash(self, script, *args, **kwargs):
@@ -276,6 +284,17 @@ def test_runner_writes_selected_servers_to_isolated_config(continuation, monkeyp
     assert "/.harness/codex-home/config.toml" in remote_path
     assert tomllib.loads(writes[remote_path])["mcp_servers"] == {"demo": {"command": "server"}}
     assert result.configuration["mcp_servers"] == ["demo"]
+    assert result.configuration["mcp_server_plugins"] == (
+        {"demo": "source@market"} if from_plugin else {}
+    )
+    from test_wsl2_llm.compatibility import load_result_yaml
+    from test_wsl2_llm.report import write_reports
+
+    markdown, report_yaml = write_reports(result, str(tmp_path / "report"))
+    loaded = load_result_yaml(report_yaml)
+    assert loaded.configuration["mcp_server_plugins"] == result.configuration["mcp_server_plugins"]
+    assert ("`demo (source@market)`" if from_plugin else "`demo`") in markdown.read_text()
+    assert "source@market" not in config.model_dump_json()
 
 
 def test_missing_server_fails_before_wsl(monkeypatch, tmp_path):

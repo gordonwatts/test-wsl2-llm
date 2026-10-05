@@ -1183,7 +1183,7 @@ def continue_work(
         # settings so a continuation can itself be continued.
         previous_values = {
             key: value for key, value in previous.configuration.items()
-            if key not in {"continuation_of", "schema_version"}
+            if key not in {"continuation_of", "schema_version", "mcp_server_plugins"}
         }
         defaults = merge_config_values(load_default_config(), previous_values)
         defaults = merge_config_values(defaults, file_values)

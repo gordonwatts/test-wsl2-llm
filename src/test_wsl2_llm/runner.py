@@ -867,6 +867,7 @@ def run_test(
     mcp_config_path: str | None = None
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
+    mcp_server_plugins: dict[str, str] = {}
     resolved_parent = config.wsl_parent
     resolved_auth: str | None = config.auth_source
     model_information = ModelInformation(
@@ -876,7 +877,11 @@ def run_test(
     pricing_valid = False
 
     try:
-        codex_configuration = adapter.configuration(config)
+        codex_configuration = (
+            _codex_config(config, mcp_server_plugins)
+            if config.agent == "codex"
+            else adapter.configuration(config)
+        )
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
@@ -1031,7 +1036,9 @@ def run_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=configuration_snapshot(config),
+        configuration=configuration_snapshot(
+            {**serialize_config(config), "mcp_server_plugins": mcp_server_plugins}
+        ),
         provenance=build_provenance(
             config,
             agent_version=codex_version,
@@ -1134,6 +1141,7 @@ def continue_test(
     mcp_config_path: str | None = None
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
+    mcp_server_plugins: dict[str, str] = {}
     skill_directories: list[str] = list(previous.skills.directories)
     codex_seconds = 0.0
     exit_code = 1
@@ -1148,7 +1156,11 @@ def continue_test(
     pricing_valid = False
 
     try:
-        codex_configuration = adapter.configuration(config)
+        codex_configuration = (
+            _codex_config(config, mcp_server_plugins)
+            if config.agent == "codex"
+            else adapter.configuration(config)
+        )
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
@@ -1304,7 +1316,9 @@ def continue_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=configuration_snapshot(continuation_config),
+        configuration=configuration_snapshot(
+            {**continuation_config, "mcp_server_plugins": mcp_server_plugins}
+        ),
         provenance=build_provenance(
             config,
             agent_version=codex_version or previous.run.agent_version,
@@ -1887,7 +1901,7 @@ def _validate_claude_mcp_server(name: str, value: dict[str, Any], source: Path) 
             raise ValueError(f"Claude MCP server '{name}' in '{source}' has invalid {field}.")
 
 
-def _codex_config(config: TestConfig) -> str:
+def _codex_config(config: TestConfig, plugin_sources: dict[str, str] | None = None) -> str:
     content = "\n".join(
         [
             f"model = {json.dumps(config.model)}",
@@ -1902,13 +1916,15 @@ def _codex_config(config: TestConfig) -> str:
         ]
     )
 
-    servers = _load_mcp_servers(config.mcp_servers)
+    servers = _load_mcp_servers(config.mcp_servers, plugin_sources)
     if servers:
         content += "\n" + tomli_w.dumps({"mcp_servers": servers})
     return content
 
 
-def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
+def _load_mcp_servers(
+    names: list[str], plugin_sources: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Import selected Windows Codex server tables without recording their contents."""
     if not names:
         return {}
@@ -1925,7 +1941,7 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
         ) from None
     servers = document.get("mcp_servers", {})
     unresolved = [name for name in names if not isinstance(servers, dict) or name not in servers]
-    plugin_servers = _load_plugin_mcp_servers(local_home, document, unresolved)
+    plugin_servers = _load_plugin_mcp_servers(local_home, document, unresolved, plugin_sources)
     selected: dict[str, Any] = {}
     for name in names:
         if not isinstance(servers, dict) or name not in servers:
@@ -1943,7 +1959,10 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
 
 
 def _load_plugin_mcp_servers(
-    local_home: Path, document: dict[str, Any], names: list[str]
+    local_home: Path,
+    document: dict[str, Any],
+    names: list[str],
+    plugin_sources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Search enabled cached plugins only when a root server is missing."""
     selected: dict[str, Any] = {}
@@ -2004,6 +2023,8 @@ def _load_plugin_mcp_servers(
                 if "headers" in value:
                     value["http_headers"] = value.pop("headers")
                 selected[name] = value
+                if plugin_sources is not None:
+                    plugin_sources[name] = selector
             if all(name in selected for name in names):
                 return selected
     return selected
