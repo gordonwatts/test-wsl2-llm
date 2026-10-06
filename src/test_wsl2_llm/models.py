@@ -207,7 +207,6 @@ class ConfigurationSnapshot(BaseModel, Mapping[str, Any]):
     marketplaces: list[str] = Field(default_factory=list)
     plugins: list[str] = Field(default_factory=list)
     mcp_servers: list[str] = Field(default_factory=list)
-    mcp_server_plugins: dict[str, str] = Field(default_factory=dict)
     copy_files: list[str] = Field(default_factory=list)
     copy_back: list[str] = Field(default_factory=list)
     validators: list[ValidatorConfig] = Field(default_factory=list)

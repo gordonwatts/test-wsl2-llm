@@ -759,10 +759,6 @@ Disabled plugins are excluded. The resolver reads `.mcp.json` or the `mcpServers
 file reference or inline object in `.codex-plugin/plugin.json`. Plugin stdio and HTTP
 definitions are converted to Codex tables (`headers` becomes `http_headers`, while
 transport and description metadata are omitted). Root definitions take precedence.
-Result YAML records plugin origins in `configuration.mcp_server_plugins`, mapping
-server names to `PLUGIN@MARKETPLACE` selectors. Markdown lists these as
-`SERVER (PLUGIN@MARKETPLACE)`. Input and saved configuration names stay unchanged
-so continuations can resolve the same server again.
 The CLI list replaces the YAML list for fresh runs and templates; `continue`
 inherits the previous list (a YAML override can replace it) and adds CLI names.
 Duplicate names are imported once. Missing names, unreadable files, or invalid

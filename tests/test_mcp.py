@@ -14,6 +14,7 @@ from test_wsl2_llm.models import TestConfig as RunConfig
 from test_wsl2_llm.runner import (
     _claude_mcp_source,
     _codex_config,
+    _copy_mcp_credentials,
     _load_claude_mcp_servers,
     _load_mcp_servers,
     continue_test,
@@ -183,6 +184,28 @@ enabled = true
 def test_no_servers_does_not_require_local_config(monkeypatch, tmp_path):
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "missing"))
     assert _load_mcp_servers([]) == {}
+
+
+def test_mcp_credential_copy_targets_only_requested_names():
+    class FakeTarget:
+        def bash(self, script, *args, **kwargs):
+            self.invocation = (script, args, kwargs)
+
+    target = FakeTarget()
+    _copy_mcp_credentials(target, "/run/home", ["atlas-af"])
+    script, args, _ = target.invocation
+    assert script == 'python3 -c "$1" "$2" "$3"'
+    assert "server_name" in args[0]
+    assert "0o600" in args[0]
+    assert args[1:] == ("/run/home", '["atlas-af"]')
+
+
+def test_empty_mcp_selection_does_not_copy_credentials():
+    class FakeTarget:
+        def bash(self, *_args, **_kwargs):
+            pytest.fail("empty selection should not inspect credentials")
+
+    _copy_mcp_credentials(FakeTarget(), "/run/home", [])
 
 
 @pytest.mark.parametrize("content", ["", 'mcp_servers = "invalid"'])

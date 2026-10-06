@@ -911,6 +911,8 @@ def run_test(
                 _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
+            if config.agent == "codex" and config.mcp_servers:
+                _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1000,6 +1002,15 @@ def run_test(
             error=error,
             exit_code=exit_code,
         )
+        if config.agent == "codex" and config.mcp_servers:
+            error, exit_code = _remove_auth(
+                client,
+                codex_home,
+                auth_filename=".credentials.json",
+                state=state,
+                error=error,
+                exit_code=exit_code,
+            )
         # A run workspace is retained until the report has been persisted.
         retained = run_root is not None
 
@@ -1195,6 +1206,8 @@ def continue_test(
                 _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
+            if config.agent == "codex" and config.mcp_servers:
+                _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1276,6 +1289,15 @@ def continue_test(
             error=error,
             exit_code=exit_code,
         )
+        if config.agent == "codex" and config.mcp_servers:
+            error, exit_code = _remove_auth(
+                client,
+                codex_home,
+                auth_filename=".credentials.json",
+                state=state,
+                error=error,
+                exit_code=exit_code,
+            )
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
@@ -2044,6 +2066,34 @@ def _copy_auth(client: ExecutionTarget, source: str, codex_home: str) -> None:
             codex_home,
             source,
         )
+
+
+def _copy_mcp_credentials(client: ExecutionTarget, codex_home: str, names: list[str]) -> None:
+    """Copy only selected MCP OAuth entries from the user's Linux Codex home."""
+    if not names:
+        return
+    script = r'''
+import json, os, pathlib, sys
+source = pathlib.Path(os.path.expanduser(os.path.join(
+    os.environ.get("CODEX_HOME") or "~/.codex", ".credentials.json")))
+destination = pathlib.Path(sys.argv[1]) / ".credentials.json"
+names = set(json.loads(sys.argv[2]))
+try:
+    document = json.loads(source.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    raise SystemExit(0)
+if not isinstance(document, dict):
+    raise SystemExit(0)
+selected = {key: value for key, value in document.items()
+            if isinstance(value, dict) and value.get("server_name") in names}
+if selected:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(".credentials.json.tmp")
+    temporary.write_text(json.dumps(selected), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(destination)
+'''.strip()
+    client.bash("python3 -c \"$1\" \"$2\" \"$3\"", script, codex_home, json.dumps(names))
 
 
 def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:
