@@ -2072,6 +2072,16 @@ def _copy_mcp_credentials(client: ExecutionTarget, codex_home: str, names: list[
     """Copy only selected MCP OAuth entries from the user's Linux Codex home."""
     if not names:
         return
+    client.bash(
+        'python3 -c "$1" "$2" "$3"',
+        _mcp_credentials_copy_script(),
+        codex_home,
+        json.dumps(names),
+    )
+
+
+def _mcp_credentials_copy_script() -> str:
+    """Return target-side script to selectively install MCP OAuth entries."""
     script = r'''
 import json, os, pathlib, sys
 source = pathlib.Path(os.path.expanduser(os.path.join(
@@ -2093,7 +2103,7 @@ if selected:
     temporary.chmod(0o600)
     temporary.replace(destination)
 '''.strip()
-    client.bash("python3 -c \"$1\" \"$2\" \"$3\"", script, codex_home, json.dumps(names))
+    return script
 
 
 def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:

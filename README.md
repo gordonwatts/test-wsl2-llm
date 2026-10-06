@@ -759,6 +759,10 @@ Disabled plugins are excluded. The resolver reads `.mcp.json` or the `mcpServers
 file reference or inline object in `.codex-plugin/plugin.json`. Plugin stdio and HTTP
 definitions are converted to Codex tables (`headers` becomes `http_headers`, while
 transport and description metadata are omitted). Root definitions take precedence.
+Result YAML records plugin origins in `configuration.mcp_server_plugins`, mapping
+server names to `PLUGIN@MARKETPLACE` selectors. Markdown lists these as
+`SERVER (PLUGIN@MARKETPLACE)`. Input and saved configuration names stay unchanged
+so continuations can resolve the same server again.
 The CLI list replaces the YAML list for fresh runs and templates; `continue`
 inherits the previous list (a YAML override can replace it) and adds CLI names.
 Duplicate names are imported once. Missing names, unreadable files, or invalid
@@ -768,8 +772,11 @@ Definitions are read at execution time; `--save-config` and result configuration
 record only names, not server settings or credentials. `--config-only` saves names
 without reading the local Codex configuration. Each repetition uses the same names.
 Commands, paths, URLs, and environment references are copied unchanged and must
-work from the chosen WSL distro; referenced environment variables and separate
-OAuth login state are not copied. No local Codex configuration is modified.
+work from the chosen WSL distro; referenced environment variables are not copied.
+Selected MCP OAuth entries are copied from the WSL user's `.credentials.json` into
+the isolated Codex home for each run, continuation, and `connect` session, then
+removed from the isolated home when the command exits. No local Codex configuration
+is modified.
 
 To check discovery, run with `--prompt "/mcp" --mcp my-server` and inspect the
 response, or connect to a retained workspace and use `/mcp` in the Codex TUI.
