@@ -2413,13 +2413,14 @@ def _progress_description(
 
 
 def _is_uninformative_progress(description: str) -> bool:
-    """Identify routine MCP polling entries that should not replace the summary."""
+    """Identify routine entries that should not replace the progress summary."""
     return description.casefold() in {
         "started mcp tool call",
         "completed mcp tool call",
         "started model message",
         "completed model message",
         "claude tool result",
+        "rate limit event",
     }
 
 
