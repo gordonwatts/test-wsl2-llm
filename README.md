@@ -225,6 +225,18 @@ Create a starter batch file, then edit its prompt and questions:
 test-wsl2-llm template init .\questions.yaml
 ```
 
+For a quick one-off check, use the same template's shared run settings with a
+prompt supplied on the command line. This runs once and does not use the
+template's question list or repetition count:
+
+```powershell
+test-wsl2-llm template prompt .\questions.yaml "Check that the configured MCP server is available."
+```
+
+The command uses the template's configured model (or the first entry in
+`models`) and output stem. Pass `--model` or `--output` to override them, and
+`--force` to replace an existing result pair.
+
 Run the template with one isolated WSL2 job per model, question, and repetition:
 
 ```powershell
