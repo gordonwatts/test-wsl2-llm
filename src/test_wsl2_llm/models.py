@@ -286,6 +286,10 @@ class UsageRecord(BaseModel):
     attribution: str
     input_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_creation_5m_input_tokens: int = 0
+    cache_creation_1h_input_tokens: int = 0
     output_tokens: int = 0
     reasoning_output_tokens: int = 0
 
@@ -298,12 +302,21 @@ class ModelCost(BaseModel):
     rate_unit: str = "per_million_tokens"
     input_cost_per_million_tokens: float | None = None
     cached_input_cost_per_million_tokens: float | None = None
+    cache_creation_5m_cost_per_million_tokens: float | None = None
+    cache_creation_1h_cost_per_million_tokens: float | None = None
     output_cost_per_million_tokens: float | None = None
     uncached_input_tokens: int = 0
     cached_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_creation_5m_input_tokens: int = 0
+    cache_creation_1h_input_tokens: int = 0
     output_tokens: int = 0
     input_cost: float | None = None
     cached_input_cost: float | None = None
+    cache_read_cost: float | None = None
+    cache_creation_5m_cost: float | None = None
+    cache_creation_1h_cost: float | None = None
     output_cost: float | None = None
     total_cost: float | None = None
     source: str | None = None

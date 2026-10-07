@@ -41,11 +41,43 @@ def _calculate(
             raw = {}
         input_rate = _rate(raw, "input_cost_per_million_tokens")
         cached_rate = _rate(raw, "cached_input_cost_per_million_tokens")
+        create_5m_rate = _rate(raw, "cache_creation_5m_cost_per_million_tokens")
+        create_1h_rate = _rate(raw, "cache_creation_1h_cost_per_million_tokens")
         output_rate = _rate(raw, "output_cost_per_million_tokens")
+        # Older catalogs have one cached-input rate. Preserve that behavior for
+        # cache reads and use base-rate multipliers for write tiers when the
+        # catalog has not specified their rates explicitly.
+        if record.model.casefold().startswith("claude-") and input_rate is not None:
+            create_5m_rate = (
+                create_5m_rate if create_5m_rate is not None else input_rate * 1.25
+            )
+            create_1h_rate = (
+                create_1h_rate if create_1h_rate is not None else input_rate * 2
+            )
         available = all(rate is not None for rate in (input_rate, cached_rate, output_rate))
         uncached_tokens = max(0, record.input_tokens - record.cached_input_tokens)
         input_cost = _token_cost(uncached_tokens, input_rate)
-        cached_cost = _token_cost(record.cached_input_tokens, cached_rate)
+        read_tokens = record.cache_read_input_tokens
+        create_tokens = record.cache_creation_input_tokens
+        if not read_tokens and not create_tokens:
+            # Compatibility with records written before cache usage was split.
+            read_tokens = record.cached_input_tokens
+        unclassified_create = max(
+            0,
+            create_tokens
+            - record.cache_creation_5m_input_tokens
+            - record.cache_creation_1h_input_tokens,
+        )
+        create_5m_tokens = record.cache_creation_5m_input_tokens + unclassified_create
+        create_1h_tokens = record.cache_creation_1h_input_tokens
+        read_cost = _token_cost(read_tokens, cached_rate)
+        create_5m_cost = _token_cost(create_5m_tokens, create_5m_rate)
+        create_1h_cost = _token_cost(create_1h_tokens, create_1h_rate)
+        cached_cost = (
+            read_cost + create_5m_cost + create_1h_cost
+            if all(value is not None for value in (read_cost, create_5m_cost, create_1h_cost))
+            else None
+        )
         output_cost = _token_cost(record.output_tokens, output_rate)
         total = (
             input_cost + cached_cost + output_cost
@@ -63,12 +95,21 @@ def _calculate(
                 currency=currency,
                 input_cost_per_million_tokens=input_rate,
                 cached_input_cost_per_million_tokens=cached_rate,
+                cache_creation_5m_cost_per_million_tokens=create_5m_rate,
+                cache_creation_1h_cost_per_million_tokens=create_1h_rate,
                 output_cost_per_million_tokens=output_rate,
                 uncached_input_tokens=uncached_tokens,
                 cached_input_tokens=record.cached_input_tokens,
+                cache_read_input_tokens=read_tokens,
+                cache_creation_input_tokens=create_tokens,
+                cache_creation_5m_input_tokens=create_5m_tokens,
+                cache_creation_1h_input_tokens=create_1h_tokens,
                 output_tokens=record.output_tokens,
                 input_cost=input_cost,
                 cached_input_cost=cached_cost,
+                cache_read_cost=read_cost,
+                cache_creation_5m_cost=create_5m_cost,
+                cache_creation_1h_cost=create_1h_cost,
                 output_cost=output_cost,
                 total_cost=total,
                 source=_optional_string(raw.get("source")),
@@ -95,6 +136,8 @@ def _rate(value: dict[str, Any], key: str) -> float | None:
 
 
 def _token_cost(tokens: int, rate: float | None) -> float | None:
+    if tokens == 0:
+        return 0.0
     return None if rate is None else tokens * rate / 1_000_000
 
 

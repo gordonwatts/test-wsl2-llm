@@ -3,8 +3,10 @@ currency: USD
 rate_unit: per_million_tokens
 # Verified against the linked official sources on 2026-10-04.
 # Standard, global, short-context text-token rates; cached input means cache reads.
-# The calculator does not model cache writes, long-context premiums, service-tier
-# discounts/premiums, regional surcharges, or tool charges.
+# Claude cache writes default to 1.25x input for 5m and 2x input for 1h; optional
+# per-model overrides are cache_creation_5m_cost_per_million_tokens and
+# cache_creation_1h_cost_per_million_tokens. Long-context premiums, service-tier
+# discounts/premiums, regional surcharges, and tool charges are not modeled.
 models:
   gpt-6.1-sol:
     input_cost_per_million_tokens: 2.00
