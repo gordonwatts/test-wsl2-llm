@@ -1,5 +1,6 @@
 """Typer command-line interface."""
 
+import json
 import logging
 import posixpath
 import subprocess
@@ -35,6 +36,7 @@ from test_wsl2_llm.models import EnvironmentPolicy, TestConfig, TestResult
 from test_wsl2_llm.runner import (
     CancellationCoordinator,
     _is_uninformative_progress,
+    _mcp_credentials_copy_script,
     create_execution_target,
 )
 from test_wsl2_llm.target import ExecutionTarget
@@ -99,7 +101,9 @@ def run(
     ] = None,
     mcp: Annotated[
         list[str] | None,
-        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+        typer.Option(
+            "--mcp", help="Named server from local Codex config or enabled plugins; repeatable."
+        ),
     ] = None,
     copy_file: Annotated[
         list[str] | None,
@@ -430,7 +434,9 @@ def template_run(
     ] = None,
     mcp: Annotated[
         list[str] | None,
-        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+        typer.Option(
+            "--mcp", help="Named server from local Codex config or enabled plugins; repeatable."
+        ),
     ] = None,
     copy_file: Annotated[
         list[str] | None,
@@ -1057,7 +1063,9 @@ def continue_work(
     ] = None,
     mcp: Annotated[
         list[str] | None,
-        typer.Option("--mcp", help="Named server from local Codex config.toml; repeatable."),
+        typer.Option(
+            "--mcp", help="Named server from local Codex config or enabled plugins; repeatable."
+        ),
     ] = None,
     copy_file: Annotated[
         list[str] | None,
@@ -1177,7 +1185,7 @@ def continue_work(
         # settings so a continuation can itself be continued.
         previous_values = {
             key: value for key, value in previous.configuration.items()
-            if key not in {"continuation_of", "schema_version"}
+            if key not in {"continuation_of", "schema_version", "mcp_server_plugins"}
         }
         defaults = merge_config_values(load_default_config(), previous_values)
         defaults = merge_config_values(defaults, file_values)
@@ -1304,6 +1312,7 @@ def _connect_command(
     run_root = posixpath.dirname(workspace)
     codex_home = posixpath.join(run_root, ".harness", "codex-home")
     auth_source = str(result.configuration.get("auth_source") or "~/.codex/auth.json")
+    mcp_servers = result.configuration.get("mcp_servers", [])
     mode = "resume" if resume else "new"
     script = """
 set -e
@@ -1311,6 +1320,8 @@ home="$1"
 workspace="$2"
 auth_source="$3"
 mode="$4"
+credential_copy_script="$5"
+mcp_servers="$6"
 auth_source="${auth_source/#\\~/$HOME}"
 mkdir -p -- "$home"
 if [ ! -f "$auth_source" ]; then
@@ -1319,15 +1330,26 @@ if [ ! -f "$auth_source" ]; then
 fi
 cp -- "$auth_source" "$home/auth.json"
 chmod 600 "$home/auth.json"
-trap 'rm -f -- "$home/auth.json"' EXIT
-if [ "$mode" = resume ]; then
-  exec env CODEX_HOME="$home" codex resume --last --cd "$workspace"
+trap 'rm -f -- "$home/auth.json" "$home/.credentials.json"' EXIT
+if [ -n "$mcp_servers" ]; then
+  python3 -c "$credential_copy_script" "$home" "$mcp_servers"
 fi
-exec env CODEX_HOME="$home" codex --cd "$workspace"
+if [ "$mode" = resume ]; then
+  env CODEX_HOME="$home" codex resume --last --cd "$workspace"
+else
+  env CODEX_HOME="$home" codex --cd "$workspace"
+fi
 """.strip()
     return client.command(
         client.shell_command(
-            script, codex_home, workspace, auth_source, mode, interactive_login=True
+            script,
+            codex_home,
+            workspace,
+            auth_source,
+            mode,
+            _mcp_credentials_copy_script(),
+            json.dumps(mcp_servers) if mcp_servers else "",
+            interactive_login=True,
         )
     )
 

@@ -867,6 +867,7 @@ def run_test(
     mcp_config_path: str | None = None
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
+    mcp_server_plugins: dict[str, str] = {}
     resolved_parent = config.wsl_parent
     resolved_auth: str | None = config.auth_source
     model_information = ModelInformation(
@@ -876,7 +877,11 @@ def run_test(
     pricing_valid = False
 
     try:
-        codex_configuration = adapter.configuration(config)
+        codex_configuration = (
+            _codex_config(config, mcp_server_plugins)
+            if config.agent == "codex"
+            else adapter.configuration(config)
+        )
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
@@ -906,6 +911,8 @@ def run_test(
                 _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
+            if config.agent == "codex" and config.mcp_servers:
+                _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -995,6 +1002,15 @@ def run_test(
             error=error,
             exit_code=exit_code,
         )
+        if config.agent == "codex" and config.mcp_servers:
+            error, exit_code = _remove_auth(
+                client,
+                codex_home,
+                auth_filename=".credentials.json",
+                state=state,
+                error=error,
+                exit_code=exit_code,
+            )
         # A run workspace is retained until the report has been persisted.
         retained = run_root is not None
 
@@ -1031,7 +1047,9 @@ def run_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=configuration_snapshot(config),
+        configuration=configuration_snapshot(
+            {**serialize_config(config), "mcp_server_plugins": mcp_server_plugins}
+        ),
         provenance=build_provenance(
             config,
             agent_version=codex_version,
@@ -1134,6 +1152,7 @@ def continue_test(
     mcp_config_path: str | None = None
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
+    mcp_server_plugins: dict[str, str] = {}
     skill_directories: list[str] = list(previous.skills.directories)
     codex_seconds = 0.0
     exit_code = 1
@@ -1148,7 +1167,11 @@ def continue_test(
     pricing_valid = False
 
     try:
-        codex_configuration = adapter.configuration(config)
+        codex_configuration = (
+            _codex_config(config, mcp_server_plugins)
+            if config.agent == "codex"
+            else adapter.configuration(config)
+        )
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
@@ -1183,6 +1206,8 @@ def continue_test(
                 _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
+            if config.agent == "codex" and config.mcp_servers:
+                _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
 
@@ -1264,6 +1289,15 @@ def continue_test(
             error=error,
             exit_code=exit_code,
         )
+        if config.agent == "codex" and config.mcp_servers:
+            error, exit_code = _remove_auth(
+                client,
+                codex_home,
+                auth_filename=".credentials.json",
+                state=state,
+                error=error,
+                exit_code=exit_code,
+            )
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
@@ -1304,7 +1338,9 @@ def continue_test(
             timed_out=timed_out,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
-        configuration=configuration_snapshot(continuation_config),
+        configuration=configuration_snapshot(
+            {**continuation_config, "mcp_server_plugins": mcp_server_plugins}
+        ),
         provenance=build_provenance(
             config,
             agent_version=codex_version or previous.run.agent_version,
@@ -1887,7 +1923,7 @@ def _validate_claude_mcp_server(name: str, value: dict[str, Any], source: Path) 
             raise ValueError(f"Claude MCP server '{name}' in '{source}' has invalid {field}.")
 
 
-def _codex_config(config: TestConfig) -> str:
+def _codex_config(config: TestConfig, plugin_sources: dict[str, str] | None = None) -> str:
     content = "\n".join(
         [
             f"model = {json.dumps(config.model)}",
@@ -1902,13 +1938,15 @@ def _codex_config(config: TestConfig) -> str:
         ]
     )
 
-    servers = _load_mcp_servers(config.mcp_servers)
+    servers = _load_mcp_servers(config.mcp_servers, plugin_sources)
     if servers:
         content += "\n" + tomli_w.dumps({"mcp_servers": servers})
     return content
 
 
-def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
+def _load_mcp_servers(
+    names: list[str], plugin_sources: dict[str, str] | None = None
+) -> dict[str, Any]:
     """Import selected Windows Codex server tables without recording their contents."""
     if not names:
         return {}
@@ -1924,15 +1962,93 @@ def _load_mcp_servers(names: list[str]) -> dict[str, Any]:
             "as TOML; check that the file exists and is valid."
         ) from None
     servers = document.get("mcp_servers", {})
+    unresolved = [name for name in names if not isinstance(servers, dict) or name not in servers]
+    plugin_servers = _load_plugin_mcp_servers(local_home, document, unresolved, plugin_sources)
     selected: dict[str, Any] = {}
     for name in names:
         if not isinstance(servers, dict) or name not in servers:
+            if name in plugin_servers:
+                selected[name] = plugin_servers[name]
+                continue
             raise ValueError(
-                f"MCP server '{name}' was not found in '{source}' under [mcp_servers]."
+                f"MCP server '{name}' was not found in '{source}' under [mcp_servers] "
+                "or in enabled plugin MCP files."
             )
         if not isinstance(servers[name], dict):
             raise ValueError(f"MCP server '{name}' in '{source}' must be a TOML table.")
         selected[name] = servers[name]
+    return selected
+
+
+def _load_plugin_mcp_servers(
+    local_home: Path,
+    document: dict[str, Any],
+    names: list[str],
+    plugin_sources: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Search enabled cached plugins only when a root server is missing."""
+    selected: dict[str, Any] = {}
+    plugins = document.get("plugins", {})
+    if not names or not isinstance(plugins, dict):
+        return selected
+    for selector, settings in plugins.items():
+        if not isinstance(settings, dict) or settings.get("enabled") is not True:
+            continue
+        plugin, separator, marketplace = selector.rpartition("@")
+        if not separator or any(
+            part in {"", ".", ".."} or "/" in part or "\\" in part for part in (plugin, marketplace)
+        ):
+            continue
+        cache = local_home / "plugins" / "cache" / marketplace / plugin
+        # Each installed version has its own directory; use deterministic search order.
+        for root in sorted(cache.glob("*")):
+            source = root / ".mcp.json"
+            manifest = root / ".codex-plugin" / "plugin.json"
+            try:
+                if manifest.is_file():
+                    metadata = json.loads(manifest.read_text(encoding="utf-8"))
+                    reference = metadata.get("mcpServers", "./.mcp.json")
+                    if isinstance(reference, dict):
+                        entries = reference
+                    elif isinstance(reference, str):
+                        source = root / reference
+                        if not source.is_file():
+                            continue
+                        entries = json.loads(source.read_text(encoding="utf-8")).get(
+                            "mcpServers", {}
+                        )
+                    else:
+                        continue
+                elif source.is_file():
+                    entries = json.loads(source.read_text(encoding="utf-8")).get("mcpServers", {})
+                else:
+                    continue
+                if not isinstance(entries, dict):
+                    raise ValueError
+            except (OSError, ValueError, AttributeError):
+                raise ValueError(
+                    f"Cannot read enabled plugin MCP configuration '{source}' as JSON."
+                ) from None
+            for name in names:
+                if name in selected or name not in entries:
+                    continue
+                value = entries[name]
+                if not isinstance(value, dict):
+                    raise ValueError(f"MCP server '{name}' in '{source}' must be a JSON object.")
+                value = dict(value)
+                transport = value.pop("type", None)
+                value.pop("description", None)
+                if transport not in (None, "stdio", "http", "streamable-http"):
+                    raise ValueError(
+                        f"MCP server '{name}' in '{source}' uses unsupported transport."
+                    )
+                if "headers" in value:
+                    value["http_headers"] = value.pop("headers")
+                selected[name] = value
+                if plugin_sources is not None:
+                    plugin_sources[name] = selector
+            if all(name in selected for name in names):
+                return selected
     return selected
 
 
@@ -1950,6 +2066,44 @@ def _copy_auth(client: ExecutionTarget, source: str, codex_home: str) -> None:
             codex_home,
             source,
         )
+
+
+def _copy_mcp_credentials(client: ExecutionTarget, codex_home: str, names: list[str]) -> None:
+    """Copy only selected MCP OAuth entries from the user's Linux Codex home."""
+    if not names:
+        return
+    client.bash(
+        'python3 -c "$1" "$2" "$3"',
+        _mcp_credentials_copy_script(),
+        codex_home,
+        json.dumps(names),
+    )
+
+
+def _mcp_credentials_copy_script() -> str:
+    """Return target-side script to selectively install MCP OAuth entries."""
+    script = r'''
+import json, os, pathlib, sys
+source = pathlib.Path(os.path.expanduser(os.path.join(
+    os.environ.get("CODEX_HOME") or "~/.codex", ".credentials.json")))
+destination = pathlib.Path(sys.argv[1]) / ".credentials.json"
+names = set(json.loads(sys.argv[2]))
+try:
+    document = json.loads(source.read_text(encoding="utf-8"))
+except FileNotFoundError:
+    raise SystemExit(0)
+if not isinstance(document, dict):
+    raise SystemExit(0)
+selected = {key: value for key, value in document.items()
+            if isinstance(value, dict) and value.get("server_name") in names}
+if selected:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(".credentials.json.tmp")
+    temporary.write_text(json.dumps(selected), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(destination)
+'''.strip()
+    return script
 
 
 def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:

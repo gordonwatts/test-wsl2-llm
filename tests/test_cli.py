@@ -374,11 +374,16 @@ def test_continue_can_inherit_a_previous_continuation(tmp_path: Path) -> None:
 
 def test_connect_command_targets_retained_workspace_and_resume() -> None:
     result = sample_result()
+    result.configuration["mcp_servers"] = ["atlas-af"]
     command = _connect_command(result, resume=True)
     assert "wsl.exe" in command[0]
     script = command[-1]
     assert "codex resume --last --cd" in script
     assert "workspace" in script and "\\$workspace" in script
+    assert "\\$home/.credentials.json" in script
+    assert "\\$credential_copy_script" in script
+    assert any("WyJhdGxhcy1hZiJd" in argument for argument in command)
+    assert "codex resume" in script and "python3" in script
 
 
 def test_connect_shell_command_targets_retained_workspace() -> None:
