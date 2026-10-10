@@ -643,6 +643,119 @@ class LinuxClient:
         return traces, events
 
 
+class WindowsClient(LinuxClient):
+    """Run the local target on Windows through an installed Bash shell.
+
+    Git for Windows supplies Bash and the small POSIX utilities used by the
+    harness. Workspace and artifact file operations still use native Python
+    paths, while paths passed to Bash are translated to MSYS-style paths.
+    """
+
+    def __init__(
+        self,
+        environment_policy: EnvironmentPolicy | None = None,
+        *,
+        source_environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self.environment = sanitized_windows_environment(
+            environment_policy or EnvironmentPolicy(), source_environment
+        )
+        bash = shutil.which("bash", path=self.environment.get("PATH"))
+        if bash is None:
+            raise RuntimeError(
+                "the local Windows target requires Bash on PATH; install Git for Windows "
+                "and make its bin directory available"
+            )
+        self._bash = bash
+
+    @staticmethod
+    def _bash_path(value: str) -> str:
+        """Convert a Windows drive path to the form expected by Git Bash."""
+        match = re.match(r"^([A-Za-z]):[\\/](.*)$", value)
+        if match is None:
+            return value
+        drive, remainder = match.groups()
+        return f"/{drive.casefold()}/{remainder.replace(chr(92), '/')}"
+
+    def shell_command(
+        self, script: str, *arguments: str, interactive_login: bool = False
+    ) -> list[str]:
+        flags = "-lic" if interactive_login else "-lc"
+        return [
+            self._bash,
+            flags,
+            script,
+            "test-wsl2-llm",
+            *(self._bash_path(argument) for argument in arguments),
+        ]
+
+    def create_workspace(self, parent: str) -> str:
+        # `/tmp` is the shared default from WSL configuration. On native
+        # Windows, use the OS temporary directory instead of creating C:\tmp.
+        native_parent = tempfile.gettempdir() if parent == "/tmp" else parent
+        return super().create_workspace(native_parent)
+
+    def run(
+        self,
+        arguments: list[str],
+        *,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        command = self.command(arguments)
+        LOGGER.info("Windows local command: %s", _display_command(command))
+        completed = subprocess.run(
+            command,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        if check and completed.returncode:
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Windows local command failed ({completed.returncode}): {stderr}")
+        return completed
+
+    def start_process(
+        self,
+        command: list[str],
+        *,
+        stdin: int = subprocess.PIPE,
+        stdout: int = subprocess.PIPE,
+        stderr: int = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=self.environment,
+        )
+
+    def stop_process(self, process: subprocess.Popen[str]) -> None:
+        if getattr(process, "poll", lambda: None)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int):
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        except TypeError:
+            process.wait()
+
+
 def create_execution_target(
     distro: str | None = None,
     environment_policy: EnvironmentPolicy | None = None,
@@ -655,10 +768,12 @@ def create_execution_target(
     remote_workspace_parent: str = "/tmp",
     ssh_connect_timeout_seconds: float = 10.0,
 ) -> ExecutionTarget:
-    """Select WSL or native Linux while keeping one runner lifecycle."""
+    """Select WSL, a native host, or SSH while keeping one runner lifecycle."""
     if execution_target in {"linux", "macos", "local"}:
         if distro:
             raise ValueError("distro is only valid with the wsl execution target")
+        if execution_target == "local" and os.name == "nt":
+            return WindowsClient(environment_policy, source_environment=source_environment)
         return LinuxClient(environment_policy, source_environment=source_environment)
     if execution_target == "ssh":
         if distro:
@@ -681,7 +796,7 @@ def create_execution_target(
 
 
 # Descriptive names for callers that do not need the historical LinuxClient name.
-LocalClient = LinuxClient
+LocalClient = WindowsClient if os.name == "nt" else LinuxClient
 MacOSClient = LinuxClient
 
 # Descriptive name for callers that do not need the historical WslClient name.
