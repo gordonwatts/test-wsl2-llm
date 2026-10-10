@@ -4,10 +4,10 @@ from pathlib import Path
 
 from test_wsl2_llm.runner import (
     LinuxClient,
+    WindowsClient,
     WslClient,
     _copy_from_target,
     _copy_to_target,
-    WindowsClient,
     create_execution_target,
 )
 
