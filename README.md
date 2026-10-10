@@ -788,7 +788,9 @@ work from the chosen WSL distro; referenced environment variables are not copied
 Selected MCP OAuth entries are copied from the WSL user's `.credentials.json` into
 the isolated Codex home for each run, continuation, and `connect` session, then
 removed from the isolated home when the command exits. No local Codex configuration
-is modified.
+is modified. Claude Code runs `claude mcp list` against the selected servers staged
+in its isolated configuration directory; the report records the CLI's connection
+and authentication status without saving the CLI output or invoking MCP tools.
 
 To check discovery, run with `--prompt "/mcp" --mcp my-server` and inspect the
 response, or connect to a retained workspace and use `/mcp` in the Codex TUI.

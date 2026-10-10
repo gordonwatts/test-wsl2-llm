@@ -118,8 +118,8 @@ def render_markdown(
                 "",
                 "### MCP preflight",
                 "",
-                "Codex CLI reported the selected servers and their local authentication status. "
-                "This check does not start stdio servers or make MCP tool calls.",
+                f"{result.run.agent.title()} CLI reported the selected servers and their "
+                "local status. This preflight does not make model or MCP tool calls.",
                 "",
                 "| Server | Detected | Enabled | Authentication | Check | Details |",
                 "| --- | --- | --- | --- | --- | --- |",
