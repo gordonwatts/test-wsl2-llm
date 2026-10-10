@@ -289,6 +289,8 @@ def render_markdown(
                 )
             )
     lines.extend(_activity_section(result))
+    if include_details:
+        lines.extend(_tool_summary_section(result))
     lines.extend(["", f"Schema version: `{result.schema_version}`", ""])
     return "\n".join(lines)
 
@@ -557,7 +559,9 @@ def _activity_section(result: TestResult) -> list[str]:
         except json.JSONDecodeError:
             continue
         item = event.get("item") if isinstance(event, dict) else None
-        if event.get("type") != "item.completed" or not isinstance(item, dict):
+        if not isinstance(event, dict) or not isinstance(item, dict):
+            continue
+        if event.get("type") != "item.completed":
             continue
         elapsed = stdout_elapsed.get(sequence)
         if item.get("type") == "agent_message" and isinstance(item.get("text"), str):
@@ -569,6 +573,11 @@ def _activity_section(result: TestResult) -> list[str]:
             exit_code = item.get("exit_code")
             status = f" (exit {exit_code})" if exit_code is not None else ""
             add_update(f"Command{status}: {command}", elapsed)
+        elif item.get("type") in {"custom_tool_call", "function_call"}:
+            name = item.get("name")
+            if isinstance(name, str):
+                arguments = item.get("input", item.get("arguments", ""))
+                add_update(html.escape(f"Tool call: {name}: {arguments}", quote=False), elapsed)
 
     for trace in result.logs.session_traces:
         for line in trace.content.splitlines():
@@ -577,13 +586,28 @@ def _activity_section(result: TestResult) -> list[str]:
             except json.JSONDecodeError:
                 continue
             payload = event.get("payload") if isinstance(event, dict) else None
-            if event.get("type") != "event_msg" or not isinstance(payload, dict):
+            if not isinstance(event, dict) or not isinstance(payload, dict):
                 continue
-            if payload.get("type") != "agent_message":
-                continue
-            message = payload.get("message")
-            if isinstance(message, str):
-                add_update(message)
+            if event.get("type") == "response_item":
+                if payload.get("type") in {"custom_tool_call", "function_call"}:
+                    name = payload.get("name")
+                    arguments = payload.get("input", payload.get("arguments", ""))
+                    if isinstance(name, str):
+                        add_update(html.escape(f"Tool call: {name}: {arguments}", quote=False))
+                elif payload.get("type") in {"custom_tool_call_output", "function_call_output"}:
+                    output = payload.get("output")
+                    if isinstance(output, list):
+                        output = "\n".join(
+                            block["text"] for block in output
+                            if isinstance(block, dict) and isinstance(block.get("text"), str)
+                        )
+                    if isinstance(output, str):
+                        message = f"Tool output ({payload.get('call_id', 'unknown')}): {output}"
+                        add_update(html.escape(message, quote=False))
+            elif event.get("type") == "event_msg" and payload.get("type") == "agent_message":
+                message = payload.get("message")
+                if isinstance(message, str):
+                    add_update(message)
 
     lines = [
         "",
@@ -602,6 +626,47 @@ def _activity_section(result: TestResult) -> list[str]:
     else:
         lines.append("No readable progress updates were recorded.")
     lines.extend(["", "</details>"])
+    return lines
+
+
+def _tool_summary_section(result: TestResult) -> list[str]:
+    """List recorded tool names; nested calls in script inputs are not inferred."""
+    names: set[str] = set()
+    sources = [result.logs.stdout_jsonl, *(trace.content for trace in result.logs.session_traces)]
+    for content in sources:
+        for line in content.splitlines():
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(event, dict):
+                continue
+            item = (
+                event.get("payload") if event.get("type") == "response_item" else event.get("item")
+            )
+            if not isinstance(item, dict):
+                continue
+            kind = item.get("type")
+            name = None
+            if kind in {"custom_tool_call", "function_call"}:
+                name = item.get("name")
+            elif kind == "mcp_tool_call":
+                server, tool = item.get("server"), item.get("tool")
+                if isinstance(server, str) and isinstance(tool, str):
+                    name = f"{server}/{tool}"
+            elif kind in {"command_execution", "web_search"}:
+                name = kind
+            if isinstance(name, str) and name.strip():
+                names.add(name)
+    lines = [
+        "", "## Tools called", "",
+        "Recorded tool names, deduplicated across stdout and session traces. "
+        "Calls nested inside scripts are listed only when separately recorded.", "",
+    ]
+    if names:
+        lines.extend(f"- <code>{html.escape(name)}</code>" for name in sorted(names))
+    else:
+        lines.append("No tool calls were recorded.")
     return lines
 
 
