@@ -4,9 +4,9 @@ from pathlib import Path
 from test_wsl2_llm.runner import (
     LinuxClient,
     WslClient,
-    _find_git_bash,
     _copy_from_target,
     _copy_to_target,
+    _find_git_bash,
     create_execution_target,
 )
 
@@ -128,7 +128,11 @@ def test_wsl_bash_is_rejected_when_it_does_not_preserve_arguments(monkeypatch, t
     wsl_bash = tmp_path / "Windows" / "System32" / "bash.exe"
     wsl_bash.parent.mkdir(parents=True)
     wsl_bash.touch()
-    monkeypatch.setattr("test_wsl2_llm.runner.shutil.which", lambda _name, path=None: str(wsl_bash))
+    def fake_which(name: str, path: str | None = None) -> str | None:
+        del path
+        return str(wsl_bash) if name == "bash" else None
+
+    monkeypatch.setattr("test_wsl2_llm.runner.shutil.which", fake_which)
     monkeypatch.setattr(
         "test_wsl2_llm.runner.subprocess.run",
         lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, b"", b""),
