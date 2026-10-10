@@ -728,9 +728,11 @@ class WindowsClient(LinuxClient):
                 "if ($authSource.StartsWith('~/')) { "
                 "$authSource = Join-Path $env:USERPROFILE $authSource.Substring(2) }\n"
                 "if (-not (Test-Path -LiteralPath $authSource -PathType Leaf)) { "
-                "[Console]::Error.WriteLine(\"Codex auth file not found: {0}\" -f $authSource); exit 2 }\n"
+                "[Console]::Error.WriteLine(\"Codex auth file not found: {0}\" -f $authSource); "
+                "exit 2 }\n"
                 "New-Item -ItemType Directory -Force -Path $home | Out-Null\n"
-                "Copy-Item -LiteralPath $authSource -Destination (Join-Path $home 'auth.json') -Force\n"
+                "Copy-Item -LiteralPath $authSource -Destination "
+                "(Join-Path $home 'auth.json') -Force\n"
                 "$exitCode = 0\n"
                 "try {\n"
                 "  if ($values[5]) {\n"
@@ -738,7 +740,8 @@ class WindowsClient(LinuxClient):
                 "$sourceHome = Join-Path $env:USERPROFILE '.codex' }\n"
                 "    $credentialFile = Join-Path $sourceHome '.credentials.json'\n"
                 "    if (Test-Path -LiteralPath $credentialFile -PathType Leaf) {\n"
-                "      $document = Get-Content -Raw -LiteralPath $credentialFile | ConvertFrom-Json\n"
+                "      $document = Get-Content -Raw -LiteralPath $credentialFile | "
+                "ConvertFrom-Json\n"
                 "      $names = @($values[5] | ConvertFrom-Json); $selected = @{}\n"
                 "      foreach ($property in $document.PSObject.Properties) {\n"
                 "        if ($property.Value.server_name -in $names) { "
@@ -753,8 +756,12 @@ class WindowsClient(LinuxClient):
                 "  if ($mode -eq 'resume') { & codex resume --last --cd $workspace } "
                 "else { & codex --cd $workspace }\n"
                 "  $exitCode = $LASTEXITCODE\n"
-                "} finally { Remove-Item -LiteralPath (Join-Path $home 'auth.json') -Force -ErrorAction SilentlyContinue; "
-                "Remove-Item -LiteralPath (Join-Path $home '.credentials.json') -Force -ErrorAction SilentlyContinue }\n"
+                "} finally {\n"
+                "  Remove-Item -LiteralPath (Join-Path $home 'auth.json') -Force "
+                "-ErrorAction SilentlyContinue\n"
+                "  Remove-Item -LiteralPath (Join-Path $home '.credentials.json') -Force "
+                "-ErrorAction SilentlyContinue\n"
+                "}\n"
                 "exit $exitCode"
             )
         if "codex exec --json --skip-git-repo-check" in source:
@@ -1208,7 +1215,9 @@ def run_test(
                         'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
                         installed_root,
                     )
-                    skill_directories.extend(line for line in client.text(found).splitlines() if line)
+                    skill_directories.extend(
+                        line for line in client.text(found).splitlines() if line
+                    )
             skill_directories = sorted(set(skill_directories))
         with state.phase(f"{adapter.name}_execution"):
             if cancellation is not None and cancellation.cancelled:
