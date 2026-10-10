@@ -530,6 +530,55 @@ def test_custom_tool_activity_and_full_log_tool_summary(tmp_path: Path) -> None:
     assert logs["stdout_jsonl"] == result.logs.stdout_jsonl
 
 
+def test_session_tool_activity_uses_run_relative_timestamps(tmp_path: Path) -> None:
+    result = sample_result()
+    result.run.started_at = "2026-01-01T05:30:00+05:30"
+    result.timing.phases[0].started_at = "2026-01-01T00:00:20Z"
+    result.logs.stdout_jsonl = ""
+    records = [
+        ("2026-01-01T00:01:02.400Z", "response_item", {
+            "type": "custom_tool_call", "name": "exec", "input": "text([])",
+        }),
+        ("2026-01-01T00:01:05+00:00", "response_item", {
+            "type": "custom_tool_call_output", "call_id": "call_1", "output": "[]",
+        }),
+        ("2026-01-01T05:31:10+05:30", "response_item", {
+            "type": "function_call", "name": "search", "arguments": "{}",
+        }),
+        ("2026-01-01T00:01:12Z", "response_item", {
+            "type": "function_call_output", "call_id": "call_2", "output": "found",
+        }),
+        ("2026-01-01T00:01:15Z", "event_msg", {
+            "type": "agent_message", "message": "Finished searching.",
+        }),
+    ]
+    result.logs.session_traces[0].content = "\n".join(
+        json.dumps({"timestamp": timestamp, "type": kind, "payload": payload})
+        for timestamp, kind, payload in records
+    )
+    markdown = write_markdown(result, tmp_path / "timed.md").read_text(encoding="utf-8")
+    assert "| 1m 2s | Tool call: exec: text([]) |" in markdown
+    assert "| 1m 5s | Tool output (call_1): [] |" in markdown
+    assert "| 1m 10s | Tool call: search: {} |" in markdown
+    assert "| 1m 12s | Tool output (call_2): found |" in markdown
+    assert "| 1m 15s | Finished searching. |" in markdown
+
+
+@pytest.mark.parametrize("timestamp", [
+    None, "invalid", 123, "2026-01-01T00:00:01", "2025-12-31T23:59:59Z",
+])
+def test_session_tool_activity_without_usable_timestamp(tmp_path: Path, timestamp: object) -> None:
+    result = sample_result()
+    result.logs.stdout_jsonl = ""
+    result.logs.session_traces[0].content = json.dumps({
+        "timestamp": timestamp, "type": "response_item", "payload": {
+            "type": "custom_tool_call", "name": "exec", "input": "text([])",
+        },
+    })
+    markdown = write_markdown(result, tmp_path / "untimed.md").read_text(encoding="utf-8")
+    assert "| -- | Tool call: exec: text([]) |" in markdown
+
+
 def test_full_log_reports_no_tools_and_escapes_tool_names(tmp_path: Path) -> None:
     result = sample_result()
     result.logs.stdout_jsonl = ""

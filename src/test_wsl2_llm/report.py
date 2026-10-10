@@ -588,12 +588,15 @@ def _activity_section(result: TestResult) -> list[str]:
             payload = event.get("payload") if isinstance(event, dict) else None
             if not isinstance(event, dict) or not isinstance(payload, dict):
                 continue
+            elapsed = _session_elapsed(event.get("timestamp"), result.run.started_at)
             if event.get("type") == "response_item":
                 if payload.get("type") in {"custom_tool_call", "function_call"}:
                     name = payload.get("name")
                     arguments = payload.get("input", payload.get("arguments", ""))
                     if isinstance(name, str):
-                        add_update(html.escape(f"Tool call: {name}: {arguments}", quote=False))
+                        add_update(
+                            html.escape(f"Tool call: {name}: {arguments}", quote=False), elapsed
+                        )
                 elif payload.get("type") in {"custom_tool_call_output", "function_call_output"}:
                     output = payload.get("output")
                     if isinstance(output, list):
@@ -603,11 +606,11 @@ def _activity_section(result: TestResult) -> list[str]:
                         )
                     if isinstance(output, str):
                         message = f"Tool output ({payload.get('call_id', 'unknown')}): {output}"
-                        add_update(html.escape(message, quote=False))
+                        add_update(html.escape(message, quote=False), elapsed)
             elif event.get("type") == "event_msg" and payload.get("type") == "agent_message":
                 message = payload.get("message")
                 if isinstance(message, str):
-                    add_update(message)
+                    add_update(message, elapsed)
 
     lines = [
         "",
@@ -627,6 +630,21 @@ def _activity_section(result: TestResult) -> list[str]:
         lines.append("No readable progress updates were recorded.")
     lines.extend(["", "</details>"])
     return lines
+
+
+def _session_elapsed(timestamp: object, started_at: str) -> float | None:
+    """Compute run-relative time only from unambiguous session timestamps."""
+    if not isinstance(timestamp, str):
+        return None
+    try:
+        recorded = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        started = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if recorded.tzinfo is None or started.tzinfo is None:
+        return None
+    elapsed = (recorded - started).total_seconds()
+    return elapsed if elapsed >= 0 else None
 
 
 def _tool_summary_section(result: TestResult) -> list[str]:
