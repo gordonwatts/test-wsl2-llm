@@ -505,9 +505,10 @@ directory. Overlapping sources include each result file once. Without `-s`, the 
 `results`.
 
 The page shows trial, directory, model, and question totals; checkbox filters for directory,
-model, question, agent, target, and outcome; cost versus pass rate; model statistics;
-per-question pass fractions and average input plus output tokens; and a searchable trial
-explorer. A pass requires a
+model, question, agent, target, and outcome; cost versus pass rate; the exact prompts sent
+for the selected directory/question pairs; model statistics; per-question pass fractions and
+average input plus output tokens; and a searchable trial explorer. Prompt entries follow the
+active filters and are deduplicated across models and repetitions. A pass requires a
 successful run and no failed validators. Each filter allows multiple choices: choices within
 one filter are combined with OR, and filters are combined with AND. **All** selects every
 choice; **Clear** selects none.
