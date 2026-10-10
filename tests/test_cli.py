@@ -1,5 +1,6 @@
 import os
 import subprocess
+import time
 from pathlib import Path
 from threading import Barrier, Lock
 
@@ -12,6 +13,7 @@ from typer.testing import CliRunner
 import test_wsl2_llm.cli as cli_module
 from test_wsl2_llm.cli import _connect_command, _repeat_output, _RepeatDisplay, app
 from test_wsl2_llm.config import DEFAULT_CONFIG_ENV, output_paths
+from test_wsl2_llm.runner import CancellationCoordinator
 
 runner = CliRunner()
 
@@ -139,6 +141,7 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
     active = 0
     maximum_active = 0
     calls: list[str] = []
+    starts: list[float] = []
 
     def fake_run(config, **_kwargs):
         nonlocal active, maximum_active
@@ -146,8 +149,9 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
             active += 1
             maximum_active = max(maximum_active, active)
             calls.append(config.output)
+            starts.append(time.monotonic())
         try:
-            barrier.wait(timeout=2)
+            barrier.wait(timeout=6)
             return sample_result()
         finally:
             with lock:
@@ -179,7 +183,43 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
 
     assert result.exit_code == 0, result.output
     assert maximum_active == 4
+    assert all(b - a >= 0.99 for a, b in zip(starts, starts[1:], strict=False))
     assert sorted(calls) == sorted(str(tmp_path / f"out-{index:03d}") for index in range(1, 5))
+
+
+def test_trial_start_gate_spaces_starts_and_allows_idle_time(monkeypatch) -> None:
+    now = [0.0]
+    sleeps: list[float] = []
+
+    def sleep(duration: float) -> None:
+        sleeps.append(duration)
+        now[0] += duration
+
+    monkeypatch.setattr(cli_module.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(cli_module.time, "sleep", sleep)
+    gate = cli_module._TrialStartGate()
+    coordinator = CancellationCoordinator()
+    assert gate.claim(coordinator, "question-one")
+    assert sleeps == []
+    assert gate.claim(coordinator, "question-two")
+    assert now[0] == pytest.approx(1.0)
+    assert gate.claim(coordinator, "question-one-repeat-two")
+    assert now[0] == pytest.approx(2.0)
+    now[0] = 10.0
+    previous_sleeps = len(sleeps)
+    assert gate.claim(coordinator, "later-question")
+    assert len(sleeps) == previous_sleeps
+
+
+def test_trial_start_gate_does_not_claim_waiting_job_after_cancellation(monkeypatch) -> None:
+    coordinator = CancellationCoordinator()
+    monkeypatch.setattr(cli_module.time, "monotonic", lambda: 0.0)
+    monkeypatch.setattr(cli_module.time, "sleep", lambda _: coordinator.cancel())
+    gate = cli_module._TrialStartGate()
+    assert gate.claim(coordinator, "first")
+    assert not gate.claim(coordinator, "waiting")
+    assert coordinator.started_jobs() == {"first"}
+    assert not gate.claim(coordinator, "queued")
 
 
 def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: Path) -> None:

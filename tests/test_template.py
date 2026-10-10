@@ -1,4 +1,5 @@
 import os
+import time
 from pathlib import Path
 from threading import Barrier, Lock
 
@@ -665,12 +666,14 @@ def test_template_run_cli_overrides_and_global_threads(monkeypatch, tmp_path: Pa
     lock = Lock()
     active = 0
     maximum = 0
+    starts: list[float] = []
 
     def fake_run(config, **_kwargs):
         nonlocal active, maximum
         with lock:
             active += 1
             maximum = max(maximum, active)
+            starts.append(time.monotonic())
         try:
             barrier.wait(timeout=2)
             return sample_result()
@@ -704,6 +707,7 @@ def test_template_run_cli_overrides_and_global_threads(monkeypatch, tmp_path: Pa
 
     assert result.exit_code == 0, result.output
     assert maximum == 2
+    assert starts[1] - starts[0] >= 0.99
 
 
 @pytest.mark.parametrize(

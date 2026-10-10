@@ -203,6 +203,11 @@ Use `--threads N` with `--repeat` to run up to `N` fresh WSL2 tests concurrently
 example, `--repeat 10 --threads 4` runs ten repetitions in batches of at most four. The
 default is `--threads 1`, and the number of workers is capped at the repeat count. Each
 repetition still has its own indexed reports, workspace, logs, and copied-back artifacts.
+Trial starts are spaced at least one second apart within each CLI batch, including
+across questions, models, and repetitions in a template batch. The first trial starts
+immediately; running trials still overlap up to the configured thread limit. This spaces
+trial setup starts, rather than guaranteeing separation between later agent-process launches.
+Separate CLI invocations do not share this start gate.
 While repetitions are running, a transient aggregate progress bar shows completed runs;
 it is removed before the indexed output paths are printed. Repeated-run Codex progress is
 written as ordinary log lines so it does not compete with the aggregate live display.

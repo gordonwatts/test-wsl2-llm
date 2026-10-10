@@ -294,12 +294,13 @@ def run(
         from test_wsl2_llm.runner import run_test
 
         coordinator = CancellationCoordinator()
+        start_gate = _TrialStartGate()
 
         def run_one(
             index: int, run_output: str, repeat_display: _RepeatDisplay | None
         ) -> tuple[int, Path | None, Path | None, int, str | None]:
             job_id = f"repeat-{index}"
-            if not coordinator.claim(job_id):
+            if not start_gate.claim(coordinator, job_id):
                 return index, None, None, 130, "not started: cancellation requested"
             run_config = resolved.model_copy(update={"output": run_output})
             result = run_test(
@@ -869,6 +870,7 @@ def template_run(
         from test_wsl2_llm.runner import run_test
 
         coordinator = CancellationCoordinator()
+        start_gate = _TrialStartGate()
 
         def run_one(
             question_index: int,
@@ -879,7 +881,7 @@ def template_run(
             repeat_display: _RepeatDisplay | None,
         ) -> tuple[int, str, int, Path | None, Path | None, int, str | None]:
             job_id = f"template-{identifier}-{repetition}"
-            if not coordinator.claim(job_id):
+            if not start_gate.claim(coordinator, job_id):
                 return (
                     question_index,
                     identifier,
@@ -1496,6 +1498,30 @@ def _repeat_output(output: str, index: int, repeat: int) -> str:
     path = output_stem(output)
     width = max(3, len(str(repeat)))
     return str(path.with_name(f"{path.name}-{index:0{width}d}"))
+
+
+class _TrialStartGate:
+    """Space actual trial starts across all workers in one CLI batch."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._last_started: float | None = None
+
+    def claim(self, coordinator: CancellationCoordinator, job_id: str) -> bool:
+        with self._lock:
+            while not coordinator.cancelled:
+                now = time.monotonic()
+                remaining = (
+                    self._last_started + 1.0 - now if self._last_started is not None else 0.0
+                )
+                if remaining <= 0:
+                    if not coordinator.claim(job_id):
+                        return False
+                    self._last_started = time.monotonic()
+                    return True
+                # Keep Ctrl-C responsive while a worker waits for its start slot.
+                time.sleep(min(remaining, 0.05))
+            return False
 
 
 class _RepeatDisplay:
