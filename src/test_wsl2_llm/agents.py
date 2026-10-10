@@ -110,11 +110,7 @@ class CodexAgentAdapter:
         return _resolve_wsl_path(target, source or "~/.codex/auth.json")
 
     def setup_home(self, target: ExecutionTarget, home: str, auth_source: str) -> None:
-        target.bash(
-            'mkdir -p "$1" && cp -- "$2" "$1/auth.json" && chmod 600 "$1/auth.json"',
-            home,
-            auth_source,
-        )
+        _copy_host_auth(target, auth_source, home, self.auth_filename)
 
     def mcp_config(self, config: TestConfig) -> dict[str, object] | None:
         del config

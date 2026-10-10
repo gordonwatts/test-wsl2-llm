@@ -11,6 +11,7 @@ import queue
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
@@ -376,6 +377,19 @@ def sanitized_linux_environment(
     return environment
 
 
+def _retry_readonly_removal(
+    function: Callable[[str], object],
+    path: str,
+    exc_info: tuple[type[BaseException], BaseException, Any],
+) -> None:
+    """Clear a Windows read-only attribute and retry a failed rmtree operation."""
+    error = exc_info[1]
+    if not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
 class LinuxClient:
     """Run an isolated Codex workspace directly on a native Linux host."""
 
@@ -526,7 +540,10 @@ class LinuxClient:
         return str(run_root)
 
     def cleanup_workspace(self, run_root: str) -> None:
-        shutil.rmtree(run_root)
+        if os.name == "nt":
+            shutil.rmtree(run_root, onerror=_retry_readonly_removal)
+        else:
+            shutil.rmtree(run_root)
 
     # These helpers keep the local target independent of GNU find/coreutils.
     # The WSL target intentionally continues to use its existing shell helpers.
@@ -644,6 +661,288 @@ class LinuxClient:
         return traces, events
 
 
+class WindowsClient(LinuxClient):
+    """Run the local target on Windows using PowerShell and native file operations.
+
+    Linux and macOS keep using their native shell implementation in LinuxClient.
+    """
+
+    def __init__(
+        self,
+        environment_policy: EnvironmentPolicy | None = None,
+        *,
+        source_environment: Mapping[str, str] | None = None,
+    ) -> None:
+        self.environment = sanitized_windows_environment(
+            environment_policy or EnvironmentPolicy(), source_environment
+        )
+
+    @staticmethod
+    def _encoded_command(script: str, arguments: tuple[str, ...] = ()) -> list[str]:
+        """Build a PowerShell command with values serialized outside its source."""
+        prelude_lines = ["$ErrorActionPreference = 'Stop'"]
+        for index, argument in enumerate(arguments):
+            payload = base64.b64encode(argument.encode("utf-8")).decode("ascii")
+            prelude_lines.append(
+                f"$testWsl2Arg{index} = [Text.Encoding]::UTF8.GetString("
+                f"[Convert]::FromBase64String('{payload}'))"
+            )
+            script = script.replace(f"$values[{index}]", f"$testWsl2Arg{index}")
+        prelude = "\n".join(prelude_lines) + "\n"
+        encoded = base64.b64encode((prelude + script).encode("utf-16-le")).decode("ascii")
+        return [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded,
+        ]
+
+    @staticmethod
+    def _powershell_script(script: str, arguments: tuple[str, ...]) -> str:
+        """Translate the small, explicit shell surface used by agent adapters."""
+        source = " ".join(script.split())
+        if source in {"codex --version", "claude --version", "codex plugin --help"}:
+            return f"& {source}\nexit $LASTEXITCODE"
+        if source.startswith('env CODEX_HOME="$1" codex plugin marketplace add "$2"'):
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex plugin marketplace add $values[1] --json\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith('env CODEX_HOME="$1" codex plugin add "$2"'):
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex plugin add $values[1] --json\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith('env CLAUDE_CONFIG_DIR="$1" claude plugin marketplace add "$2"'):
+            return (
+                "$env:CLAUDE_CONFIG_DIR = $values[0]\n"
+                "& claude plugin marketplace add $values[1]\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith('env CLAUDE_CONFIG_DIR="$1" claude plugin install "$2"'):
+            return (
+                "$env:CLAUDE_CONFIG_DIR = $values[0]\n"
+                "& claude plugin install $values[1] --scope user --yes\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith("git clone --depth 1 --branch"):
+            return (
+                "& git clone --depth 1 --branch $values[1] -- $values[0] $values[2]\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith("git clone --depth 1 --"):
+            return (
+                "& git clone --depth 1 -- $values[0] $values[1]\n"
+                "exit $LASTEXITCODE"
+            )
+        if 'credential_copy_script="$5"' in source and "codex resume --last" in source:
+            return (
+                "$home = $values[0]; $workspace = $values[1]; $authSource = $values[2]; "
+                "$mode = $values[3]\n"
+                "if ($authSource.StartsWith('~/')) { "
+                "$authSource = Join-Path $env:USERPROFILE $authSource.Substring(2) }\n"
+                "if (-not (Test-Path -LiteralPath $authSource -PathType Leaf)) { "
+                "[Console]::Error.WriteLine(\"Codex auth file not found: {0}\" -f $authSource); "
+                "exit 2 }\n"
+                "New-Item -ItemType Directory -Force -Path $home | Out-Null\n"
+                "Copy-Item -LiteralPath $authSource -Destination "
+                "(Join-Path $home 'auth.json') -Force\n"
+                "$exitCode = 0\n"
+                "try {\n"
+                "  if ($values[5]) {\n"
+                "    $sourceHome = $env:CODEX_HOME; if (-not $sourceHome) { "
+                "$sourceHome = Join-Path $env:USERPROFILE '.codex' }\n"
+                "    $credentialFile = Join-Path $sourceHome '.credentials.json'\n"
+                "    if (Test-Path -LiteralPath $credentialFile -PathType Leaf) {\n"
+                "      $document = Get-Content -Raw -LiteralPath $credentialFile | "
+                "ConvertFrom-Json\n"
+                "      $names = @($values[5] | ConvertFrom-Json); $selected = @{}\n"
+                "      foreach ($property in $document.PSObject.Properties) {\n"
+                "        if ($property.Value.server_name -in $names) { "
+                "$selected[$property.Name] = $property.Value }\n"
+                "      }\n"
+                "      if ($selected.Count) { "
+                "ConvertTo-Json -InputObject $selected -Depth 100 | "
+                "Set-Content -LiteralPath (Join-Path $home '.credentials.json') -Encoding UTF8 }\n"
+                "    }\n"
+                "  }\n"
+                "  $env:CODEX_HOME = $home\n"
+                "  if ($mode -eq 'resume') { & codex resume --last --cd $workspace } "
+                "else { & codex --cd $workspace }\n"
+                "  $exitCode = $LASTEXITCODE\n"
+                "} finally {\n"
+                "  Remove-Item -LiteralPath (Join-Path $home 'auth.json') -Force "
+                "-ErrorAction SilentlyContinue\n"
+                "  Remove-Item -LiteralPath (Join-Path $home '.credentials.json') -Force "
+                "-ErrorAction SilentlyContinue\n"
+                "}\n"
+                "exit $exitCode"
+            )
+        if "codex exec --json --skip-git-repo-check" in source:
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex exec --json --skip-git-repo-check --model $values[1] "
+                "--config $values[2] --cd $values[3] -\n"
+                "exit $LASTEXITCODE"
+            )
+        if "claude" in source and "--print --output-format stream-json" in source:
+            return (
+                "$env:CLAUDE_CONFIG_DIR = $values[0]\n"
+                "Set-Location -LiteralPath $values[2]\n"
+                "$claudeArgs = @('--print', '--output-format', 'stream-json', '--verbose', "
+                "'--model', $values[1], '--permission-mode', 'bypassPermissions')\n"
+                "if ($values[3]) { $claudeArgs += @('--mcp-config', $values[3]) }\n"
+                "& claude @claudeArgs\n"
+                "exit $LASTEXITCODE"
+            )
+        if source == 'printf "%s\\n" "$1"':
+            return "[Console]::Out.WriteLine($values[0])"
+        if "exec bash -li" in source:
+            return "Set-Location -LiteralPath $values[0]\n& powershell.exe -NoLogo"
+        raise ValueError(
+            "the Windows local target does not support this shell operation; "
+            "use the native PowerShell target operation"
+        )
+
+    def shell_command(
+        self, script: str, *arguments: str, interactive_login: bool = False
+    ) -> list[str]:
+        del interactive_login
+        return self._encoded_command(self._powershell_script(script, arguments), arguments)
+
+    def bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.run(
+            self.shell_command(script, *arguments), input_bytes=input_bytes, check=check
+        )
+
+    def login_bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.bash(script, *arguments, input_bytes=input_bytes, check=check)
+
+    def make_directory(self, path: str) -> None:
+        Path(path).mkdir(parents=True, exist_ok=True)
+
+    def git_commit(self, path: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", path, "rev-parse", "HEAD"],
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        if completed.returncode:
+            return ""
+        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    def read_plugin_manifest(self, root: str) -> dict[str, Any] | None:
+        for manifest in (Path(root) / ".codex-plugin" / "plugin.json", Path(root) / "plugin.json"):
+            try:
+                value = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            return value if isinstance(value, dict) else None
+        return None
+
+    def copy_mcp_credentials(self, codex_home: str, names: list[str]) -> None:
+        source_home = self.environment.get("CODEX_HOME")
+        if source_home:
+            source = Path(source_home).expanduser() / ".credentials.json"
+        else:
+            home = self.environment.get("USERPROFILE") or self.environment.get("HOME")
+            source = (Path(home) if home else Path.home()) / ".codex" / ".credentials.json"
+        try:
+            document = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(document, dict):
+            return
+        selected = {
+            key: value
+            for key, value in document.items()
+            if isinstance(value, dict) and value.get("server_name") in set(names)
+        }
+        if not selected:
+            return
+        destination = Path(codex_home) / ".credentials.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(".credentials.json.tmp")
+        temporary.write_text(json.dumps(selected), encoding="utf-8")
+        temporary.replace(destination)
+
+    def run(
+        self,
+        arguments: list[str],
+        *,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        command = self.command(arguments)
+        LOGGER.info("Windows local command: %s", _display_command(command))
+        completed = subprocess.run(
+            command,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        if check and completed.returncode:
+            stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+            raise RuntimeError(f"Windows local command failed ({completed.returncode}): {stderr}")
+        return completed
+
+    def start_process(
+        self,
+        command: list[str],
+        *,
+        stdin: int = subprocess.PIPE,
+        stdout: int = subprocess.PIPE,
+        stderr: int = subprocess.PIPE,
+    ) -> subprocess.Popen[str]:
+        return subprocess.Popen(
+            command,
+            stdin=stdin,
+            stdout=stdout,
+            stderr=stderr,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            env=self.environment,
+        )
+
+    def stop_process(self, process: subprocess.Popen[str]) -> None:
+        if getattr(process, "poll", lambda: None)() is not None:
+            return
+        pid = getattr(process, "pid", None)
+        if isinstance(pid, int):
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+        except TypeError:
+            process.wait()
+
 def create_execution_target(
     distro: str | None = None,
     environment_policy: EnvironmentPolicy | None = None,
@@ -656,10 +955,12 @@ def create_execution_target(
     remote_workspace_parent: str = "/tmp",
     ssh_connect_timeout_seconds: float = 10.0,
 ) -> ExecutionTarget:
-    """Select WSL or native Linux while keeping one runner lifecycle."""
+    """Select WSL, a native host, or SSH while keeping one runner lifecycle."""
     if execution_target in {"linux", "macos", "local"}:
         if distro:
             raise ValueError("distro is only valid with the wsl execution target")
+        if execution_target == "local" and os.name == "nt":
+            return WindowsClient(environment_policy, source_environment=source_environment)
         return LinuxClient(environment_policy, source_environment=source_environment)
     if execution_target == "ssh":
         if distro:
@@ -682,7 +983,7 @@ def create_execution_target(
 
 
 # Descriptive names for callers that do not need the historical LinuxClient name.
-LocalClient = LinuxClient
+LocalClient = WindowsClient if os.name == "nt" else LinuxClient
 MacOSClient = LinuxClient
 
 # Descriptive name for callers that do not need the historical WslClient name.
@@ -945,11 +1246,17 @@ def run_test(
             installed_plugin_roots = list(plugin_setup.installed_roots)
             plugin_versions.update(plugin_setup.plugin_versions)
             for installed_root in sorted(set(installed_plugin_roots)):
-                found = client.bash(
-                    'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
-                    installed_root,
-                )
-                skill_directories.extend(line for line in client.text(found).splitlines() if line)
+                native_finder = getattr(client, "find_skill_directories", None)
+                if callable(native_finder):
+                    skill_directories.extend(native_finder([installed_root]))
+                else:
+                    found = client.bash(
+                        'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
+                        installed_root,
+                    )
+                    skill_directories.extend(
+                        line for line in client.text(found).splitlines() if line
+                    )
             skill_directories = sorted(set(skill_directories))
         with state.phase(f"{adapter.name}_execution"):
             if cancellation is not None and cancellation.cancelled:
@@ -1512,7 +1819,11 @@ def _transfer_marketplaces(
 ) -> list[str]:
     runtime: list[str] = []
     marketplace_root = f"{run_root}/.harness/inputs/marketplaces"
-    client.bash('mkdir -p "$1"', marketplace_root)
+    directory_creator = getattr(client, "make_directory", None)
+    if callable(directory_creator):
+        directory_creator(marketplace_root)
+    else:
+        client.bash('mkdir -p "$1"', marketplace_root)
     start_index = 1
     if append:
         directory_lister = (
@@ -1841,10 +2152,14 @@ def _resolved_marketplace_versions(
     versions: dict[str, str] = {}
     for source, runtime_path in zip(sources, runtime_paths, strict=False):
         try:
-            completed = client.bash(
-                'git -C "$1" rev-parse HEAD 2>/dev/null', runtime_path, check=False
-            )
-            commit = client.text(completed).strip()
+            native_git = getattr(client, "git_commit", None)
+            if callable(native_git):
+                commit = native_git(runtime_path)
+            else:
+                completed = client.bash(
+                    'git -C "$1" rev-parse HEAD 2>/dev/null', runtime_path, check=False
+                )
+                commit = client.text(completed).strip()
         except (AttributeError, OSError, RuntimeError):
             commit = ""
         if re.fullmatch(r"[0-9a-fA-F]{40}", commit):
@@ -1854,16 +2169,20 @@ def _resolved_marketplace_versions(
 
 def _plugin_manifest_version(client: ExecutionTarget, installed_root: str) -> str | None:
     """Read only the version field from an installed plugin manifest."""
-    try:
-        completed = client.bash(
-            'for file in "$1/.codex-plugin/plugin.json" "$1/plugin.json"; do '
-            'if test -r "$file"; then cat -- "$file"; break; fi; done',
-            installed_root,
-            check=False,
-        )
-        payload = json.loads(client.text(completed))
-    except (AttributeError, OSError, RuntimeError, json.JSONDecodeError):
-        return None
+    native_reader = getattr(client, "read_plugin_manifest", None)
+    if callable(native_reader):
+        payload = native_reader(installed_root)
+    else:
+        try:
+            completed = client.bash(
+                'for file in "$1/.codex-plugin/plugin.json" "$1/plugin.json"; do '
+                'if test -r "$file"; then cat -- "$file"; break; fi; done',
+                installed_root,
+                check=False,
+            )
+            payload = json.loads(client.text(completed))
+        except (AttributeError, OSError, RuntimeError, json.JSONDecodeError):
+            return None
     version = payload.get("version") if isinstance(payload, dict) else None
     return str(version) if isinstance(version, (str, int, float)) and str(version) else None
 
@@ -2322,12 +2641,16 @@ def _copy_mcp_credentials(client: ExecutionTarget, codex_home: str, names: list[
     """Copy only selected MCP OAuth entries from the user's Linux Codex home."""
     if not names:
         return
-    client.bash(
-        'python3 -c "$1" "$2" "$3"',
-        _mcp_credentials_copy_script(),
-        codex_home,
-        json.dumps(names),
-    )
+    native_copier = getattr(client, "copy_mcp_credentials", None)
+    if callable(native_copier):
+        native_copier(codex_home, names)
+    else:
+        client.bash(
+            'python3 -c "$1" "$2" "$3"',
+            _mcp_credentials_copy_script(),
+            codex_home,
+            json.dumps(names),
+        )
 
 
 def _mcp_credentials_copy_script() -> str:

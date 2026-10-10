@@ -136,7 +136,7 @@ def run(
     target: Annotated[
         Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+            "--target", help="Execution target: wsl (default), local host, or passwordless ssh."
         ),
     ] = None,
     distro: Annotated[
@@ -551,7 +551,7 @@ def template_run(
     target: Annotated[
         Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+            "--target", help="Execution target: wsl (default), local host, or passwordless ssh."
         ),
     ] = None,
     distro: Annotated[
@@ -707,7 +707,10 @@ def template_run(
             "max_copy_back_files": max_copy_back,
             "cleanup": cleanup,
         }
+        ignore_config_distro = target is not None and target != "wsl" and distro is None
         base_values = dict(shared)
+        if ignore_config_distro:
+            base_values.pop("distro", None)
         base_values["prompt"] = rendered_questions[0][1]
         selectors = model if model is not None else batch.models
         if selectors is None:
@@ -760,7 +763,12 @@ def template_run(
                     run_values["copy_back"] = question_copy_back(
                         list(shared.get("copy_back", [])), question_values
                     )
-                    run_values["distro"] = question_distro(shared.get("distro"), question_values)
+                    if ignore_config_distro:
+                        run_values.pop("distro", None)
+                    else:
+                        run_values["distro"] = question_distro(
+                            shared.get("distro"), question_values
+                        )
                     run_values["plugins"] = question_plugins(
                         list(shared.get("plugins", [])), question_values
                     )
@@ -1182,7 +1190,7 @@ def continue_work(
     target: Annotated[
         Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+            "--target", help="Execution target: wsl (default), local host, or passwordless ssh."
         ),
     ] = None,
     distro: Annotated[

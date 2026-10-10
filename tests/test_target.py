@@ -1,8 +1,10 @@
+import base64
 import subprocess
 from pathlib import Path
 
 from test_wsl2_llm.runner import (
     LinuxClient,
+    WindowsClient,
     WslClient,
     _copy_from_target,
     _copy_to_target,
@@ -94,6 +96,52 @@ def test_linux_target_uses_native_commands_and_preserves_arguments() -> None:
         "space $x; café",
     ]
     assert isinstance(create_execution_target(execution_target="linux"), LinuxClient)
+
+
+def test_windows_local_target_uses_powershell_for_agent_commands() -> None:
+    client = WindowsClient(source_environment={"Path": r"C:\\tools"})
+    command = client.shell_command(
+        'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
+        '--model "$2" --config "$3" --cd "$4" -',
+        r"C:\\run with spaces\\codex-home",
+        "gpt-6-luna",
+        'model_reasoning_effort="high"',
+        r"C:\\run with spaces\\workspace",
+        interactive_login=True,
+    )
+
+    assert command[0] == "powershell.exe"
+    assert "-EncodedCommand" in command
+    script = base64.b64decode(command[-1]).decode("utf-16-le")
+    assert "codex exec --json --skip-git-repo-check" in script
+    assert "$env:CODEX_HOME = $testWsl2Arg0" in script
+    assert "--cd $testWsl2Arg3" in script
+    assert "bash" not in script.casefold()
+
+
+def test_windows_local_target_translates_git_clone_to_powershell() -> None:
+    client = WindowsClient(source_environment={"Path": r"C:\\tools"})
+    command = client.shell_command(
+        'git clone --depth 1 --branch "$2" -- "$1" "$3"',
+        "https://example.test/marketplace.git",
+        "main",
+        r"C:\\run with spaces\\marketplace",
+    )
+
+    script = base64.b64decode(command[command.index("-EncodedCommand") + 1]).decode("utf-16-le")
+    assert "& git clone --depth 1 --branch $testWsl2Arg1 -- $testWsl2Arg0 $testWsl2Arg2" in script
+
+
+def test_windows_target_native_file_operations_and_workspace(tmp_path) -> None:
+    client = WindowsClient(source_environment={"Path": ""})
+    run_root = client.create_workspace(str(tmp_path / "parent"))
+    workspace = Path(run_root) / "workspace"
+
+    client.make_directory(str(workspace / ".harness" / "inputs" / "marketplaces"))
+    assert (workspace / ".harness" / "inputs" / "marketplaces").is_dir()
+
+    client.cleanup_workspace(run_root)
+    assert not Path(run_root).exists()
 
 
 def test_linux_target_workspace_and_transfers_preserve_unicode_and_symlinks(tmp_path) -> None:

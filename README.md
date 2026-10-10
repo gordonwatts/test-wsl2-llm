@@ -15,7 +15,7 @@ The support boundary is intentionally explicit:
 | Codex CLI (non-interactive `codex exec`) | Passwordless SSH to a Linux host | Supported; interactive access deferred |
 | Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
 
-| Codex CLI (non-interactive `codex exec`) | Native Linux/macOS (`--target local`) | Experimental |
+| Codex CLI (non-interactive `codex exec`) | Native Linux, macOS, or Windows (`--target local`) | Experimental |
 The package name and `test-wsl2-llm` command are stable. The target and agent
 rows above describe the current release boundary; they are not promises about
 the future target work tracked in the project.
@@ -173,7 +173,8 @@ This writes `results\hello.md` for people and `results\hello.yaml` for code.
 The default `target` is `wsl`, which keeps the Windows-to-WSL2 workflow above. On a
 native Linux or macOS host, select `--target local` (the existing `linux` name remains an alias; use native paths) to run the same isolated
 workspace, transfer, copy-back, cleanup, and retained-workspace lifecycle without
-invoking `wsl.exe` or `wslpath`:
+invoking `wsl.exe` or `wslpath`. On Windows, `--target local` runs harness shell
+commands through PowerShell and performs workspace file operations on the Windows host:
 
 ```bash
 test-wsl2-llm run \
@@ -184,9 +185,12 @@ test-wsl2-llm run \
 ```
 
 The native target requires Python 3.11+, Bash, the Codex CLI on `PATH`, and a readable
-Linux Codex authentication file (normally `~/.codex/auth.json`). `--distro` is only valid
-for the WSL target. Native Linux support is separate from the Windows-to-WSL path, which
-remains the default and is still covered by the WSL tests. The Markdown report contains the prompt, final response, selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing, token usage, workspace inventory, and complete Codex stderr output. The YAML report retains the raw Codex JSONL and collected session traces for debugging.
+Codex authentication file (normally `~/.codex/auth.json`). On Windows, install Git for
+Windows and make its `bin` directory available on `PATH` so `bash` can be found. `--distro`
+is only valid for the WSL target. The Markdown report contains the prompt, final response,
+selected marketplaces, plugins, and MCP servers, concise model-activity updates, timing,
+token usage, workspace inventory, and complete Codex stderr output. The YAML report
+retains the raw Codex JSONL and collected session traces for debugging.
 
 Use `--repeat N` to run the same test more than once. For repeated runs, the Markdown,
 YAML, and any `--copy-back` artifacts are indexed with a three-digit suffix, starting at
@@ -371,7 +375,7 @@ The top-level template fields are:
 | `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
 | `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
 | `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
-| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), native `local` (macOS/Linux; `linux` is an alias), or passwordless `ssh`; WSL distribution, target temporary-run parent, and result stem. |
+| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), native `local` (Linux/macOS/Windows; Windows uses PowerShell), `linux`/`macos` aliases, or passwordless `ssh`; WSL distribution, target temporary-run parent, and result stem. |
 | `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
 | `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
 

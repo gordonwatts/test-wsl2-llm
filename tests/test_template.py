@@ -354,6 +354,30 @@ def test_template_run_persists_linux_target(monkeypatch, tmp_path: Path) -> None
     assert targets == ["linux"]
 
 
+def test_template_run_cli_target_ignores_configured_distros(monkeypatch, tmp_path: Path) -> None:
+    targets_and_distros: list[tuple[str, str | None]] = []
+
+    def fake_run(config, **_kwargs):
+        targets_and_distros.append((config.target, config.distro))
+        return sample_result()
+
+    monkeypatch.setattr("test_wsl2_llm.runner.run_test", fake_run)
+    config = tmp_path / "local.yaml"
+    config.write_text(
+        "prompt_template: 'Do {{ question }}'\n"
+        "questions:\n"
+        "  - id: shared\n    question: shared distro\n"
+        "  - id: custom\n    question: question distro\n    distro: atlas_al9\n"
+        "model: test-model\ndistro: ubuntu\noutput: results/run\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["template", "run", str(config), "--target", "local"])
+
+    assert result.exit_code == 0, result.output
+    assert targets_and_distros == [("local", None), ("local", None)]
+
+
 def test_template_run_applies_question_copy_files(monkeypatch, tmp_path: Path) -> None:
     copied_files: list[list[str]] = []
 
