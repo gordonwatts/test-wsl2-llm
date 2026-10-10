@@ -28,6 +28,7 @@ from test_wsl2_llm.runner import (
     _parse_git_marketplace_source,
     _progress_description,
     _progress_panel,
+    _resolve_wsl_path,
     _root_contents,
     _stream_codex,
     _transfer_files,
@@ -50,6 +51,26 @@ def test_cancellation_coordinator_stops_active_and_rejects_queued_jobs() -> None
     assert coordinator.cancelled
     assert not coordinator.claim("queued")
     assert coordinator.started_jobs() == {"active"}
+
+
+def test_wsl_path_uses_passwd_home_instead_of_inherited_home() -> None:
+    class FakeTarget:
+        script = ""
+
+        def bash(self, script: str, *arguments: str):
+            self.script = script
+            assert arguments == ("~/.codex/auth.json",)
+            return subprocess.CompletedProcess(
+                [], 0, b"/home/gwatts/.codex/auth.json\n", b""
+            )
+
+        def text(self, completed: subprocess.CompletedProcess[bytes]) -> str:
+            return completed.stdout.decode()
+
+    target = FakeTarget()
+    assert _resolve_wsl_path(target, "~/.codex/auth.json") == "/home/gwatts/.codex/auth.json"
+    assert 'getent passwd "$(id -u)"' in target.script
+    assert '"$HOME/' not in target.script
 
 
 def test_wsl_command_keeps_values_as_separate_arguments() -> None:

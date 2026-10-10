@@ -29,6 +29,23 @@ def test_fake_adapter_is_available_without_credentials() -> None:
     assert not adapter.capabilities.requires_auth
 
 
+def test_codex_native_auth_uses_resolved_source_and_canonical_filename(tmp_path: Path) -> None:
+    from test_wsl2_llm.agents import CodexAgentAdapter
+    from test_wsl2_llm.runner import LinuxClient
+
+    source = tmp_path / "source credentials.json"
+    source.write_text('{"synthetic":true}', encoding="utf-8")
+    home = tmp_path / "isolated home"
+    target = LinuxClient()
+    adapter = CodexAgentAdapter()
+
+    resolved = adapter.resolve_auth_source(target, str(source))
+    adapter.setup_home(target, str(home), resolved)
+
+    assert (home / "auth.json").read_bytes() == source.read_bytes()
+    assert source.exists()
+
+
 def test_unknown_agent_fails_deterministically() -> None:
     with pytest.raises(ValueError, match="unknown agent 'missing'"):
         get_agent_adapter("missing")

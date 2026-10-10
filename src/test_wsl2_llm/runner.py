@@ -2697,7 +2697,10 @@ def _resolve_wsl_path(
         return resolver(path, require_directory=require_directory)
     test = "test -d" if require_directory else "test -r"
     script = (
-        'value="$1"; case "$value" in "~/"*) value="$HOME/${value:2}";; esac; '
+        'value="$1"; case "$value" in "~/"*) '
+        'home="$(getent passwd "$(id -u)" | cut -d: -f6)"; '
+        'test -n "$home" || { printf "Could not determine Linux account home\\n" >&2; exit 1; }; '
+        'value="$home/${value:2}";; esac; '
         f'{test} "$value" && realpath -e "$value"'
     )
     return client.text(client.bash(script, path)).strip()
