@@ -55,7 +55,11 @@ def _record(result: TestResult, path: Path) -> dict[str, object]:
         "prompt": result.prompt,
         "prompt_template": cell.prompt_template if cell else None,
         "question_values": (
-            {key: cell.question_values[key] for key in template_fields if key in cell.question_values}
+            {
+                key: cell.question_values[key]
+                for key in template_fields
+                if key in cell.question_values
+            }
             if cell
             else {}
         ),
