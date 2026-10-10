@@ -114,8 +114,8 @@ def test_windows_local_target_uses_powershell_for_agent_commands() -> None:
     assert "-EncodedCommand" in command
     script = base64.b64decode(command[-1]).decode("utf-16-le")
     assert "codex exec --json --skip-git-repo-check" in script
-    assert "$env:CODEX_HOME = $values[0]" in script
-    assert "--cd $values[3]" in script
+    assert "$env:CODEX_HOME = $testWsl2Arg0" in script
+    assert "--cd $testWsl2Arg3" in script
     assert "bash" not in script.casefold()
 
 
@@ -129,7 +129,7 @@ def test_windows_local_target_translates_git_clone_to_powershell() -> None:
     )
 
     script = base64.b64decode(command[command.index("-EncodedCommand") + 1]).decode("utf-16-le")
-    assert "& git clone --depth 1 --branch $values[1] -- $values[0] $values[2]" in script
+    assert "& git clone --depth 1 --branch $testWsl2Arg1 -- $testWsl2Arg0 $testWsl2Arg2" in script
 
 
 def test_windows_target_native_file_operations_and_workspace(tmp_path) -> None:
