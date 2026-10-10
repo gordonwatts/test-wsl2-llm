@@ -15,7 +15,7 @@ The support boundary is intentionally explicit:
 | Codex CLI (non-interactive `codex exec`) | Passwordless SSH to a Linux host | Supported; interactive access deferred |
 | Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
 
-| Codex CLI (non-interactive `codex exec`) | Native Linux/macOS (`--target local`) | Experimental |
+| Codex CLI (non-interactive `codex exec`) | Native Linux, macOS, or Windows (`--target local`) | Experimental |
 The package name and `test-wsl2-llm` command are stable. The target and agent
 rows above describe the current release boundary; they are not promises about
 the future target work tracked in the project.
@@ -173,8 +173,8 @@ This writes `results\hello.md` for people and `results\hello.yaml` for code.
 The default `target` is `wsl`, which keeps the Windows-to-WSL2 workflow above. On a
 native Linux or macOS host, select `--target local` (the existing `linux` name remains an alias; use native paths) to run the same isolated
 workspace, transfer, copy-back, cleanup, and retained-workspace lifecycle without
-invoking `wsl.exe` or `wslpath`. On Windows, `--target local` uses Git Bash to run
-the harness shell commands and keeps workspace file operations on the Windows host:
+invoking `wsl.exe` or `wslpath`. On Windows, `--target local` runs harness shell
+commands through PowerShell and performs workspace file operations on the Windows host:
 
 ```bash
 test-wsl2-llm run \
@@ -375,7 +375,7 @@ The top-level template fields are:
 | `copy_files`, `copy_back`, `max_copy_back_files` | Files copied into the WSL workspace, files/globs copied back, and the per-job copy-back limit. |
 | `validators` | Post-run `require_string`, `num_compare`, or `root_tree` checks. |
 | `environment` | `unset` and `path_remove` lists for filtering the inherited Windows environment. |
-| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), native `local` (Linux/macOS/Windows; Windows uses Git Bash), `linux`/`macos` aliases, or passwordless `ssh`; WSL distribution, target temporary-run parent, and result stem. |
+| `target`, `distro`, `wsl_parent`, `output` | `wsl` (default), native `local` (Linux/macOS/Windows; Windows uses PowerShell), `linux`/`macos` aliases, or passwordless `ssh`; WSL distribution, target temporary-run parent, and result stem. |
 | `sandbox`, `network`, `approval_policy`, `approvals_reviewer` | Codex execution and approval policies. |
 | `auth_source`, `pricing_file`, `progress_lines`, `timeout_seconds`, `cleanup`, `overwrite` | Authentication, pricing, progress, timeout, workspace lifetime, and overwrite settings. |
 
