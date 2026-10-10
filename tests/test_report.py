@@ -1,3 +1,4 @@
+import json
 import re
 from pathlib import Path
 
@@ -484,6 +485,116 @@ def test_activity_summary_reads_current_stdout_jsonl_events(tmp_path: Path) -> N
     assert "| 1m 2s | Command (exit 0): git status --short |" in markdown
     assert "No readable progress updates were recorded." not in markdown
     assert "- done" not in markdown
+
+
+def test_custom_tool_activity_and_full_log_tool_summary(tmp_path: Path) -> None:
+    result = sample_result()
+    call = {"type": "custom_tool_call", "name": "exec", "call_id": "call_1",
+            "input": "text(ALL_TOOLS.filter(x => /atlas/i.test(x.name)));"}
+    output = {"type": "custom_tool_call_output", "call_id": "call_1", "output": [
+        {"type": "input_text", "text": "Script completed"},
+        {"type": "input_text", "text": "[]\nNo space left on device"},
+        {"type": "image", "data": "not displayed"},
+    ]}
+    function = {"type": "function_call", "name": "mcp__atlas_af__search",
+                "arguments": '{"query":"EXOT-2012-28"}'}
+    result.logs.session_traces[0].content = "\n".join(
+        json.dumps({"type": "response_item", "payload": item})
+        for item in (call, output, call, function)
+    ) + '\nnot json\nnull\n[]\n'
+    result.logs.stdout_jsonl = "\n".join(json.dumps({"type": "item.completed", "item": item})
+        for item in (call, {"type": "mcp_tool_call", "server": "atlas-af", "tool": "search"},
+                     {"type": "web_search"}, {"type": "command_execution", "command": "pwd"})
+    ) + '\nnull\n[]\n'
+
+    summary = write_markdown(result, tmp_path / "summary.md").read_text(encoding="utf-8")
+    assert "Tool call: exec: text(ALL_TOOLS.filter" in summary
+    assert "Tool call: mcp__atlas_af__search:" in summary
+    assert "Tool output (call_1): Script completed [] No space left on device" in summary
+    assert "not displayed" not in summary
+    assert "## Tools called" not in summary
+
+    full = write_markdown(result, tmp_path / "full.md", include_details=True).read_text(
+        encoding="utf-8"
+    )
+    tools = full.split("## Tools called", 1)[1]
+    assert tools.count("- <code>exec</code>") == 1
+    assert "- <code>mcp__atlas_af__search</code>" in tools
+    assert "- <code>atlas-af/search</code>" in tools
+    assert "- <code>web_search</code>" in tools
+    assert "- <code>command_execution</code>" in tools
+    assert full.index("## Tools called") > full.index("<summary>Model activity</summary>")
+    _, saved = write_reports(result, str(tmp_path / "saved"))
+    logs = yaml.safe_load(saved.read_text(encoding="utf-8"))["logs"]
+    assert logs["session_traces"][0]["content"] == result.logs.session_traces[0].content
+    assert logs["stdout_jsonl"] == result.logs.stdout_jsonl
+
+
+def test_session_tool_activity_uses_run_relative_timestamps(tmp_path: Path) -> None:
+    result = sample_result()
+    result.run.started_at = "2026-01-01T05:30:00+05:30"
+    result.timing.phases[0].started_at = "2026-01-01T00:00:20Z"
+    result.logs.stdout_jsonl = ""
+    records = [
+        ("2026-01-01T00:01:02.400Z", "response_item", {
+            "type": "custom_tool_call", "name": "exec", "input": "text([])",
+        }),
+        ("2026-01-01T00:01:05+00:00", "response_item", {
+            "type": "custom_tool_call_output", "call_id": "call_1", "output": "[]",
+        }),
+        ("2026-01-01T05:31:10+05:30", "response_item", {
+            "type": "function_call", "name": "search", "arguments": "{}",
+        }),
+        ("2026-01-01T00:01:12Z", "response_item", {
+            "type": "function_call_output", "call_id": "call_2", "output": "found",
+        }),
+        ("2026-01-01T00:01:15Z", "event_msg", {
+            "type": "agent_message", "message": "Finished searching.",
+        }),
+    ]
+    result.logs.session_traces[0].content = "\n".join(
+        json.dumps({"timestamp": timestamp, "type": kind, "payload": payload})
+        for timestamp, kind, payload in records
+    )
+    markdown = write_markdown(result, tmp_path / "timed.md").read_text(encoding="utf-8")
+    assert "| 1m 2s | Tool call: exec: text([]) |" in markdown
+    assert "| 1m 5s | Tool output (call_1): [] |" in markdown
+    assert "| 1m 10s | Tool call: search: {} |" in markdown
+    assert "| 1m 12s | Tool output (call_2): found |" in markdown
+    assert "| 1m 15s | Finished searching. |" in markdown
+
+
+@pytest.mark.parametrize("timestamp", [
+    None, "invalid", 123, "2026-01-01T00:00:01", "2025-12-31T23:59:59Z",
+])
+def test_session_tool_activity_without_usable_timestamp(tmp_path: Path, timestamp: object) -> None:
+    result = sample_result()
+    result.logs.stdout_jsonl = ""
+    result.logs.session_traces[0].content = json.dumps({
+        "timestamp": timestamp, "type": "response_item", "payload": {
+            "type": "custom_tool_call", "name": "exec", "input": "text([])",
+        },
+    })
+    markdown = write_markdown(result, tmp_path / "untimed.md").read_text(encoding="utf-8")
+    assert "| -- | Tool call: exec: text([]) |" in markdown
+
+
+def test_full_log_reports_no_tools_and_escapes_tool_names(tmp_path: Path) -> None:
+    result = sample_result()
+    result.logs.stdout_jsonl = ""
+    result.logs.session_traces = []
+    full = write_markdown(result, tmp_path / "none.md", include_details=True).read_text(
+        encoding="utf-8"
+    )
+    assert "No tool calls were recorded." in full
+    result.logs.stdout_jsonl = json.dumps({"type": "item.completed", "item": {
+        "type": "custom_tool_call", "name": "<unsafe>`name", "input": "a | b",
+    }})
+    full = write_markdown(result, tmp_path / "escaped.md", include_details=True).read_text(
+        encoding="utf-8"
+    )
+    assert "- <code>&lt;unsafe&gt;`name</code>" in full
+    assert "a \\| b" in full
 
 
 def test_timeout_reports_are_unmistakable_in_markdown_and_yaml(tmp_path: Path) -> None:

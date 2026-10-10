@@ -546,7 +546,13 @@ only the report breaks those links. Viewer-specific styling, image previews, and
 details disclosure are not guaranteed across Markdown renderers.
 Workspace inventory, Codex stderr, and model activity (as an elapsed-time table) are included by default. `--details` also
 includes resolved configuration, raw stdout JSONL, trace timing, session traces, and conversation
-history when available.
+history when available. Model activity includes recorded custom/function tool calls and
+their returned text, including failures that do not appear in stdout. Session-trace
+timestamps are shown as elapsed time from the run start; missing, invalid, timezone-free,
+or pre-run timestamps display `--`. The full log ends
+with a **Tools called** list deduplicated across stdout and session traces. Script wrapper
+calls (such as `exec`) are listed by their recorded name; nested calls are listed only
+when separately recorded, so this list does not infer MCP use from script text.
 
 Connect to a retained run workspace for interactive exploration:
 
