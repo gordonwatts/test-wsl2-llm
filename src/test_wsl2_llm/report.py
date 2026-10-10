@@ -112,6 +112,26 @@ def render_markdown(
             ],
         )
     )
+    if result.mcp_server_checks:
+        lines.extend(
+            [
+                "",
+                "### MCP preflight",
+                "",
+                f"{result.run.agent.title()} CLI reported the selected servers and their "
+                "local status. This preflight does not make model or MCP tool calls.",
+                "",
+                "| Server | Detected | Enabled | Authentication | Check | Details |",
+                "| --- | --- | --- | --- | --- | --- |",
+            ]
+        )
+        for check in result.mcp_server_checks:
+            details = check.message or ""
+            lines.append(
+                f"| `{check.name}` | {check.detected} | "
+                f"{check.enabled if check.enabled is not None else 'unknown'} | "
+                f"{check.auth_status} | {check.status} | {details} |"
+            )
     lines.extend(
         _bullets(
             "Skill directories",
@@ -147,6 +167,7 @@ def render_markdown(
             f"| Total duration | {_duration(run.total_duration_seconds)} |",
             f"| {run.agent.title()} execution | {_duration(agent_execution_seconds)} |",
             f"| Status | {run.status} |",
+            f"| Failure category | {run.failure_category or '(none)'} |",
             f"| Exit code | {run.exit_code} |",
             f"| Timed out | {run.timed_out} |",
             f"| Execution target | {run.target} |",

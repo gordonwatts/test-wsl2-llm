@@ -40,6 +40,7 @@ from test_wsl2_llm.models import (
     EnvironmentPolicy,
     FinalResult,
     LogsResult,
+    McpServerCheck,
     ModelInformation,
     PhaseTiming,
     RunResult,
@@ -770,6 +771,15 @@ def _collect_evidence(
         error = _append_failure(error, "copy_back", collection_error)
         exit_code = exit_code or 1
 
+    if missing_copy_back:
+        missing = ", ".join(f"{pattern!r}" for pattern in missing_copy_back)
+        error = _append_failure(
+            error,
+            "copy_back",
+            FileNotFoundError(f"expected files were not found: {missing}"),
+        )
+        exit_code = exit_code or 1
+
     if codex_home:
         try:
             with state.phase("session_trace_collection"):
@@ -859,6 +869,7 @@ def run_test(
     exit_code = 1
     error: str | None = None
     timed_out = False
+    failure_category = "harness"
     retained = False
     files: list[WorkspaceFile] = []
     copied_back: list[CopiedBackFile] = []
@@ -868,6 +879,7 @@ def run_test(
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
     mcp_server_plugins: dict[str, str] = {}
+    mcp_server_checks: list[McpServerCheck] = []
     resolved_parent = config.wsl_parent
     resolved_auth: str | None = config.auth_source
     model_information = ModelInformation(
@@ -915,6 +927,16 @@ def run_test(
                 _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
+            if config.agent == "codex" and config.mcp_servers:
+                with state.phase("mcp_preflight"):
+                    mcp_server_checks = _check_mcp_servers(client, codex_home, config.mcp_servers)
+                    _raise_for_failed_mcp_checks(mcp_server_checks)
+            elif config.agent == "claude" and config.mcp_servers:
+                with state.phase("mcp_preflight"):
+                    mcp_server_checks = _check_claude_mcp_servers(
+                        client, codex_home, mcp_payload, config.mcp_servers
+                    )
+                    _raise_for_failed_mcp_checks(mcp_server_checks)
 
         with state.phase("plugin_installation"):
             plugin_setup = adapter.install_plugins(
@@ -964,6 +986,7 @@ def run_test(
                 job_id=job_id,
                 agent_name=adapter.name,
             )
+            failure_category = "agent"
             codex_seconds = time.perf_counter() - codex_started
             timed_out = _is_timeout(exit_code, stderr, adapter.name)
             if timed_out:
@@ -1045,11 +1068,13 @@ def run_test(
             agent_execution_seconds=codex_seconds,
             error=error,
             timed_out=timed_out,
+            failure_category=failure_category if error else None,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=configuration_snapshot(
             {**serialize_config(config), "mcp_server_plugins": mcp_server_plugins}
         ),
+        mcp_server_checks=mcp_server_checks,
         provenance=build_provenance(
             config,
             agent_version=codex_version,
@@ -1153,11 +1178,13 @@ def continue_test(
     marketplace_versions: dict[str, str] = {}
     plugin_versions: dict[str, str] = {}
     mcp_server_plugins: dict[str, str] = {}
+    mcp_server_checks: list[McpServerCheck] = []
     skill_directories: list[str] = list(previous.skills.directories)
     codex_seconds = 0.0
     exit_code = 1
     error: str | None = None
     timed_out = False
+    failure_category = "harness"
     files: list[WorkspaceFile] = []
     copied_back: list[CopiedBackFile] = []
     missing_copy_back: list[str] = []
@@ -1210,6 +1237,16 @@ def continue_test(
                 _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
+            if config.agent == "codex" and config.mcp_servers:
+                with state.phase("mcp_preflight"):
+                    mcp_server_checks = _check_mcp_servers(client, codex_home, config.mcp_servers)
+                    _raise_for_failed_mcp_checks(mcp_server_checks)
+            elif config.agent == "claude" and config.mcp_servers:
+                with state.phase("mcp_preflight"):
+                    mcp_server_checks = _check_claude_mcp_servers(
+                        client, codex_home, mcp_payload, config.mcp_servers
+                    )
+                    _raise_for_failed_mcp_checks(mcp_server_checks)
 
         with state.phase("plugin_installation"):
             prior_plugins = set(previous.skills.plugins)
@@ -1251,6 +1288,7 @@ def continue_test(
                 console=console,
                 agent_name=adapter.name,
             )
+            failure_category = "agent"
             codex_seconds = time.perf_counter() - codex_started
             timed_out = _is_timeout(exit_code, stderr, adapter.name)
             if timed_out:
@@ -1336,11 +1374,13 @@ def continue_test(
             agent_execution_seconds=codex_seconds,
             error=error,
             timed_out=timed_out,
+            failure_category=failure_category if error else None,
         ),
         timing=TimingResult(phases=state.phases, trace_events=trace_events),
         configuration=configuration_snapshot(
             {**continuation_config, "mcp_server_plugins": mcp_server_plugins}
         ),
+        mcp_server_checks=mcp_server_checks,
         provenance=build_provenance(
             config,
             agent_version=codex_version or previous.run.agent_version,
@@ -1942,6 +1982,216 @@ def _codex_config(config: TestConfig, plugin_sources: dict[str, str] | None = No
     if servers:
         content += "\n" + tomli_w.dumps({"mcp_servers": servers})
     return content
+
+
+def _check_mcp_servers(
+    client: ExecutionTarget, codex_home: str, names: list[str]
+) -> list[McpServerCheck]:
+    """Check selected servers via Codex's redacted MCP status output.
+
+    Only the selected server name, enabled flag, and auth status are retained.
+    The command output may include server configuration, so it is parsed in
+    memory and never added to logs or the result document.
+    """
+    try:
+        completed = client.login_bash(
+            'env CODEX_HOME="$1" codex mcp list --json', codex_home, check=False
+        )
+        if completed.returncode:
+            raise ValueError
+        listed = json.loads(client.text(completed))
+        if not isinstance(listed, list):
+            raise ValueError
+    except Exception:
+        return [
+            McpServerCheck(
+                name=name,
+                detected=False,
+                auth_status="unknown",
+                status="failed",
+                message="Codex could not enumerate MCP status.",
+            )
+            for name in names
+        ]
+
+    by_name = {
+        server.get("name"): server
+        for server in listed
+        if isinstance(server, dict) and isinstance(server.get("name"), str)
+    }
+    checks: list[McpServerCheck] = []
+    for name in names:
+        server = by_name.get(name)
+        if server is None:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=False,
+                    status="failed",
+                    message="Selected server is missing from the isolated Codex configuration.",
+                )
+            )
+            continue
+        enabled = server.get("enabled") if isinstance(server.get("enabled"), bool) else None
+        auth_status = server.get("auth_status")
+        if not isinstance(auth_status, str) or not auth_status:
+            auth_status = "unknown"
+        if enabled is False:
+            status, message = "failed", "Codex reports this MCP server is disabled."
+        elif auth_status == "not_logged_in":
+            status, message = "failed", "Codex reports this MCP server is not logged in."
+        elif enabled is None or auth_status == "unknown":
+            status, message = "unknown", "Codex could not determine the enabled or auth status."
+        else:
+            status, message = "passed", None
+        checks.append(
+            McpServerCheck(
+                name=name,
+                detected=True,
+                enabled=enabled,
+                auth_status=auth_status,
+                status=status,
+                message=message,
+            )
+        )
+    return checks
+
+
+def _check_claude_mcp_servers(
+    client: ExecutionTarget,
+    claude_home: str,
+    mcp_payload: dict[str, object] | None,
+    names: list[str],
+) -> list[McpServerCheck]:
+    """Check Claude Code's selected MCP servers without making model/tool calls."""
+    if not isinstance(mcp_payload, dict) or not isinstance(mcp_payload.get("mcpServers"), dict):
+        return [
+            McpServerCheck(
+                name=name,
+                detected=False,
+                status="failed",
+                message="Claude MCP configuration was not available for preflight.",
+            )
+            for name in names
+        ]
+
+    try:
+        # Claude's `mcp list` reads user-scope servers from ~/.claude.json.
+        # Point both HOME and CLAUDE_CONFIG_DIR at the isolated run home so
+        # it sees the same selected definitions and credentials as the run.
+        _write_wsl_file(
+            client,
+            f"{claude_home}/.claude.json",
+            json.dumps(mcp_payload, ensure_ascii=False, sort_keys=True),
+        )
+        completed = client.login_bash(
+            'env HOME="$1" CLAUDE_CONFIG_DIR="$1" claude mcp list',
+            claude_home,
+            check=False,
+        )
+        if completed.returncode:
+            raise ValueError
+        output = client.text(completed)
+    except Exception:
+        return [
+            McpServerCheck(
+                name=name,
+                detected=False,
+                auth_status="unknown",
+                status="failed",
+                message="Claude Code could not enumerate MCP status.",
+            )
+            for name in names
+        ]
+
+    checks: list[McpServerCheck] = []
+    for name in names:
+        line = next(
+            (item.strip() for item in output.splitlines() if item.strip().startswith(f"{name}:")),
+            None,
+        )
+        if line is None:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=False,
+                    status="failed",
+                    message="Selected server is missing from the isolated Claude configuration.",
+                )
+            )
+            continue
+
+        normalized = line.casefold()
+        if "needs authentication" in normalized:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=True,
+                    enabled=True,
+                    auth_status="not_authenticated",
+                    status="failed",
+                    message="Claude Code reports this MCP server needs authentication.",
+                )
+            )
+        elif "failed to connect" in normalized:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=True,
+                    enabled=True,
+                    status="failed",
+                    message="Claude Code reports this MCP server failed to connect.",
+                )
+            )
+        elif "pending approval" in normalized or "rejected" in normalized:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=True,
+                    enabled=False,
+                    status="failed",
+                    message="Claude Code reports this MCP server is not approved.",
+                )
+            )
+        elif "disabled" in normalized:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=True,
+                    enabled=False,
+                    status="failed",
+                    message="Claude Code reports this MCP server is disabled.",
+                )
+            )
+        elif "connected" in normalized:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=True,
+                    enabled=True,
+                    auth_status="authenticated",
+                    status="passed",
+                )
+            )
+        else:
+            checks.append(
+                McpServerCheck(
+                    name=name,
+                    detected=True,
+                    status="failed",
+                    message="Claude Code returned an unrecognized MCP status.",
+                )
+            )
+    return checks
+
+
+def _raise_for_failed_mcp_checks(checks: list[McpServerCheck]) -> None:
+    failed = [check for check in checks if check.status == "failed"]
+    if failed:
+        summary = ", ".join(
+            f"{check.name} ({check.message or check.auth_status})" for check in failed
+        )
+        raise RuntimeError(f"MCP harness preflight failed: {summary}")
 
 
 def _load_mcp_servers(
