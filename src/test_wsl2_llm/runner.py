@@ -662,14 +662,15 @@ class WindowsClient(LinuxClient):
     @staticmethod
     def _encoded_command(script: str, arguments: tuple[str, ...] = ()) -> list[str]:
         """Build a PowerShell command with values serialized outside its source."""
-        payload = base64.b64encode(
-            json.dumps(arguments, ensure_ascii=True).encode("utf-8")
-        ).decode("ascii")
-        prelude = (
-            "$ErrorActionPreference = 'Stop'\n"
-            "$values = @([Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{payload}')) | ConvertFrom-Json)\n"
-        )
+        prelude_lines = ["$ErrorActionPreference = 'Stop'"]
+        for index, argument in enumerate(arguments):
+            payload = base64.b64encode(argument.encode("utf-8")).decode("ascii")
+            prelude_lines.append(
+                f"$testWsl2Arg{index} = [Text.Encoding]::UTF8.GetString("
+                f"[Convert]::FromBase64String('{payload}'))"
+            )
+            script = script.replace(f"$values[{index}]", f"$testWsl2Arg{index}")
+        prelude = "\n".join(prelude_lines) + "\n"
         encoded = base64.b64encode((prelude + script).encode("utf-16-le")).decode("ascii")
         return [
             "powershell.exe",
