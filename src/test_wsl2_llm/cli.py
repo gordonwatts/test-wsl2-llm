@@ -409,6 +409,90 @@ def template_init(
         raise typer.Exit(2) from exc
 
 
+@template_app.command("prompt")
+def template_prompt(
+    config: Annotated[Path, typer.Argument(help="Input template YAML configuration file.")],
+    prompt_text: Annotated[
+        str, typer.Argument(help="Prompt text to send to the configured agent.")
+    ],
+    agent: Annotated[
+        str | None, typer.Option(help="Agent adapter; defaults to the template value.")
+    ] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(help="Codex MODEL[:EFFORT]; defaults to the template model selection."),
+    ] = None,
+    output: Annotated[
+        Path | None,
+        typer.Option(
+            help="Result stem; defaults to the template output with prompt/model suffixes."
+        ),
+    ] = None,
+    force: Annotated[
+        bool, typer.Option("--force", help="Overwrite an existing Markdown/YAML result pair.")
+    ] = False,
+    verbose: Annotated[
+        int,
+        typer.Option(
+            "-v",
+            "--verbose",
+            count=True,
+            help=(
+                "-v shows commands and removed PATH entries; -vv streams all output and "
+                "reports when no PATH entries matched."
+            ),
+        ),
+    ] = 0,
+) -> None:
+    """Run one prompt using the shared run settings from a template YAML."""
+    console = Console(stderr=True)
+    _configure_logging(verbose)
+    try:
+        ensure_template_schema(config)
+        batch, shared, _ = load_template_file(config)
+        shared = merge_config_values(load_default_config(), shared)
+        selector = model
+        if selector is None:
+            selector = batch.models[0] if batch.models else shared.get("model")
+        cli_values = {
+            "prompt": prompt_text,
+            "agent": agent,
+            "model": selector,
+            "output": str(output) if output else None,
+            "overwrite": force,
+        }
+        resolved = build_config(shared, cli_values)
+        resolved = resolved.model_copy(
+            update={
+                "output": template_output(resolved.output, "prompt", 1, 1, resolved.model_selector)
+            }
+        )
+        markdown_path, yaml_path = output_paths(resolved.output)
+        if not resolved.overwrite and (markdown_path.exists() or yaml_path.exists()):
+            raise FileExistsError(f"result file already exists: {markdown_path} or {yaml_path}")
+
+        from test_wsl2_llm.report import write_reports
+        from test_wsl2_llm.runner import run_test
+
+        result = run_test(
+            resolved,
+            verbosity=verbose,
+            console=console,
+            invocation=sys.argv,
+            report_callback=lambda collected: write_reports(
+                collected, resolved.output, resolved.overwrite
+            ),
+        )
+        markdown_path, yaml_path = write_reports(result, resolved.output, True)
+        console.print(f"Markdown result: {markdown_path}")
+        console.print(f"YAML result: {yaml_path}")
+        if result.run.exit_code:
+            raise typer.Exit(result.run.exit_code)
+    except (OSError, ValueError, ValidationError, yaml.YAMLError) as exc:
+        console.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2) from exc
+
+
 @template_app.command("run")
 def template_run(
     config: Annotated[Path, typer.Argument(help="Input template YAML configuration file.")],
@@ -1184,7 +1268,8 @@ def continue_work(
         # not an input accepted by ``TestConfig``. Keep it out of the inherited
         # settings so a continuation can itself be continued.
         previous_values = {
-            key: value for key, value in previous.configuration.items()
+            key: value
+            for key, value in previous.configuration.items()
             if key not in {"continuation_of", "schema_version", "mcp_server_plugins"}
         }
         defaults = merge_config_values(load_default_config(), previous_values)
