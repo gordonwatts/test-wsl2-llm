@@ -4,6 +4,7 @@ from pathlib import Path
 from test_wsl2_llm.runner import (
     LinuxClient,
     WslClient,
+    _find_git_bash,
     _copy_from_target,
     _copy_to_target,
     create_execution_target,
@@ -94,6 +95,46 @@ def test_linux_target_uses_native_commands_and_preserves_arguments() -> None:
         "space $x; café",
     ]
     assert isinstance(create_execution_target(execution_target="linux"), LinuxClient)
+
+
+def test_git_bash_is_selected_when_wsl_bash_is_first_on_path(monkeypatch, tmp_path) -> None:
+    git_root = tmp_path / "Git"
+    git_executable = git_root / "cmd" / "git.exe"
+    git_bash = git_root / "bin" / "bash.exe"
+    wsl_bash = tmp_path / "Windows" / "System32" / "bash.exe"
+    for executable in (git_executable, git_bash, wsl_bash):
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.touch()
+
+    def fake_which(command: str, path: str | None = None) -> str | None:
+        del path
+        return str(git_executable) if command == "git" else str(wsl_bash)
+
+    probed: list[str] = []
+
+    def fake_run(command: list[str], **_kwargs):
+        probed.append(command[0])
+        output = b"test-wsl2-llm-argument-check" if command[0] == str(git_bash) else b""
+        return subprocess.CompletedProcess(command, 0, output, b"")
+
+    monkeypatch.setattr("test_wsl2_llm.runner.shutil.which", fake_which)
+    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.run", fake_run)
+
+    assert _find_git_bash({"PATH": f"{wsl_bash.parent};{git_executable.parent}"}) == str(git_bash)
+    assert probed == [str(git_bash)]
+
+
+def test_wsl_bash_is_rejected_when_it_does_not_preserve_arguments(monkeypatch, tmp_path) -> None:
+    wsl_bash = tmp_path / "Windows" / "System32" / "bash.exe"
+    wsl_bash.parent.mkdir(parents=True)
+    wsl_bash.touch()
+    monkeypatch.setattr("test_wsl2_llm.runner.shutil.which", lambda _name, path=None: str(wsl_bash))
+    monkeypatch.setattr(
+        "test_wsl2_llm.runner.subprocess.run",
+        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, b"", b""),
+    )
+
+    assert _find_git_bash({"PATH": str(wsl_bash.parent)}) is None
 
 
 def test_linux_target_workspace_and_transfers_preserve_unicode_and_symlinks(tmp_path) -> None:
