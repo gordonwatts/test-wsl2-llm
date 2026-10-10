@@ -136,7 +136,7 @@ def run(
     target: Annotated[
         Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+            "--target", help="Execution target: wsl (default), local host, or passwordless ssh."
         ),
     ] = None,
     distro: Annotated[
@@ -551,7 +551,7 @@ def template_run(
     target: Annotated[
         Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+            "--target", help="Execution target: wsl (default), local host, or passwordless ssh."
         ),
     ] = None,
     distro: Annotated[
@@ -1182,7 +1182,7 @@ def continue_work(
     target: Annotated[
         Literal["wsl", "linux", "macos", "local", "ssh"] | None,
         typer.Option(
-            "--target", help="Execution target: wsl (default), native linux, or native macOS/local."
+            "--target", help="Execution target: wsl (default), local host, or passwordless ssh."
         ),
     ] = None,
     distro: Annotated[
