@@ -199,9 +199,8 @@ def render_markdown(
         costs = {(model.model, model.attribution): model for model in model_information.models}
         lines.extend(
             [
-                "| Model | Attribution | Uncached input | Cache creation | Cache read | Total input | "
-                "Output | Reasoning output | "
-                "USD total |",
+                "| Model | Attribution | Uncached input | Cache creation | Cache read | "
+                "Total input | Output | Reasoning output | USD total |",
                 "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
