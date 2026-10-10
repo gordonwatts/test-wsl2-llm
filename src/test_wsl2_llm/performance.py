@@ -34,6 +34,11 @@ def result_paths(source: Path) -> list[Path]:
 
 def _record(result: TestResult, path: Path) -> dict[str, object]:
     cell = result.template_cell
+    template_fields = (
+        {match.group(1) for match in re.finditer(r"{{\s*(\w+)\s*}}", cell.prompt_template)}
+        if cell and cell.prompt_template
+        else set()
+    )
     title_id = re.match(r"^#?\s*Question:\s*(\S+)", result.title, re.IGNORECASE)
     # Standalone output names may end with a three-digit trial index.
     stem_id = re.sub(r"-\d{3}$", "", path.stem)
@@ -48,6 +53,16 @@ def _record(result: TestResult, path: Path) -> dict[str, object]:
         "question": question,
         "question_label": f"{directory} / {question}",
         "prompt": result.prompt,
+        "prompt_template": cell.prompt_template if cell else None,
+        "question_values": (
+            {
+                key: cell.question_values[key]
+                for key in template_fields
+                if key in cell.question_values
+            }
+            if cell
+            else {}
+        ),
         "model": model,
         "agent": result.run.agent,
         "target": result.run.target,
