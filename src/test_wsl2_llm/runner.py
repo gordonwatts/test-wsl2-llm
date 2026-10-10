@@ -1134,6 +1134,7 @@ def run_test(
     target: ExecutionTarget | None = None,
     cancellation: CancellationCoordinator | None = None,
     job_id: str = "single",
+    before_codex_launch: Callable[[], None] | None = None,
 ) -> TestResult:
     """Execute one test and always return a reportable result after validation."""
     validate_configuration(config.validators)
@@ -1198,7 +1199,11 @@ def run_test(
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
-            codex_version = adapter.preflight(client).version
+            codex_version = (
+                adapter.preflight(client, before_launch=before_codex_launch).version
+                if config.agent == "codex" and before_codex_launch is not None
+                else adapter.preflight(client).version
+            )
             resolved_parent = _resolve_wsl_path(client, config.wsl_parent, require_directory=True)
             if adapter.capabilities.requires_auth:
                 resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
@@ -1230,7 +1235,10 @@ def run_test(
                 _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
             if config.agent == "codex" and config.mcp_servers:
                 with state.phase("mcp_preflight"):
-                    mcp_server_checks = _check_mcp_servers(client, codex_home, config.mcp_servers)
+                    mcp_server_checks = _check_mcp_servers(
+                        client, codex_home, config.mcp_servers,
+                        before_launch=before_codex_launch,
+                    )
                     _raise_for_failed_mcp_checks(mcp_server_checks)
             elif config.agent == "claude" and config.mcp_servers:
                 with state.phase("mcp_preflight"):
@@ -1240,8 +1248,15 @@ def run_test(
                     _raise_for_failed_mcp_checks(mcp_server_checks)
 
         with state.phase("plugin_installation"):
-            plugin_setup = adapter.install_plugins(
-                client, codex_home, runtime_marketplaces, config.plugins
+            plugin_setup = (
+                adapter.install_plugins(
+                    client, codex_home, runtime_marketplaces, config.plugins,
+                    before_launch=before_codex_launch,
+                )
+                if config.agent == "codex" and before_codex_launch is not None
+                else adapter.install_plugins(
+                    client, codex_home, runtime_marketplaces, config.plugins
+                )
             )
             installed_plugin_roots = list(plugin_setup.installed_roots)
             plugin_versions.update(plugin_setup.plugin_versions)
@@ -1292,6 +1307,7 @@ def run_test(
                 cancellation=cancellation,
                 job_id=job_id,
                 agent_name=adapter.name,
+                before_launch=before_codex_launch if config.agent == "codex" else None,
             )
             failure_category = "agent"
             codex_seconds = time.perf_counter() - codex_started
@@ -2304,7 +2320,8 @@ def _codex_config(config: TestConfig, plugin_sources: dict[str, str] | None = No
 
 
 def _check_mcp_servers(
-    client: ExecutionTarget, codex_home: str, names: list[str]
+    client: ExecutionTarget, codex_home: str, names: list[str],
+    *, before_launch: Callable[[], None] | None = None,
 ) -> list[McpServerCheck]:
     """Check selected servers via Codex's redacted MCP status output.
 
@@ -2313,6 +2330,8 @@ def _check_mcp_servers(
     memory and never added to logs or the result document.
     """
     try:
+        if before_launch is not None:
+            before_launch()
         completed = client.login_bash(
             'env CODEX_HOME="$1" codex mcp list --json', codex_home, check=False
         )
@@ -2722,7 +2741,10 @@ def _stream_codex(
     cancellation: CancellationCoordinator | None = None,
     job_id: str = "single",
     agent_name: str = "codex",
+    before_launch: Callable[[], None] | None = None,
 ) -> tuple[int, str, str, list[TraceEvent], list[dict[str, Any]]]:
+    if before_launch is not None:
+        before_launch()
     if target is not None:
         process = target.start_process(
             command,

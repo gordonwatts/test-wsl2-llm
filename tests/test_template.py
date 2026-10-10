@@ -670,6 +670,7 @@ def test_template_run_cli_overrides_and_global_threads(monkeypatch, tmp_path: Pa
 
     def fake_run(config, **_kwargs):
         nonlocal active, maximum
+        _kwargs["before_codex_launch"]()
         with lock:
             active += 1
             maximum = max(maximum, active)

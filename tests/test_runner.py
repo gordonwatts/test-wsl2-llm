@@ -202,8 +202,11 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
             return 0
 
     captured: dict[str, object] = {}
+    launches: list[str] = []
 
     def fake_popen(*_args, **kwargs):
+        assert launches == ["gate"]
+        launches.append("process")
         captured["environment"] = kwargs["env"]
         return FakeProcess()
 
@@ -219,6 +222,7 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
         console=Console(file=rendered),
         live_progress=False,
         log_callback=logs.append,
+        before_launch=lambda: launches.append("gate"),
     )
 
     assert exit_code == 0
@@ -228,6 +232,7 @@ def test_non_live_codex_progress_prints_to_shared_console(monkeypatch) -> None:
     assert any("plain stderr" in line for line in logs)
     assert rendered.getvalue() == ""
     assert captured["environment"] == {"Path": r"C:\Clean"}
+    assert launches == ["gate", "process"]
 
 
 def test_codex_keyboard_interrupt_stops_process_and_keeps_partial_logs(monkeypatch) -> None:

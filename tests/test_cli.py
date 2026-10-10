@@ -145,6 +145,7 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
 
     def fake_run(config, **_kwargs):
         nonlocal active, maximum_active
+        _kwargs["before_codex_launch"]()
         with lock:
             active += 1
             maximum_active = max(maximum_active, active)
@@ -187,7 +188,7 @@ def test_threads_run_repetitions_concurrently(monkeypatch, tmp_path: Path) -> No
     assert sorted(calls) == sorted(str(tmp_path / f"out-{index:03d}") for index in range(1, 5))
 
 
-def test_trial_start_gate_spaces_starts_and_allows_idle_time(monkeypatch) -> None:
+def test_codex_launch_gate_spaces_dispatches_and_allows_idle_time(monkeypatch) -> None:
     now = [0.0]
     sleeps: list[float] = []
 
@@ -197,29 +198,30 @@ def test_trial_start_gate_spaces_starts_and_allows_idle_time(monkeypatch) -> Non
 
     monkeypatch.setattr(cli_module.time, "monotonic", lambda: now[0])
     monkeypatch.setattr(cli_module.time, "sleep", sleep)
-    gate = cli_module._TrialStartGate()
+    gate = cli_module._CodexLaunchGate()
     coordinator = CancellationCoordinator()
-    assert gate.claim(coordinator, "question-one")
+    gate.wait(coordinator)
     assert sleeps == []
-    assert gate.claim(coordinator, "question-two")
+    gate.wait(coordinator)
     assert now[0] == pytest.approx(1.0)
-    assert gate.claim(coordinator, "question-one-repeat-two")
+    gate.wait(coordinator)
     assert now[0] == pytest.approx(2.0)
     now[0] = 10.0
     previous_sleeps = len(sleeps)
-    assert gate.claim(coordinator, "later-question")
+    gate.wait(coordinator)
     assert len(sleeps) == previous_sleeps
 
 
-def test_trial_start_gate_does_not_claim_waiting_job_after_cancellation(monkeypatch) -> None:
+def test_codex_launch_gate_cancels_waiting_dispatch(monkeypatch) -> None:
     coordinator = CancellationCoordinator()
     monkeypatch.setattr(cli_module.time, "monotonic", lambda: 0.0)
     monkeypatch.setattr(cli_module.time, "sleep", lambda _: coordinator.cancel())
-    gate = cli_module._TrialStartGate()
-    assert gate.claim(coordinator, "first")
-    assert not gate.claim(coordinator, "waiting")
-    assert coordinator.started_jobs() == {"first"}
-    assert not gate.claim(coordinator, "queued")
+    gate = cli_module._CodexLaunchGate()
+    gate.wait(coordinator)
+    with pytest.raises(KeyboardInterrupt):
+        gate.wait(coordinator)
+    with pytest.raises(KeyboardInterrupt):
+        gate.wait(coordinator)
 
 
 def test_progress_is_transient_and_only_used_for_repeats(monkeypatch, tmp_path: Path) -> None:

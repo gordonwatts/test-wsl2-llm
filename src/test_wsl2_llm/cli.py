@@ -294,13 +294,13 @@ def run(
         from test_wsl2_llm.runner import run_test
 
         coordinator = CancellationCoordinator()
-        start_gate = _TrialStartGate()
+        launch_gate = _CodexLaunchGate()
 
         def run_one(
             index: int, run_output: str, repeat_display: _RepeatDisplay | None
         ) -> tuple[int, Path | None, Path | None, int, str | None]:
             job_id = f"repeat-{index}"
-            if not start_gate.claim(coordinator, job_id):
+            if not coordinator.claim(job_id):
                 return index, None, None, 130, "not started: cancellation requested"
             run_config = resolved.model_copy(update={"output": run_output})
             result = run_test(
@@ -314,6 +314,7 @@ def run(
                     collected, run_output, resolved.overwrite
                 ),
                 cancellation=coordinator,
+                before_codex_launch=lambda: launch_gate.wait(coordinator),
                 job_id=job_id,
             )
             markdown_path, yaml_path = write_reports(result, run_output, True)
@@ -870,7 +871,7 @@ def template_run(
         from test_wsl2_llm.runner import run_test
 
         coordinator = CancellationCoordinator()
-        start_gate = _TrialStartGate()
+        launch_gate = _CodexLaunchGate()
 
         def run_one(
             question_index: int,
@@ -881,7 +882,7 @@ def template_run(
             repeat_display: _RepeatDisplay | None,
         ) -> tuple[int, str, int, Path | None, Path | None, int, str | None]:
             job_id = f"template-{identifier}-{repetition}"
-            if not start_gate.claim(coordinator, job_id):
+            if not coordinator.claim(job_id):
                 return (
                     question_index,
                     identifier,
@@ -911,6 +912,7 @@ def template_run(
                 invocation=sys.argv,
                 report_callback=persist,
                 cancellation=coordinator,
+                before_codex_launch=lambda: launch_gate.wait(coordinator),
                 job_id=job_id,
             )
             result.template_cell = template_cell_metadata(
@@ -1500,28 +1502,28 @@ def _repeat_output(output: str, index: int, repeat: int) -> str:
     return str(path.with_name(f"{path.name}-{index:0{width}d}"))
 
 
-class _TrialStartGate:
-    """Space actual trial starts across all workers in one CLI batch."""
+class _CodexLaunchGate:
+    """Space Codex command dispatches across all workers in one CLI batch."""
 
     def __init__(self) -> None:
         self._lock = Lock()
-        self._last_started: float | None = None
+        self._last_dispatched: float | None = None
 
-    def claim(self, coordinator: CancellationCoordinator, job_id: str) -> bool:
+    def wait(self, coordinator: CancellationCoordinator) -> None:
         with self._lock:
             while not coordinator.cancelled:
                 now = time.monotonic()
                 remaining = (
-                    self._last_started + 1.0 - now if self._last_started is not None else 0.0
+                    self._last_dispatched + 1.0 - now if self._last_dispatched is not None else 0.0
                 )
                 if remaining <= 0:
-                    if not coordinator.claim(job_id):
-                        return False
-                    self._last_started = time.monotonic()
-                    return True
-                # Keep Ctrl-C responsive while a worker waits for its start slot.
+                    if coordinator.cancelled:
+                        raise KeyboardInterrupt
+                    self._last_dispatched = time.monotonic()
+                    return
+                # Keep Ctrl-C responsive while a worker waits to launch Codex.
                 time.sleep(min(remaining, 0.05))
-            return False
+            raise KeyboardInterrupt
 
 
 class _RepeatDisplay:
