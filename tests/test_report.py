@@ -161,7 +161,10 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         "Output | Reasoning output | USD total |" in token_section
     )
     assert "Codex reports usage on `turn.completed` events" in token_section
-    assert "`input_tokens` is total input across uncached tokens, cache reads, and cache " in token_section
+    assert (
+        "`input_tokens` is total input across uncached tokens, "
+        "cache reads, and cache " in token_section
+    )
     assert "cache-read rate for cache hits" in token_section
     assert "uncached-input rate for uncached input" in token_section
     assert "Input rate / 1M" not in token_section
