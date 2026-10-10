@@ -470,8 +470,8 @@ question. Questions without a `distro` field inherit the shared value (or the WS
 default when neither is set).
 
 If a requested copy-back path or glob has no matches, collection continues for the other
-patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
-Markdown report's Copied-back files section.
+patterns, but the run is marked as failed. Missing patterns are listed in the YAML
+`missing_copy_back` field and in the Markdown report's Copied-back files section.
 
 At most 100 copied-back files are collected per run by default, preventing broad globs
 such as `plot_*.png` from creating thousands of artifacts. Use `--max-copy-back N` (or
@@ -789,7 +789,9 @@ work from the chosen WSL distro; referenced environment variables are not copied
 Selected MCP OAuth entries are copied from the WSL user's `.credentials.json` into
 the isolated Codex home for each run, continuation, and `connect` session, then
 removed from the isolated home when the command exits. No local Codex configuration
-is modified.
+is modified. Claude Code runs `claude mcp list` against the selected servers staged
+in its isolated configuration directory; the report records the CLI's connection
+and authentication status without saving the CLI output or invoking MCP tools.
 
 To check discovery, run with `--prompt "/mcp" --mcp my-server` and inspect the
 response, or connect to a retained workspace and use `/mcp` in the Codex TUI.
