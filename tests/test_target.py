@@ -1,3 +1,4 @@
+import base64
 import subprocess
 from pathlib import Path
 
@@ -6,7 +7,7 @@ from test_wsl2_llm.runner import (
     WslClient,
     _copy_from_target,
     _copy_to_target,
-    _find_git_bash,
+    WindowsClient,
     create_execution_target,
 )
 
@@ -97,48 +98,50 @@ def test_linux_target_uses_native_commands_and_preserves_arguments() -> None:
     assert isinstance(create_execution_target(execution_target="linux"), LinuxClient)
 
 
-def test_git_bash_is_selected_when_wsl_bash_is_first_on_path(monkeypatch, tmp_path) -> None:
-    git_root = tmp_path / "Git"
-    git_executable = git_root / "cmd" / "git.exe"
-    git_bash = git_root / "bin" / "bash.exe"
-    wsl_bash = tmp_path / "Windows" / "System32" / "bash.exe"
-    for executable in (git_executable, git_bash, wsl_bash):
-        executable.parent.mkdir(parents=True, exist_ok=True)
-        executable.touch()
-
-    def fake_which(command: str, path: str | None = None) -> str | None:
-        del path
-        return str(git_executable) if command == "git" else str(wsl_bash)
-
-    probed: list[str] = []
-
-    def fake_run(command: list[str], **_kwargs):
-        probed.append(command[0])
-        output = b"test-wsl2-llm-argument-check" if command[0] == str(git_bash) else b""
-        return subprocess.CompletedProcess(command, 0, output, b"")
-
-    monkeypatch.setattr("test_wsl2_llm.runner.shutil.which", fake_which)
-    monkeypatch.setattr("test_wsl2_llm.runner.subprocess.run", fake_run)
-
-    assert _find_git_bash({"PATH": f"{wsl_bash.parent};{git_executable.parent}"}) == str(git_bash)
-    assert probed == [str(git_bash)]
-
-
-def test_wsl_bash_is_rejected_when_it_does_not_preserve_arguments(monkeypatch, tmp_path) -> None:
-    wsl_bash = tmp_path / "Windows" / "System32" / "bash.exe"
-    wsl_bash.parent.mkdir(parents=True)
-    wsl_bash.touch()
-    def fake_which(name: str, path: str | None = None) -> str | None:
-        del path
-        return str(wsl_bash) if name == "bash" else None
-
-    monkeypatch.setattr("test_wsl2_llm.runner.shutil.which", fake_which)
-    monkeypatch.setattr(
-        "test_wsl2_llm.runner.subprocess.run",
-        lambda command, **_kwargs: subprocess.CompletedProcess(command, 0, b"", b""),
+def test_windows_local_target_uses_powershell_for_agent_commands() -> None:
+    client = WindowsClient(source_environment={"Path": r"C:\\tools"})
+    command = client.shell_command(
+        'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
+        '--model "$2" --config "$3" --cd "$4" -',
+        r"C:\\run with spaces\\codex-home",
+        "gpt-6-luna",
+        'model_reasoning_effort="high"',
+        r"C:\\run with spaces\\workspace",
+        interactive_login=True,
     )
 
-    assert _find_git_bash({"PATH": str(wsl_bash.parent)}) is None
+    assert command[0] == "powershell.exe"
+    assert "-EncodedCommand" in command
+    script = base64.b64decode(command[-1]).decode("utf-16-le")
+    assert "codex exec --json --skip-git-repo-check" in script
+    assert "$env:CODEX_HOME = $values[0]" in script
+    assert "--cd $values[3]" in script
+    assert "bash" not in script.casefold()
+
+
+def test_windows_local_target_translates_git_clone_to_powershell() -> None:
+    client = WindowsClient(source_environment={"Path": r"C:\\tools"})
+    command = client.login_bash(
+        'git clone --depth 1 --branch "$2" -- "$1" "$3"',
+        "https://example.test/marketplace.git",
+        "main",
+        r"C:\\run with spaces\\marketplace",
+    )
+
+    script = base64.b64decode(command[command.index("-EncodedCommand") + 1]).decode("utf-16-le")
+    assert "& git clone --depth 1 --branch $values[1] -- $values[0] $values[2]" in script
+
+
+def test_windows_target_native_file_operations_and_workspace(tmp_path) -> None:
+    client = WindowsClient(source_environment={"Path": ""})
+    run_root = client.create_workspace(str(tmp_path / "parent"))
+    workspace = Path(run_root) / "workspace"
+
+    client.make_directory(str(workspace / ".harness" / "inputs" / "marketplaces"))
+    assert (workspace / ".harness" / "inputs" / "marketplaces").is_dir()
+
+    client.cleanup_workspace(run_root)
+    assert not Path(run_root).exists()
 
 
 def test_linux_target_workspace_and_transfers_preserve_unicode_and_symlinks(tmp_path) -> None:
