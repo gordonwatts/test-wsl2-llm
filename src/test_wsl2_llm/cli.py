@@ -1446,7 +1446,8 @@ mode="$4"
 credential_copy_script="$5"
 mcp_servers="$6"
 auth_source="${auth_source/#\\~/$HOME}"
-mkdir -p -- "$home"
+mkdir -p -- "$home" "${home%/*}/tmp"
+export TMPDIR="${home%/*}/tmp"
 if [ ! -f "$auth_source" ]; then
   printf 'Codex auth file not found: %s\\n' "$auth_source" >&2
   exit 2
@@ -1458,9 +1459,10 @@ if [ -n "$mcp_servers" ]; then
   python3 -c "$credential_copy_script" "$home" "$mcp_servers"
 fi
 if [ "$mode" = resume ]; then
-  env CODEX_HOME="$home" codex resume --last --cd "$workspace"
+  env CODEX_HOME="$home" codex resume --last --cd "$workspace" \\
+    -c sandbox_workspace_write.exclude_slash_tmp=true
 else
-  env CODEX_HOME="$home" codex --cd "$workspace"
+  env CODEX_HOME="$home" codex --cd "$workspace" -c sandbox_workspace_write.exclude_slash_tmp=true
 fi
 """.strip()
     return client.command(

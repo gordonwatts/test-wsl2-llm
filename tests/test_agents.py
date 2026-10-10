@@ -109,6 +109,33 @@ class CommandTarget:
         return arguments
 
 
+def test_codex_command_uses_run_owned_temp_directory(tmp_path: Path) -> None:
+    """Execute the generated launcher, including paths requiring shell quoting."""
+    import os
+    import subprocess
+
+    if os.name == "nt":
+        pytest.skip("Generated POSIX launcher requires bash")
+    executable = tmp_path / "bin" / "codex"
+    executable.parent.mkdir()
+    executable.write_text('#!/bin/sh\ntest -d "$TMPDIR" && printf "%s" "$TMPDIR"\n')
+    executable.chmod(0o700)
+    home = tmp_path / "run home; literal" / "codex-home"
+    workspace = tmp_path / "workspace; literal"
+    # Avoid login startup files replacing PATH; execute the adapter's shell body.
+    target = CommandTarget()
+    captured = CodexAgentAdapter().command(
+        target, home=str(home), model="model", reasoning_effort="medium",
+        workspace=str(workspace),
+    )
+    completed = subprocess.run(
+        ["bash", "-c", captured[0], "launcher", *captured[1:]],
+        env={**os.environ, "PATH": f"{executable.parent}:{os.environ['PATH']}"},
+        capture_output=True, text=True, check=True,
+    )
+    assert completed.stdout == str(home.parent / "tmp")
+
+
 def test_fake_agent_command_is_deterministic() -> None:
     command = get_agent_adapter("fake").command(
         CommandTarget(), home="/home", model="model", reasoning_effort="medium", workspace="/work"

@@ -165,7 +165,9 @@ class CodexAgentAdapter:
     ) -> list[str]:
         return target.command(
             target.shell_command(
-                'exec env CODEX_HOME="$1" codex exec --json --skip-git-repo-check '
+                'tmp_dir="${1%/*}/tmp"; mkdir -p -- "$tmp_dir" && '
+                'exec env TMPDIR="$tmp_dir" CODEX_HOME="$1" '
+                'codex exec --json --skip-git-repo-check '
                 '--model "$2" --config "$3" --cd "$4" -',
                 home,
                 model,

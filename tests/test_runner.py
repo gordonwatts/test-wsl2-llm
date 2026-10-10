@@ -420,6 +420,7 @@ def test_codex_config_enables_auto_review_network_and_workspace_write(tmp_path) 
     assert 'sandbox_mode = "workspace-write"' in text
     assert 'model_reasoning_effort = "medium"' in text
     assert "network_access = true" in text
+    assert "exclude_slash_tmp = true" in text
     assert config.timeout_seconds == 1800
 
 

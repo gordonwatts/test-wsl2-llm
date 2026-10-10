@@ -421,6 +421,8 @@ def test_connect_command_targets_retained_workspace_and_resume() -> None:
     assert "wsl.exe" in command[0]
     script = command[-1]
     assert "codex resume --last --cd" in script
+    assert 'export TMPDIR="\\${home%/*}/tmp"' in script
+    assert "sandbox_workspace_write.exclude_slash_tmp=true" in script
     assert "workspace" in script and "\\$workspace" in script
     assert "\\$home/.credentials.json" in script
     assert "\\$credential_copy_script" in script

@@ -2309,6 +2309,9 @@ def _codex_config(config: TestConfig, plugin_sources: dict[str, str] | None = No
             "",
             "[sandbox_workspace_write]",
             f"network_access = {str(config.network).lower()}",
+            # Linux mount bookkeeping must not depend on ambient /tmp.
+            # The launcher supplies a per-run TMPDIR instead.
+            "exclude_slash_tmp = true",
             "",
         ]
     )

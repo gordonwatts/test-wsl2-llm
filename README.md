@@ -739,6 +739,19 @@ Cleanup failures are included in the report and leave the workspace marked retai
 
 If report writing fails, the workspace is preserved for recovery. Reports are then
 updated after cleanup to record whether removal succeeded.
+
+On POSIX targets, Codex launches use `<run-root>/.harness/tmp` as `TMPDIR`
+and exclude ambient `/tmp` from the sandbox's writable roots. This avoids
+Linux bubblewrap mount setup failures when shared `/tmp` runs out of inodes,
+even if `df -h /tmp` still shows free space; check `df -i /tmp` as well.
+The scratch directory is beside the protected Codex home, outside the workspace
+inventory and copy-back globs, and follows the same retention/cleanup lifecycle
+as the run root. Fresh runs, continuations, and interactive Codex connections
+use this location. Native Windows continues to use its existing launcher.
+Programs that hard-code `/tmp` should instead honor `TMPDIR` for writable
+scratch files. This does not repair an exhausted filesystem; choose a run
+parent on a filesystem with available space and inodes.
+
 ## Claude plugins and MCP servers
 
 Claude runs use Claude-native configuration, not Codex TOML. Marketplace sources
