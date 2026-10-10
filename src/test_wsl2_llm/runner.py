@@ -184,9 +184,15 @@ class WslClient:
         source_environment: Mapping[str, str] | None = None,
     ) -> None:
         self.distro = distro
-        self.environment = sanitized_windows_environment(
-            environment_policy or EnvironmentPolicy(), source_environment
-        )
+        # WSL imports Windows environment variables; a Windows HOME overrides
+        # the Linux account home and can turn ~/.codex paths into /mnt/c/... paths.
+        self.environment = {
+            name: value
+            for name, value in sanitized_windows_environment(
+                environment_policy or EnvironmentPolicy(), source_environment
+            ).items()
+            if name.casefold() != "home"
+        }
 
     def command(self, arguments: list[str]) -> list[str]:
         command = ["wsl.exe"]
