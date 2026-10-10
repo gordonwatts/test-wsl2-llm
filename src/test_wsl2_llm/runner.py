@@ -643,49 +643,10 @@ class LinuxClient:
         return traces, events
 
 
-def _find_git_bash(environment: Mapping[str, str]) -> str | None:
-    """Find a Git for Windows Bash that preserves subprocess arguments."""
-    path_value = next(
-        (value for key, value in environment.items() if key.casefold() == "path"), None
-    )
-    candidates: list[Path] = []
-    git = shutil.which("git", path=path_value)
-    if git:
-        git_root = Path(git).resolve().parent.parent
-        candidates.extend((git_root / "bin" / "bash.exe", git_root / "usr" / "bin" / "bash.exe"))
-    bash = shutil.which("bash", path=path_value)
-    if bash:
-        candidates.append(Path(bash))
-
-    probe_value = "test-wsl2-llm-argument-check"
-    seen: set[str] = set()
-    for candidate in candidates:
-        candidate_path = str(candidate)
-        key = candidate_path.casefold()
-        if key in seen or not candidate.is_file():
-            continue
-        seen.add(key)
-        try:
-            completed = subprocess.run(
-                [candidate_path, "-c", 'printf "%s" "$1"', "test-wsl2-llm", probe_value],
-                capture_output=True,
-                check=False,
-                env=dict(environment),
-                timeout=5,
-            )
-        except (OSError, subprocess.SubprocessError):
-            continue
-        if completed.returncode == 0 and completed.stdout == probe_value.encode("utf-8"):
-            return candidate_path
-    return None
-
-
 class WindowsClient(LinuxClient):
-    """Run the local target on Windows through an installed Bash shell.
+    """Run the local target on Windows using PowerShell and native file operations.
 
-    Git for Windows supplies Bash and the small POSIX utilities used by the
-    harness. Workspace and artifact file operations still use native Python
-    paths, while paths passed to Bash are translated to MSYS-style paths.
+    Linux and macOS keep using their native shell implementation in LinuxClient.
     """
 
     def __init__(
@@ -697,40 +658,168 @@ class WindowsClient(LinuxClient):
         self.environment = sanitized_windows_environment(
             environment_policy or EnvironmentPolicy(), source_environment
         )
-        bash = _find_git_bash(self.environment)
-        if bash is None:
-            raise RuntimeError(
-                "the local Windows target requires Git for Windows Bash with its bin directory "
-                "available on PATH"
-            )
-        self._bash = bash
 
     @staticmethod
-    def _bash_path(value: str) -> str:
-        """Convert a Windows drive path to the form expected by Git Bash."""
-        match = re.match(r"^([A-Za-z]):[\\/](.*)$", value)
-        if match is None:
-            return value
-        drive, remainder = match.groups()
-        return f"/{drive.casefold()}/{remainder.replace(chr(92), '/')}"
+    def _encoded_command(script: str, arguments: tuple[str, ...] = ()) -> list[str]:
+        """Build a PowerShell command with values serialized outside its source."""
+        payload = base64.b64encode(
+            json.dumps(arguments, ensure_ascii=True).encode("utf-8")
+        ).decode("ascii")
+        prelude = (
+            "$ErrorActionPreference = 'Stop'\n"
+            "$values = [Text.Encoding]::UTF8.GetString("
+            f"[Convert]::FromBase64String('{payload}')) | ConvertFrom-Json\n"
+        )
+        encoded = base64.b64encode((prelude + script).encode("utf-16-le")).decode("ascii")
+        return [
+            "powershell.exe",
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-EncodedCommand",
+            encoded,
+        ]
+
+    @staticmethod
+    def _powershell_script(script: str, arguments: tuple[str, ...]) -> str:
+        """Translate the small, explicit shell surface used by agent adapters."""
+        source = " ".join(script.split())
+        if source in {"codex --version", "claude --version", "codex plugin --help"}:
+            return f"& {source}\nexit $LASTEXITCODE"
+        if source.startswith('env CODEX_HOME="$1" codex plugin marketplace add "$2"'):
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex plugin marketplace add $values[1] --json\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith('env CODEX_HOME="$1" codex plugin add "$2"'):
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex plugin add $values[1] --json\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith('env CLAUDE_CONFIG_DIR="$1" claude plugin marketplace add "$2"'):
+            return (
+                "$env:CLAUDE_CONFIG_DIR = $values[0]\n"
+                "& claude plugin marketplace add $values[1]\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith('env CLAUDE_CONFIG_DIR="$1" claude plugin install "$2"'):
+            return (
+                "$env:CLAUDE_CONFIG_DIR = $values[0]\n"
+                "& claude plugin install $values[1] --scope user --yes\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith("git clone --depth 1 --branch"):
+            return (
+                "& git clone --depth 1 --branch $values[1] -- $values[0] $values[2]\n"
+                "exit $LASTEXITCODE"
+            )
+        if source.startswith("git clone --depth 1 --"):
+            return (
+                "& git clone --depth 1 -- $values[0] $values[1]\n"
+                "exit $LASTEXITCODE"
+            )
+        if "codex exec --json --skip-git-repo-check" in source:
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex exec --json --skip-git-repo-check --model $values[1] "
+                "--config $values[2] --cd $values[3] -\n"
+                "exit $LASTEXITCODE"
+            )
+        if "claude" in source and "--print --output-format stream-json" in source:
+            return (
+                "$env:CLAUDE_CONFIG_DIR = $values[0]\n"
+                "Set-Location -LiteralPath $values[2]\n"
+                "$claudeArgs = @('--print', '--output-format', 'stream-json', '--verbose', "
+                "'--model', $values[1], '--permission-mode', 'bypassPermissions')\n"
+                "if ($values[3]) { $claudeArgs += @('--mcp-config', $values[3]) }\n"
+                "& claude @claudeArgs\n"
+                "exit $LASTEXITCODE"
+            )
+        if source == 'printf "%s\\n" "$1"':
+            return "[Console]::Out.WriteLine($values[0])"
+        if "exec bash -li" in source:
+            return "Set-Location -LiteralPath $values[0]\n& powershell.exe -NoLogo"
+        raise ValueError(
+            "the Windows local target does not support this shell operation; "
+            "use the native PowerShell target operation"
+        )
 
     def shell_command(
         self, script: str, *arguments: str, interactive_login: bool = False
     ) -> list[str]:
-        flags = "-lic" if interactive_login else "-lc"
-        return [
-            self._bash,
-            flags,
-            script,
-            "test-wsl2-llm",
-            *(self._bash_path(argument) for argument in arguments),
-        ]
+        del interactive_login
+        return self._encoded_command(self._powershell_script(script, arguments), arguments)
 
-    def create_workspace(self, parent: str) -> str:
-        # `/tmp` is the shared default from WSL configuration. On native
-        # Windows, use the OS temporary directory instead of creating C:\tmp.
-        native_parent = tempfile.gettempdir() if parent == "/tmp" else parent
-        return super().create_workspace(native_parent)
+    def bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.run(
+            self.shell_command(script, *arguments), input_bytes=input_bytes, check=check
+        )
+
+    def login_bash(
+        self,
+        script: str,
+        *arguments: str,
+        input_bytes: bytes | None = None,
+        check: bool = True,
+    ) -> subprocess.CompletedProcess[bytes]:
+        return self.bash(script, *arguments, input_bytes=input_bytes, check=check)
+
+    def make_directory(self, path: str) -> None:
+        Path(path).mkdir(parents=True, exist_ok=True)
+
+    def git_commit(self, path: str) -> str:
+        completed = subprocess.run(
+            ["git", "-C", path, "rev-parse", "HEAD"],
+            capture_output=True,
+            check=False,
+            env=self.environment,
+        )
+        if completed.returncode:
+            return ""
+        return completed.stdout.decode("utf-8", errors="replace").strip()
+
+    def read_plugin_manifest(self, root: str) -> dict[str, Any] | None:
+        for manifest in (Path(root) / ".codex-plugin" / "plugin.json", Path(root) / "plugin.json"):
+            try:
+                value = json.loads(manifest.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            return value if isinstance(value, dict) else None
+        return None
+
+    def copy_mcp_credentials(self, codex_home: str, names: list[str]) -> None:
+        source_home = self.environment.get("CODEX_HOME")
+        if source_home:
+            source = Path(source_home).expanduser() / ".credentials.json"
+        else:
+            home = self.environment.get("USERPROFILE") or self.environment.get("HOME")
+            source = (Path(home) if home else Path.home()) / ".codex" / ".credentials.json"
+        try:
+            document = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(document, dict):
+            return
+        selected = {
+            key: value
+            for key, value in document.items()
+            if isinstance(value, dict) and value.get("server_name") in set(names)
+        }
+        if not selected:
+            return
+        destination = Path(codex_home) / ".credentials.json"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.with_name(".credentials.json.tmp")
+        temporary.write_text(json.dumps(selected), encoding="utf-8")
+        temporary.replace(destination)
 
     def run(
         self,
@@ -791,7 +880,6 @@ class WindowsClient(LinuxClient):
             process.kill()
         except TypeError:
             process.wait()
-
 
 def create_execution_target(
     distro: str | None = None,
@@ -1075,11 +1163,15 @@ def run_test(
             installed_plugin_roots = list(plugin_setup.installed_roots)
             plugin_versions.update(plugin_setup.plugin_versions)
             for installed_root in sorted(set(installed_plugin_roots)):
-                found = client.bash(
-                    'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
-                    installed_root,
-                )
-                skill_directories.extend(line for line in client.text(found).splitlines() if line)
+                native_finder = getattr(client, "find_skill_directories", None)
+                if callable(native_finder):
+                    skill_directories.extend(native_finder([installed_root]))
+                else:
+                    found = client.bash(
+                        'find "$1" -type f -name SKILL.md -printf "%h\\n" | sort -u',
+                        installed_root,
+                    )
+                    skill_directories.extend(line for line in client.text(found).splitlines() if line)
             skill_directories = sorted(set(skill_directories))
         with state.phase(f"{adapter.name}_execution"):
             if cancellation is not None and cancellation.cancelled:
@@ -1624,7 +1716,11 @@ def _transfer_marketplaces(
 ) -> list[str]:
     runtime: list[str] = []
     marketplace_root = f"{run_root}/.harness/inputs/marketplaces"
-    client.bash('mkdir -p "$1"', marketplace_root)
+    directory_creator = getattr(client, "make_directory", None)
+    if callable(directory_creator):
+        directory_creator(marketplace_root)
+    else:
+        client.bash('mkdir -p "$1"', marketplace_root)
     start_index = 1
     if append:
         directory_lister = (
@@ -1953,10 +2049,14 @@ def _resolved_marketplace_versions(
     versions: dict[str, str] = {}
     for source, runtime_path in zip(sources, runtime_paths, strict=False):
         try:
-            completed = client.bash(
-                'git -C "$1" rev-parse HEAD 2>/dev/null', runtime_path, check=False
-            )
-            commit = client.text(completed).strip()
+            native_git = getattr(client, "git_commit", None)
+            if callable(native_git):
+                commit = native_git(runtime_path)
+            else:
+                completed = client.bash(
+                    'git -C "$1" rev-parse HEAD 2>/dev/null', runtime_path, check=False
+                )
+                commit = client.text(completed).strip()
         except (AttributeError, OSError, RuntimeError):
             commit = ""
         if re.fullmatch(r"[0-9a-fA-F]{40}", commit):
@@ -1966,16 +2066,20 @@ def _resolved_marketplace_versions(
 
 def _plugin_manifest_version(client: ExecutionTarget, installed_root: str) -> str | None:
     """Read only the version field from an installed plugin manifest."""
-    try:
-        completed = client.bash(
-            'for file in "$1/.codex-plugin/plugin.json" "$1/plugin.json"; do '
-            'if test -r "$file"; then cat -- "$file"; break; fi; done',
-            installed_root,
-            check=False,
-        )
-        payload = json.loads(client.text(completed))
-    except (AttributeError, OSError, RuntimeError, json.JSONDecodeError):
-        return None
+    native_reader = getattr(client, "read_plugin_manifest", None)
+    if callable(native_reader):
+        payload = native_reader(installed_root)
+    else:
+        try:
+            completed = client.bash(
+                'for file in "$1/.codex-plugin/plugin.json" "$1/plugin.json"; do '
+                'if test -r "$file"; then cat -- "$file"; break; fi; done',
+                installed_root,
+                check=False,
+            )
+            payload = json.loads(client.text(completed))
+        except (AttributeError, OSError, RuntimeError, json.JSONDecodeError):
+            return None
     version = payload.get("version") if isinstance(payload, dict) else None
     return str(version) if isinstance(version, (str, int, float)) and str(version) else None
 
@@ -2224,12 +2328,16 @@ def _copy_mcp_credentials(client: ExecutionTarget, codex_home: str, names: list[
     """Copy only selected MCP OAuth entries from the user's Linux Codex home."""
     if not names:
         return
-    client.bash(
-        'python3 -c "$1" "$2" "$3"',
-        _mcp_credentials_copy_script(),
-        codex_home,
-        json.dumps(names),
-    )
+    native_copier = getattr(client, "copy_mcp_credentials", None)
+    if callable(native_copier):
+        native_copier(codex_home, names)
+    else:
+        client.bash(
+            'python3 -c "$1" "$2" "$3"',
+            _mcp_credentials_copy_script(),
+            codex_home,
+            json.dumps(names),
+        )
 
 
 def _mcp_credentials_copy_script() -> str:
