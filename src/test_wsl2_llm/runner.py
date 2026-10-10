@@ -645,7 +645,9 @@ class LinuxClient:
 
 def _find_git_bash(environment: Mapping[str, str]) -> str | None:
     """Find a Git for Windows Bash that preserves subprocess arguments."""
-    path_value = next((value for key, value in environment.items() if key.casefold() == "path"), None)
+    path_value = next(
+        (value for key, value in environment.items() if key.casefold() == "path"), None
+    )
     candidates: list[Path] = []
     git = shutil.which("git", path=path_value)
     if git:
