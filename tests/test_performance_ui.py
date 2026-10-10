@@ -40,6 +40,8 @@ function choose(field,values){
 assert.equal(count(),6);
 const chart=()=>element('chart').innerHTML;
 const legend=()=>element('chart-legend').innerHTML;
+const questionChart=()=>element('question-chart').innerHTML;
+const questionLegend=()=>element('question-chart-legend').innerHTML;
 const verticalYAxisLabel='<text x="18" y="165" '
  +'text-anchor="middle" transform="rotate(-90 18 165)">Avg cost</text>';
 assert.ok(chart().includes(verticalYAxisLabel));
@@ -57,6 +59,10 @@ assert.equal((legend().match(/class="legend-swatch"/g)||[]).length,6);
 assert.match(legend(),/The number in each plot circle matches its legend entry/);
 assert.match(legend(),/Filled circles have complete question coverage/);
 assert.match(legend(),/open circles have partial coverage/);
+assert.match(questionChart(),/aria-label="Average cost versus pass rate by question"/);
+assert.equal((questionChart().match(/class="dot"/g)||[]).length,6);
+assert.equal((questionLegend().match(/class="legend-number"/g)||[]).length,6);
+assert.match(questionLegend(),/combines all matching trials across the selected models/);
 choose('model',['model-a','model-b']);assert.equal(count(),4);
 assert.equal(element('model-summary').textContent,'2 models selected');
 choose('question',['q1','q2']);assert.equal(count(),3);
