@@ -643,6 +643,41 @@ class LinuxClient:
         return traces, events
 
 
+def _find_git_bash(environment: Mapping[str, str]) -> str | None:
+    """Find a Git for Windows Bash that preserves subprocess arguments."""
+    path_value = next((value for key, value in environment.items() if key.casefold() == "path"), None)
+    candidates: list[Path] = []
+    git = shutil.which("git", path=path_value)
+    if git:
+        git_root = Path(git).resolve().parent.parent
+        candidates.extend((git_root / "bin" / "bash.exe", git_root / "usr" / "bin" / "bash.exe"))
+    bash = shutil.which("bash", path=path_value)
+    if bash:
+        candidates.append(Path(bash))
+
+    probe_value = "test-wsl2-llm-argument-check"
+    seen: set[str] = set()
+    for candidate in candidates:
+        candidate_path = str(candidate)
+        key = candidate_path.casefold()
+        if key in seen or not candidate.is_file():
+            continue
+        seen.add(key)
+        try:
+            completed = subprocess.run(
+                [candidate_path, "-c", 'printf "%s" "$1"', "test-wsl2-llm", probe_value],
+                capture_output=True,
+                check=False,
+                env=dict(environment),
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if completed.returncode == 0 and completed.stdout == probe_value.encode("utf-8"):
+            return candidate_path
+    return None
+
+
 class WindowsClient(LinuxClient):
     """Run the local target on Windows through an installed Bash shell.
 
@@ -660,11 +695,11 @@ class WindowsClient(LinuxClient):
         self.environment = sanitized_windows_environment(
             environment_policy or EnvironmentPolicy(), source_environment
         )
-        bash = shutil.which("bash", path=self.environment.get("PATH"))
+        bash = _find_git_bash(self.environment)
         if bash is None:
             raise RuntimeError(
-                "the local Windows target requires Bash on PATH; install Git for Windows "
-                "and make its bin directory available"
+                "the local Windows target requires Git for Windows Bash with its bin directory "
+                "available on PATH"
             )
         self._bash = bash
 
