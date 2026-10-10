@@ -470,8 +470,8 @@ question. Questions without a `distro` field inherit the shared value (or the WS
 default when neither is set).
 
 If a requested copy-back path or glob has no matches, collection continues for the other
-patterns. Missing patterns are listed in the YAML `missing_copy_back` field and in the
-Markdown report's Copied-back files section.
+patterns, but the run is marked as failed. Missing patterns are listed in the YAML
+`missing_copy_back` field and in the Markdown report's Copied-back files section.
 
 At most 100 copied-back files are collected per run by default, preventing broad globs
 such as `plot_*.png` from creating thousands of artifacts. Use `--max-copy-back N` (or
