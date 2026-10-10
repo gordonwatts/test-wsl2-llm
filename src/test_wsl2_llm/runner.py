@@ -667,8 +667,8 @@ class WindowsClient(LinuxClient):
         ).decode("ascii")
         prelude = (
             "$ErrorActionPreference = 'Stop'\n"
-            "$values = [Text.Encoding]::UTF8.GetString("
-            f"[Convert]::FromBase64String('{payload}')) | ConvertFrom-Json\n"
+            "$values = @([Text.Encoding]::UTF8.GetString("
+            f"[Convert]::FromBase64String('{payload}')) | ConvertFrom-Json)\n"
         )
         encoded = base64.b64encode((prelude + script).encode("utf-16-le")).decode("ascii")
         return [
