@@ -12,6 +12,7 @@ from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import build_config, load_config_file, save_config
 from test_wsl2_llm.models import TestConfig as RunConfig
 from test_wsl2_llm.runner import (
+    _check_mcp_servers,
     _claude_mcp_source,
     _codex_config,
     _copy_mcp_credentials,
@@ -208,6 +209,53 @@ def test_empty_mcp_selection_does_not_copy_credentials():
     _copy_mcp_credentials(FakeTarget(), "/run/home", [])
 
 
+def test_mcp_preflight_reports_only_selected_server_statuses():
+    class FakeTarget:
+        def login_bash(self, script, *args, **kwargs):
+            assert script == 'env CODEX_HOME="$1" codex mcp list --json'
+            assert args == ("/run/codex-home",)
+            assert kwargs == {"check": False}
+            return subprocess.CompletedProcess(
+                [],
+                0,
+                b'[{"name":"atlas-af","enabled":true,"auth_status":"authenticated",'
+                b'"transport":{"headers":{"Authorization":"secret-value"}}}]',
+                b"",
+            )
+
+        def text(self, completed):
+            return completed.stdout.decode()
+
+    checks = _check_mcp_servers(FakeTarget(), "/run/codex-home", ["atlas-af"])
+    assert [check.model_dump(mode="json") for check in checks] == [
+        {
+            "name": "atlas-af",
+            "detected": True,
+            "enabled": True,
+            "auth_status": "authenticated",
+            "status": "passed",
+            "message": None,
+        }
+    ]
+    assert "secret-value" not in str(checks)
+
+
+def test_mcp_preflight_marks_not_logged_in_as_harness_failure():
+    class FakeTarget:
+        def login_bash(self, *_args, **_kwargs):
+            return subprocess.CompletedProcess(
+                [], 0, b'[{"name":"atlas-af","enabled":true,"auth_status":"not_logged_in"}]', b""
+            )
+
+        def text(self, completed):
+            return completed.stdout.decode()
+
+    [check] = _check_mcp_servers(FakeTarget(), "/run/codex-home", ["atlas-af"])
+    assert check.status == "failed"
+    assert check.auth_status == "not_logged_in"
+    assert "not logged in" in check.message
+
+
 @pytest.mark.parametrize("content", ["", 'mcp_servers = "invalid"'])
 def test_missing_name_reports_name_and_path(monkeypatch, tmp_path, content):
     local_config(monkeypatch, tmp_path, content)
@@ -332,6 +380,7 @@ def test_missing_server_fails_before_wsl(monkeypatch, tmp_path):
     )
     assert result.run.status == "failed"
     assert "MCP server 'oops'" in result.run.error
+    assert result.run.failure_category == "harness"
     assert result.run.workspace_path is None
 
 def test_claude_mcp_servers_render_selected_json_without_secrets(monkeypatch, tmp_path):

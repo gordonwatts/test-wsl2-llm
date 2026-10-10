@@ -407,6 +407,18 @@ class RunResult(BaseModel):
     agent_execution_seconds: float | None = None
     error: str | None = None
     timed_out: bool = False
+    failure_category: Literal["harness", "agent"] | None = None
+
+
+class McpServerCheck(BaseModel):
+    """Safe status summary returned by the agent CLI for one selected MCP server."""
+
+    name: str
+    detected: bool
+    enabled: bool | None = None
+    auth_status: str = "unknown"
+    status: Literal["passed", "failed", "unknown"] = "unknown"
+    message: str | None = None
 
 
 class TimingResult(BaseModel):
@@ -472,6 +484,7 @@ class TestResult(BaseModel):
     run: RunResult
     timing: TimingResult
     configuration: ConfigurationSnapshot
+    mcp_server_checks: list[McpServerCheck] = Field(default_factory=list)
     provenance: Provenance | None = None
     usage: list[UsageRecord]
     model_information: ModelInformation

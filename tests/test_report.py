@@ -10,6 +10,7 @@ from test_wsl2_llm.models import (
     CopiedBackFile,
     FinalResult,
     LogsResult,
+    McpServerCheck,
     ModelCost,
     ModelInformation,
     PhaseTiming,
@@ -113,6 +114,16 @@ def sample_result() -> WslTestResult:
 
 def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
     result = sample_result()
+    result.mcp_server_checks = [
+        McpServerCheck(
+            name="atlas-af",
+            detected=True,
+            enabled=True,
+            auth_status="authenticated",
+            status="passed",
+        )
+    ]
+    result.run.failure_category = "harness"
     markdown_path, yaml_path = write_reports(result, str(tmp_path / "run"))
     assert markdown_path.stem == yaml_path.stem == "run"
     loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
@@ -122,6 +133,9 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         result.prompt,
         result.skills.plugins[0],
         "- MCP servers:\n  - `filesystem`\n  - `servicex`",
+        "### MCP preflight",
+        "| `atlas-af` | True | True | authenticated | passed |  |",
+        "| Failure category | harness |",
         "Inspecting the saved workspace.",
         "<summary>Workspace inventory</summary>",
         "file\t6\thello.txt",
