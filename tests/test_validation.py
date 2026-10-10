@@ -132,6 +132,52 @@ def test_runner_validates_complete_collected_result(monkeypatch, continuation):
 
 
 @pytest.mark.parametrize("continuation", [False, True])
+def test_missing_copy_back_files_fail_run(monkeypatch, continuation):
+    from unittest.mock import MagicMock
+
+    from test_wsl2_llm import runner
+    from test_wsl2_llm.models import TestConfig as RunConfig
+
+    client = MagicMock()
+    client.text.return_value = "/tmp/run"
+    client.command.return_value = ["mock-codex"]
+    monkeypatch.setattr(runner, "WslClient", lambda *a: client)
+    for name in ["_write_wsl_file", "_transfer_files"]:
+        monkeypatch.setattr(runner, name, lambda *a, **k: None)
+    for name in ["_transfer_marketplaces", "_skill_directories", "_inventory"]:
+        monkeypatch.setattr(runner, name, lambda *a, **k: [])
+    monkeypatch.setattr(runner, "_resolve_wsl_path", lambda *a, **k: "/tmp/mock")
+    monkeypatch.setattr(runner, "_stream_codex", lambda *a, **k: (0, "captured", "", [], []))
+    monkeypatch.setattr(runner, "_session_traces", lambda *a: ([], []))
+
+    def missing_copy_back(*args, missing, **kwargs):
+        missing.extend(["result.root"])
+        return []
+
+    monkeypatch.setattr(runner, "_copy_back_files", missing_copy_back)
+    config = RunConfig(
+        prompt="p",
+        model="gpt-5",
+        output="unused",
+        copy_back=["result.root"],
+    )
+    previous = sample_result()
+    previous.run.workspace_retained = True
+    previous.run.workspace_path = "/tmp/run/workspace"
+    result = (
+        runner.continue_test(previous, config, "next")
+        if continuation
+        else runner.run_test(config, live_progress=False)
+    )
+
+    assert result.missing_copy_back == ["result.root"]
+    assert result.run.status == "failed"
+    assert result.run.exit_code == 1
+    assert result.run.error is not None
+    assert "copy_back failed: expected files were not found: 'result.root'" in result.run.error
+
+
+@pytest.mark.parametrize("continuation", [False, True])
 def test_unknown_validator_rejected_before_wsl(monkeypatch, continuation):
     from test_wsl2_llm import runner
     from test_wsl2_llm.models import TestConfig as RunConfig

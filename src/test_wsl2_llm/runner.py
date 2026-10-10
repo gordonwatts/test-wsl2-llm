@@ -770,6 +770,15 @@ def _collect_evidence(
         error = _append_failure(error, "copy_back", collection_error)
         exit_code = exit_code or 1
 
+    if missing_copy_back:
+        missing = ", ".join(f"{pattern!r}" for pattern in missing_copy_back)
+        error = _append_failure(
+            error,
+            "copy_back",
+            FileNotFoundError(f"expected files were not found: {missing}"),
+        )
+        exit_code = exit_code or 1
+
     if codex_home:
         try:
             with state.phase("session_trace_collection"):
