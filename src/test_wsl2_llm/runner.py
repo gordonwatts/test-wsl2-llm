@@ -2315,6 +2315,12 @@ def _codex_config(config: TestConfig, plugin_sources: dict[str, str] | None = No
 
     servers = _load_mcp_servers(config.mcp_servers, plugin_sources)
     if servers:
+        servers = {name: dict(settings) for name, settings in servers.items()}
+        for settings in servers.values():
+            settings["required"] = True
+            settings["startup_timeout_sec"] = 60
+            # Avoid conflicting values for Codex's millisecond timeout alias.
+            settings.pop("startup_timeout_ms", None)
         content += "\n" + tomli_w.dumps({"mcp_servers": servers})
     return content
 

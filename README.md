@@ -210,6 +210,12 @@ setup can run concurrently, and existing Codex executions still overlap up to th
 limit. The gate waits immediately before each command is dispatched through its target
 wrapper; WSL/SSH/shell startup may add further latency. Separate CLI invocations do not
 share this gate, and Claude commands are not delayed.
+Each selected Codex MCP server is written into the isolated `config.toml` with
+`required = true` and `startup_timeout_sec = 60`. This requires successful server
+initialization for Codex startup and allows up to 60 seconds for it. Connection and
+authentication settings are preserved; existing startup timeouts are replaced, including
+the millisecond alias. The source Codex configuration is not modified. These settings
+do not require the model to call any particular tool.
 While repetitions are running, a transient aggregate progress bar shows completed runs;
 it is removed before the indexed output paths are printed. Repeated-run Codex progress is
 written as ordinary log lines so it does not compete with the aggregate live display.
