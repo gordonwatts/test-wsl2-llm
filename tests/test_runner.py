@@ -54,8 +54,6 @@ def test_cancellation_coordinator_stops_active_and_rejects_queued_jobs() -> None
 
 
 def test_wsl_path_uses_passwd_home_instead_of_inherited_home() -> None:
-    from test_wsl2_llm.runner import _resolve_wsl_path
-
     class FakeTarget:
         script = ""
 
@@ -63,7 +61,7 @@ def test_wsl_path_uses_passwd_home_instead_of_inherited_home() -> None:
             self.script = script
             assert arguments == ("~/.codex/auth.json",)
             return subprocess.CompletedProcess(
-                [], 0, b"/home/gwatts/.codex/auth.json\\n", b""
+                [], 0, b"/home/gwatts/.codex/auth.json\n", b""
             )
 
         def text(self, completed: subprocess.CompletedProcess[bytes]) -> str:

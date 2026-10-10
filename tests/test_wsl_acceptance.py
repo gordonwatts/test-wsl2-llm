@@ -17,6 +17,30 @@ runner = CliRunner()
 ATLAS_ANALYSISBASE_MARKETPLACE = "https://github.com/gordonwatts/atlas-analysisbase-marketplace.git"
 
 
+def test_ubuntu_codex_copies_resolved_target_auth_without_host_translation() -> None:
+    """Exercise resolution and copying in real WSL without credentials or model tokens."""
+    from test_wsl2_llm.agents import CodexAgentAdapter
+
+    client = WslClient("Ubuntu")
+    root = client.text(
+        client.bash(
+            'home="$(getent passwd "$(id -u)" | cut -d: -f6)"; '
+            'test -n "$home" && mktemp -d "$home/test-wsl2-llm-auth-XXXXXXXX"'
+        )
+    ).strip()
+    source = f"{root}/source credentials.json"
+    home = f"{root}/isolated home"
+    try:
+        client.bash('printf "%s" "$2" > "$1"', source, '{"synthetic":true}')
+        adapter = CodexAgentAdapter()
+        resolved = adapter.resolve_auth_source(client, source)
+        adapter.setup_home(client, home, resolved)
+        client.bash('cmp -- "$1" "$2/auth.json"', source, home)
+        assert client.text(client.bash('stat -c %a -- "$1/auth.json"', home)).strip() == "600"
+    finally:
+        client.bash('rm -rf -- "$1"', root, check=False)
+
+
 def _base_model(model_argument: str) -> str:
     return ModelSelector.parse(model_argument).model
 

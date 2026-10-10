@@ -110,7 +110,7 @@ class CodexAgentAdapter:
         return _resolve_wsl_path(target, source or "~/.codex/auth.json")
 
     def setup_home(self, target: ExecutionTarget, home: str, auth_source: str) -> None:
-        _copy_host_auth(target, auth_source, home, self.auth_filename)
+        _copy_target_auth(target, auth_source, home, self.auth_filename)
 
     def mcp_config(self, config: TestConfig) -> dict[str, object] | None:
         del config
@@ -398,6 +398,22 @@ def _expand_host_path(value: str, environment: Mapping[str, str]) -> Path:
         if home:
             value = home + value[1:]
     return Path(value).expanduser()
+
+
+def _copy_target_auth(
+    target: ExecutionTarget, source: str, target_home: str, filename: str
+) -> None:
+    """Copy an already resolved target credential path without host-path conversion."""
+    copier = getattr(target, "copy_file_to_target", None)
+    if callable(copier):
+        copier(source, f"{target_home}/{filename}")
+        return
+    target.bash(
+        'mkdir -p "$1" && cp -- "$2" "$1/$3" && chmod 600 -- "$1/$3"',
+        target_home,
+        source,
+        filename,
+    )
 
 
 def _copy_host_auth(target: ExecutionTarget, source: str, target_home: str, filename: str) -> None:
