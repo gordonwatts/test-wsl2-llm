@@ -1,9 +1,11 @@
 from pathlib import Path
+from subprocess import CompletedProcess
 
 import pytest
 
 from test_wsl2_llm.agents import (
     ClaudeCodeAgentAdapter,
+    CodexAgentAdapter,
     FakeAgentAdapter,
     get_agent_adapter,
     validate_agent_capabilities,
@@ -27,6 +29,32 @@ def test_fake_adapter_is_available_without_credentials() -> None:
     assert isinstance(adapter, FakeAgentAdapter)
     assert adapter.preflight(None).version == "fake-agent 1.0"  # type: ignore[arg-type]
     assert not adapter.capabilities.requires_auth
+
+
+def test_codex_setup_commands_each_wait_before_dispatch() -> None:
+    from test_wsl2_llm.runner import _check_mcp_servers
+
+    events: list[str] = []
+
+    class Target:
+        def login_bash(self, script, *_args, **_kwargs):
+            assert events[-1] == "gate"
+            events.append(script)
+            return CompletedProcess([], 0, stdout=b"[]")
+
+        def text(self, completed):
+            return completed.stdout.decode()
+
+    target = Target()
+    adapter = CodexAgentAdapter()
+    def gate() -> None:
+        events.append("gate")
+
+    adapter.preflight(target, before_launch=gate)
+    adapter.install_plugins(target, "home", ["marketplace"], ["plugin"], before_launch=gate)
+    _check_mcp_servers(target, "home", [], before_launch=gate)
+    assert len(events) == 10
+    assert events[::2] == ["gate"] * 5
 
 
 def test_codex_native_auth_uses_resolved_source_and_canonical_filename(tmp_path: Path) -> None:

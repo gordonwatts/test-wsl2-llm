@@ -294,6 +294,7 @@ def run(
         from test_wsl2_llm.runner import run_test
 
         coordinator = CancellationCoordinator()
+        launch_gate = _CodexLaunchGate()
 
         def run_one(
             index: int, run_output: str, repeat_display: _RepeatDisplay | None
@@ -313,6 +314,7 @@ def run(
                     collected, run_output, resolved.overwrite
                 ),
                 cancellation=coordinator,
+                before_codex_launch=lambda: launch_gate.wait(coordinator),
                 job_id=job_id,
             )
             markdown_path, yaml_path = write_reports(result, run_output, True)
@@ -869,6 +871,7 @@ def template_run(
         from test_wsl2_llm.runner import run_test
 
         coordinator = CancellationCoordinator()
+        launch_gate = _CodexLaunchGate()
 
         def run_one(
             question_index: int,
@@ -909,6 +912,7 @@ def template_run(
                 invocation=sys.argv,
                 report_callback=persist,
                 cancellation=coordinator,
+                before_codex_launch=lambda: launch_gate.wait(coordinator),
                 job_id=job_id,
             )
             result.template_cell = template_cell_metadata(
@@ -1496,6 +1500,30 @@ def _repeat_output(output: str, index: int, repeat: int) -> str:
     path = output_stem(output)
     width = max(3, len(str(repeat)))
     return str(path.with_name(f"{path.name}-{index:0{width}d}"))
+
+
+class _CodexLaunchGate:
+    """Space Codex command dispatches across all workers in one CLI batch."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._last_dispatched: float | None = None
+
+    def wait(self, coordinator: CancellationCoordinator) -> None:
+        with self._lock:
+            while not coordinator.cancelled:
+                now = time.monotonic()
+                remaining = (
+                    self._last_dispatched + 1.0 - now if self._last_dispatched is not None else 0.0
+                )
+                if remaining <= 0:
+                    if coordinator.cancelled:
+                        raise KeyboardInterrupt
+                    self._last_dispatched = time.monotonic()
+                    return
+                # Keep Ctrl-C responsive while a worker waits to launch Codex.
+                time.sleep(min(remaining, 0.05))
+            raise KeyboardInterrupt
 
 
 class _RepeatDisplay:

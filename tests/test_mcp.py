@@ -28,7 +28,7 @@ def local_config(monkeypatch, tmp_path, content):
     (tmp_path / "config.toml").write_text(content, encoding="utf-8")
 
 
-def test_import_preserves_complete_selected_tables(monkeypatch, tmp_path):
+def test_import_preserves_connections_and_requires_selected_servers(monkeypatch, tmp_path):
     content = """
 model = "unrelated-local-model"
 [mcp_servers."server.with.dots"]
@@ -37,12 +37,14 @@ args = ["--from", "package", "serve"]
 cwd = "/srv/mcp"
 enabled = false
 startup_timeout_sec = 17.5
+required = false
 enabled_tools = ["read"]
 future_flag = true
 [mcp_servers."server.with.dots".env]
 TOKEN = "fake-secret"
 [mcp_servers.web]
 url = "https://example.invalid/mcp"
+startup_timeout_ms = 2500
 bearer_token_env_var = "SERVICE_TOKEN"
 http_headers = { X-Custom = "value" }
 [mcp_servers.unselected]
@@ -54,7 +56,12 @@ command = "omit-me"
     )
     rendered = tomllib.loads(_codex_config(config))
     expected = tomllib.loads(content)["mcp_servers"]
+    for name in config.mcp_servers:
+        expected[name]["required"] = True
+        expected[name]["startup_timeout_sec"] = 60
+        expected[name].pop("startup_timeout_ms", None)
     assert rendered["mcp_servers"] == {name: expected[name] for name in config.mcp_servers}
+    assert (tmp_path / "config.toml").read_text(encoding="utf-8") == content
     assert rendered["model"] == "gpt-test"
     assert "fake-secret" not in config.model_dump_json()
 
@@ -119,7 +126,7 @@ enabled = true
         prompt="hello", model="test", output="out", mcp_servers=["root", "web", "stdio"]
     )
     servers = tomllib.loads(_codex_config(config))["mcp_servers"]
-    assert servers == {
+    expected = {
         "root": {"command": "root-command"},
         "web": {
             "url": "https://example.invalid/mcp",
@@ -127,6 +134,9 @@ enabled = true
         },
         "stdio": {"command": "uvx", "args": ["serve"], "env": {"TOKEN": "fake-secret"}},
     }
+    for settings in expected.values():
+        settings.update(required=True, startup_timeout_sec=60)
+    assert servers == expected
     assert "fake-secret" not in config.model_dump_json()
 
 
@@ -353,7 +363,9 @@ def test_runner_writes_selected_servers_to_isolated_config(
     assert "stop after writing" in result.run.error
     remote_path = next(path for path in writes if path.endswith("/config.toml"))
     assert "/.harness/codex-home/config.toml" in remote_path
-    assert tomllib.loads(writes[remote_path])["mcp_servers"] == {"demo": {"command": "server"}}
+    assert tomllib.loads(writes[remote_path])["mcp_servers"] == {
+        "demo": {"command": "server", "required": True, "startup_timeout_sec": 60}
+    }
     assert result.configuration["mcp_servers"] == ["demo"]
     assert result.configuration["mcp_server_plugins"] == (
         {"demo": "source@market"} if from_plugin else {}

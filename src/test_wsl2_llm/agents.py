@@ -9,7 +9,7 @@ new agent from accidentally inheriting Codex-only options.
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
@@ -92,10 +92,16 @@ class CodexAgentAdapter:
         requires_auth=True,
     )
 
-    def preflight(self, target: ExecutionTarget) -> AgentPreflight:
+    def preflight(
+        self, target: ExecutionTarget, *, before_launch: Callable[[], None] | None = None
+    ) -> AgentPreflight:
+        if before_launch is not None:
+            before_launch()
         version = target.text(target.login_bash("codex --version")).strip()
         # This check is intentionally retained from the Codex runner: plugin
         # installation should fail during preflight, before workspace creation.
+        if before_launch is not None:
+            before_launch()
         target.login_bash("codex plugin --help")
         return AgentPreflight(version=version)
 
@@ -117,17 +123,22 @@ class CodexAgentAdapter:
         return None
 
     def install_plugins(
-        self, target: ExecutionTarget, home: str, marketplaces: list[str], plugins: list[str]
+        self, target: ExecutionTarget, home: str, marketplaces: list[str], plugins: list[str],
+        *, before_launch: Callable[[], None] | None = None,
     ) -> AgentPluginSetup:
         from test_wsl2_llm.runner import _installed_paths_from_json, _plugin_manifest_version
 
         roots: list[str] = []
         versions: dict[str, str] = {}
         for source in marketplaces:
+            if before_launch is not None:
+                before_launch()
             target.login_bash(
                 'env CODEX_HOME="$1" codex plugin marketplace add "$2" --json', home, source
             )
         for plugin in plugins:
+            if before_launch is not None:
+                before_launch()
             installed = target.login_bash(
                 'env CODEX_HOME="$1" codex plugin add "$2" --json', home, plugin
             )
