@@ -67,22 +67,63 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
         for key in (
             "input_tokens",
             "cached_input_tokens",
+            "cache_read_input_tokens",
+            "cache_creation_input_tokens",
+            "cache_creation_5m_input_tokens",
+            "cache_creation_1h_input_tokens",
             "output_tokens",
             "reasoning_output_tokens",
         )
     }
     found = False
-    for event in events:
-        if event.get("type") != "turn.completed" or not isinstance(event.get("usage"), dict):
+    completed_events = [
+        event
+        for event in events
+        if event.get("type") == "turn.completed" and isinstance(event.get("usage"), dict)
+    ]
+    claude_messages = [
+        event
+        for event in events
+        if event.get("usage_source") == "claude_assistant_message"
+        and isinstance(event.get("usage"), dict)
+        and any(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in event["usage"].values()
+        )
+    ]
+    # Claude's result event may omit usage altogether. Its assistant message
+    # events contain per-API-message usage, so use those as the complete source
+    # when present; otherwise retain aggregate turn usage (as in Codex).
+    if claude_messages:
+        selected_events = []
+        seen_message_ids: set[str] = set()
+        for event in claude_messages:
+            message_id = event.get("usage_message_id")
+            if isinstance(message_id, str):
+                if message_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(message_id)
+            selected_events.append(event)
+    else:
+        selected_events = completed_events
+
+    model_totals: dict[str, dict[str, int]] = {}
+    for event in selected_events:
+        if not isinstance(event.get("usage"), dict):
             continue
         usage = event["usage"]
+        event_model = event.get("usage_model")
+        usage_model = event_model if isinstance(event_model, str) else model
+        event_totals = model_totals.setdefault(
+            usage_model, {key: 0 for key in totals}
+        )
         aliases = {
             "input_tokens": ("input_tokens",),
-            "cached_input_tokens": (
-                "cached_input_tokens",
-                "cache_read_input_tokens",
-                "cache_creation_input_tokens",
-            ),
+            "cached_input_tokens": ("cached_input_tokens",),
+            "cache_read_input_tokens": ("cache_read_input_tokens",),
+            "cache_creation_input_tokens": ("cache_creation_input_tokens",),
+            "cache_creation_5m_input_tokens": ("cache_creation_5m_input_tokens",),
+            "cache_creation_1h_input_tokens": ("cache_creation_1h_input_tokens",),
             "output_tokens": ("output_tokens",),
             "reasoning_output_tokens": ("reasoning_output_tokens",),
         }
@@ -92,16 +133,37 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
             integers = [value for value in values if isinstance(value, int)]
             if integers:
                 event_found = True
-                totals[key] += sum(integers)
+                event_totals[key] += sum(integers)
+        # Codex may report a single cached-input count, while Claude reports
+        # cache reads and writes separately. Preserve both shapes without
+        # counting detailed values twice when the aggregate is also present.
+        cached_total = usage.get("cached_input_tokens")
+        if not isinstance(cached_total, int):
+            cached_total = sum(
+                int(usage.get(name, 0))
+                for name in ("cache_read_input_tokens", "cache_creation_input_tokens")
+                if isinstance(usage.get(name), int)
+            )
+            event_totals["cached_input_tokens"] += cached_total
+        if any(
+            isinstance(usage.get(name), int)
+            for name in (
+                "cached_input_tokens",
+                "cache_read_input_tokens",
+                "cache_creation_input_tokens",
+            )
+        ):
+            event_found = True
         found = found or event_found
     if not found:
         return []
     return [
         UsageRecord(
-            model=model,
+            model=usage_model,
             attribution="inferred - model not directly reported",
-            **totals,
+            **usage_totals,
         )
+        for usage_model, usage_totals in model_totals.items()
     ]
 
 

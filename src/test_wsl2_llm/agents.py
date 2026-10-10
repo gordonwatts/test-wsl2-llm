@@ -329,6 +329,10 @@ class ClaudeCodeAgentAdapter:
             normalized["item"] = {"type": "agent_message", "text": text}
             if isinstance(message, dict) and isinstance(message.get("usage"), dict):
                 normalized["usage"] = _claude_usage(message["usage"])
+                normalized["usage_source"] = "claude_assistant_message"
+                message_id = message.get("id")
+                if isinstance(message_id, str):
+                    normalized["usage_message_id"] = message_id
             return normalized
         if event_type == "result":
             normalized = dict(value)
@@ -426,7 +430,7 @@ def _claude_text(content: object) -> str:
 
 
 def _claude_usage(value: dict[str, object]) -> dict[str, int]:
-    """Map Claude usage names onto the runner's canonical token fields."""
+    """Normalize Claude's uncached, cache-read, and cache-write token counts."""
 
     def integer(*names: str) -> int:
         for name in names:
@@ -435,14 +439,32 @@ def _claude_usage(value: dict[str, object]) -> dict[str, int]:
                 return item
         return 0
 
+    cache_read = integer("cache_read_input_tokens", "cached_input_tokens")
+    creation = value.get("cache_creation")
+    creation = creation if isinstance(creation, dict) else {}
+    create_5m = integer_from(creation, "ephemeral_5m_input_tokens")
+    create_1h = integer_from(creation, "ephemeral_1h_input_tokens")
+    create_top_level = integer("cache_creation_input_tokens")
+    create_total = create_5m + create_1h if create_5m + create_1h else create_top_level
+    uncached = integer("input_tokens")
     return {
-        "input_tokens": integer("input_tokens"),
-        "cached_input_tokens": integer(
-            "cached_input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"
-        ),
+        # Claude's raw input_tokens excludes cache reads and writes. The shared
+        # UsageRecord uses total input tokens, with cached_input_tokens a subset.
+        "input_tokens": uncached + cache_read + create_total,
+        "cached_input_tokens": cache_read + create_total,
+        "cache_read_input_tokens": cache_read,
+        "cache_creation_input_tokens": create_total,
+        "cache_creation_5m_input_tokens": create_5m,
+        "cache_creation_1h_input_tokens": create_1h,
         "output_tokens": integer("output_tokens"),
         "reasoning_output_tokens": integer("reasoning_output_tokens"),
     }
+
+
+def integer_from(value: dict[str, object], name: str) -> int:
+    """Read one non-negative integer token count, excluding booleans."""
+    item = value.get(name)
+    return item if isinstance(item, int) and not isinstance(item, bool) else 0
 
 
 _ADAPTERS: dict[str, type[AgentAdapter]] = {

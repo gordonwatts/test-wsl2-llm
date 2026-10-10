@@ -110,6 +110,10 @@ def test_claude_events_normalize_success_and_preserve_unknown() -> None:
     assert assistant["usage"] == {
         "input_tokens": 11,
         "cached_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation_input_tokens": 0,
+        "cache_creation_5m_input_tokens": 0,
+        "cache_creation_1h_input_tokens": 0,
         "output_tokens": 3,
         "reasoning_output_tokens": 0,
     }

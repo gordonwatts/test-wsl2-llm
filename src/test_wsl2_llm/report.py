@@ -189,16 +189,18 @@ def render_markdown(
         [
             f"- Pricing file: `{model_information.pricing_file}`",
             f"- Currency: `{model_information.currency}`",
-            "- Token counts come from the `usage` object on each captured `turn.completed` "
-            "event in Codex stdout JSONL; the configured model is used because those events "
-            "do not report a model name.",
-            "- `input_tokens` is the total input-token count, including the "
-            "`cached_input_tokens` subset. Uncached input is calculated as "
-            "`input_tokens - cached_input_tokens`; cached input was served from the prompt "
-            "cache and is priced at its separate cached-input rate.",
+            "- Token counts come from captured agent stdout JSONL. Codex reports usage on "
+            "`turn.completed` events; Claude reports usage on assistant messages, which are "
+            "summed once per message ID when available. The configured model is used because "
+            "these events do not report a model name in the normalized report.",
+            "- `input_tokens` is total input across uncached tokens, cache reads, and cache "
+            "writes; `cached_input_tokens` is the read-plus-write subset. Claude's raw "
+            "`input_tokens` excludes cache reads and writes, so its trace normalization adds "
+            "those categories to the total.",
             "- Output tokens are reported separately. Costs use the uncached-input rate for "
-            "uncached input, the cached-input rate for cached input, and the output rate for "
-            "output tokens.",
+            "uncached input, the cache-read rate for cache hits, separate 5-minute and "
+            "1-hour cache-write rates, and the output rate for output tokens. If Claude does "
+            "not report a cache-write duration, the 5-minute rate is used.",
             "",
         ]
     )
@@ -206,21 +208,25 @@ def render_markdown(
         costs = {(model.model, model.attribution): model for model in model_information.models}
         lines.extend(
             [
-                "| Model | Attribution | Input | Cached input | Output | Reasoning output | "
-                "USD total |",
-                "| --- | --- | ---: | ---: | ---: | ---: | ---: |",
+                "| Model | Attribution | Uncached input | Cache creation | Cache read | "
+                "Total input | Output | Reasoning output | USD total |",
+                "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
             ]
         )
         for usage in result.usage:
             model = costs.get((usage.model, usage.attribution))
             lines.append(
-                f"| {usage.model} | {usage.attribution} | {_number(usage.input_tokens)} | "
-                f"{_number(usage.cached_input_tokens)} | {_number(usage.output_tokens)} | "
+                f"| {usage.model} | {usage.attribution} | "
+                f"{_number(max(0, usage.input_tokens - usage.cached_input_tokens))} | "
+                f"{_number(usage.cache_creation_input_tokens)} | "
+                f"{_number(usage.cache_read_input_tokens)} | {_number(usage.input_tokens)} | "
+                f"{_number(usage.output_tokens)} | "
                 f"{_number(usage.reasoning_output_tokens)} | "
                 f"{_money(model.total_cost if model else None)} |"
             )
         lines.append(
-            f"| **Aggregate** |  |  |  |  |  | **{_money(model_information.total_cost)}** |"
+            f"| **Aggregate** |  |  |  |  |  |  |  | "
+            f"**{_money(model_information.total_cost)}** |"
         )
     else:
         lines.append("No token usage event was reported, so no cost was calculated.")

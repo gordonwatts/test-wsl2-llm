@@ -695,7 +695,7 @@ Override the acceptance model with `--wsl-model MODEL` or `TEST_WSL2_LLM_MODEL`.
 
 ## Model pricing
 
-The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cached-input, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown costs preserve useful precision for positive sub-cent totals (and display unavailable separately from $0.00).
+The bundled [`model-pricing.yaml`](src/test_wsl2_llm/model-pricing.yaml) records exact-model token rates per million tokens. `cached_input_cost_per_million_tokens` prices cache reads. Claude cache creation defaults to 1.25 times the base input rate for 5-minute writes and 2 times for 1-hour writes; custom catalogs can override those with `cache_creation_5m_cost_per_million_tokens` and `cache_creation_1h_cost_per_million_tokens`. The private `gpt-5.6-luna` alias has no published per-token rate, so its bundled rates are deliberately `null`. Copy the file, enter verified input, cache-read, cache-write, and output rates, and select it with `--pricing-file PATH`. Result YAML contains full-precision rates, token allocation, component costs, and aggregate cost; the Markdown costs preserve useful precision for positive sub-cent totals (and display unavailable separately from $0.00).
 
 The normal progress display keeps a persistent `Latest meaningful activity` line above the five most recent events. Routine MCP polling entries remain in that bounded detail log without replacing the summary, and each event is prefixed with local `HH:MM:SS` receipt time. Use `-vv` when every returned line should be streamed.
 
@@ -862,7 +862,7 @@ Workspace input and artifact collection use tar streams over SSH, and require a 
 
 ## Token usage extraction
 
-Reports expose normalized token totals in the top-level YAML `usage` list. The Markdown report renders the same records in its **Token usage** table (or says that no token usage event was reported). Each record uses the canonical fields `input_tokens`, `cached_input_tokens`, `output_tokens`, and `reasoning_output_tokens`, together with the configured model and an attribution string.
+Reports expose normalized token totals in the top-level YAML `usage` list. The Markdown report renders the same records in its **Token usage and cost** table. `input_tokens` is total input, including cached input; `cached_input_tokens` is the cache-read plus cache-creation subset. Separate `cache_read_input_tokens` and `cache_creation_input_tokens` fields preserve the two categories. Claude cache writes also retain optional 5-minute and 1-hour token counts. Output and reasoning output remain separate.
 
 ### Codex
 
@@ -874,28 +874,31 @@ Within that raw `usage` dictionary, the exact keys and mappings are:
 | --- | --- |
 | `"input_tokens"` | `input_tokens` |
 | `"cached_input_tokens"` | `cached_input_tokens` |
-| `"cache_read_input_tokens"` | `cached_input_tokens` |
-| `"cache_creation_input_tokens"` | `cached_input_tokens` |
+| `"cache_read_input_tokens"` | `cache_read_input_tokens` and `cached_input_tokens` |
+| `"cache_creation_input_tokens"` | `cache_creation_input_tokens` and `cached_input_tokens` |
 | `"output_tokens"` | `output_tokens` |
 | `"reasoning_output_tokens"` | `reasoning_output_tokens` |
 
-For every qualifying event, the implementation keeps values passing Python's `isinstance(value, int)` check (so Python `bool` values also pass because `bool` is an `int` subtype); missing values, strings, floats, and other types contribute zero. The three cache aliases are independent: if more than one of `"cached_input_tokens"`, `"cache_read_input_tokens"`, and `"cache_creation_input_tokens"` is an integer in one event, all of those integers are added to that event's `cached_input_tokens` total. The four canonical totals are then summed across all qualifying events. If no qualifying event contains at least one integer token value, the function returns an empty list and no usage record is rendered.
+For every qualifying event, the implementation keeps integer token values; missing values and other types contribute zero. When a provider gives the aggregate `cached_input_tokens`, that value is preserved as-is. Otherwise, cache-read and cache-creation fields are added to the cached total. The values are summed across qualifying events. If no qualifying event contains at least one integer token value, no usage record is rendered.
 
-When usage is found, the returned `UsageRecord` has `model` set to the configured model, `attribution` set to `"inferred - model not directly reported"`, and the four canonical integer totals (including a zero for fields that were absent). The YAML `usage` list serializes that record; Markdown's Token usage table shows its input, cached-input, output, and reasoning-output columns.
+When usage is found, the returned `UsageRecord` has `model` set to the configured model and `attribution` set to `"inferred - model not directly reported"`. The YAML stores the total input, cached input, available cache breakdown, output, and reasoning-output counts.
 
 ### Claude Code
 
 The Claude Code adapter's `normalize_event(value)` first reshapes Claude's stream-json events into the shared trace format. For an `assistant` event, it reads the raw usage dictionary at `value["message"]["usage"]`; for a `result` event, it reads it at `value["usage"]`. It copies the event, changes `value["type"]` to `"item.completed"` for `assistant` or `"turn.completed"` for `result`, and writes the normalized dictionary at `event["usage"]`. (A `system` event becomes `"session.started"` and has no usage mapping.)
 
-The exact raw keys read by `_claude_usage(value)` are `"input_tokens"`, `"cached_input_tokens"`, `"cache_read_input_tokens"`, `"cache_creation_input_tokens"`, `"output_tokens"`, and `"reasoning_output_tokens"`. The canonical mapping is:
+Claude Code assistant messages include per-API-message `message.usage`. The trace analyzer sums each such event once per `message.id` when available. It uses a final result usage event only when the trace has no assistant-message usage. This captures runs where the final result omits usage and avoids adding the final result to a second copy of the per-message totals.
+
+Claude's raw `input_tokens` counts only uncached input. `_claude_usage(value)` normalizes it to total input by adding cache reads and cache creation. It reads `"cache_read_input_tokens"` (or the older `"cached_input_tokens"` alias), `"cache_creation_input_tokens"`, and when available the nested `"cache_creation.ephemeral_5m_input_tokens"` and `"cache_creation.ephemeral_1h_input_tokens"` counts. The canonical mapping is:
 
 | Raw key in `value` | Canonical field in normalized `event["usage"]` |
 | --- | --- |
-| `"input_tokens"` | `"input_tokens"` |
-| `"cached_input_tokens"` | `"cached_input_tokens"` |
-| `"cache_read_input_tokens"` | `"cached_input_tokens"` |
-| `"cache_creation_input_tokens"` | `"cached_input_tokens"` |
+| `"input_tokens"` | uncached portion of `"input_tokens"` total |
+| `"cache_read_input_tokens"` | `"cache_read_input_tokens"` and `"cached_input_tokens"` |
+| `"cache_creation_input_tokens"` | `"cache_creation_input_tokens"` and `"cached_input_tokens"` |
+| `"cache_creation.ephemeral_5m_input_tokens"` | `"cache_creation_5m_input_tokens"` |
+| `"cache_creation.ephemeral_1h_input_tokens"` | `"cache_creation_1h_input_tokens"` |
 | `"output_tokens"` | `"output_tokens"` |
 | `"reasoning_output_tokens"` | `"reasoning_output_tokens"` |
 
-For each canonical field, `_claude_usage` checks its aliases in the order shown and returns the first value passing Python's `isinstance(item, int)` check (so Python `bool` values also pass); missing values, strings, floats, and other types become zero. It does not sum multiple cache aliases in one Claude event. After normalization, the shared `traces.usage_from_events` function applies the Codex aggregation rules described above: only normalized `"turn.completed"` events with a dictionary at `event["usage"]` contribute, and canonical integer values are summed across those events. Therefore, usage attached to an `assistant` event (normalized as `"item.completed"`) is retained in the trace but is not included in the `UsageRecord`; usage from normalized `result` events is included. The resulting `UsageRecord` fields and YAML/Markdown report locations are the same canonical fields described above.
+Claude cache reads use the configured cached-input rate. Cache writes use 1.25 times the model's base input rate for 5-minute writes and 2 times that rate for 1-hour writes unless a pricing catalog supplies explicit rates. If the trace reports only the aggregate cache-creation count without its duration breakdown, the 5-minute rate is used. The report table shows uncached input, cache creation, cache read, total input, output, and the calculated total cost.

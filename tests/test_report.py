@@ -157,13 +157,15 @@ def test_paired_reports_share_stem_and_canonical_data(tmp_path: Path) -> None:
         "## Invocation", 1
     )[0]
     assert (
-        "| Model | Attribution | Input | Cached input | Output | Reasoning output | USD total |"
-        in token_section
+        "| Model | Attribution | Uncached input | Cache creation | Cache read | Total input | "
+        "Output | Reasoning output | USD total |" in token_section
     )
-    assert "usage` object on each captured `turn.completed` event" in token_section
-    assert "`input_tokens` is the total input-token count" in token_section
-    assert "`input_tokens - cached_input_tokens`" in token_section
-    assert "cached input was served from the prompt cache" in token_section
+    assert "Codex reports usage on `turn.completed` events" in token_section
+    assert (
+        "`input_tokens` is total input across uncached tokens, "
+        "cache reads, and cache " in token_section
+    )
+    assert "cache-read rate for cache hits" in token_section
     assert "uncached-input rate for uncached input" in token_section
     assert "Input rate / 1M" not in token_section
     amounts = re.findall(r"\$\d+\.\d+", token_section)
