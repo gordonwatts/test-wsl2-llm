@@ -11,6 +11,7 @@ import queue
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import tempfile
 import threading
@@ -375,6 +376,19 @@ def sanitized_linux_environment(
     return environment
 
 
+def _retry_readonly_removal(
+    function: Callable[[str], object],
+    path: str,
+    exc_info: tuple[type[BaseException], BaseException, Any],
+) -> None:
+    """Clear a Windows read-only attribute and retry a failed rmtree operation."""
+    error = exc_info[1]
+    if not isinstance(error, PermissionError):
+        raise error
+    os.chmod(path, stat.S_IWRITE)
+    function(path)
+
+
 class LinuxClient:
     """Run an isolated Codex workspace directly on a native Linux host."""
 
@@ -525,7 +539,10 @@ class LinuxClient:
         return str(run_root)
 
     def cleanup_workspace(self, run_root: str) -> None:
-        shutil.rmtree(run_root)
+        if os.name == "nt":
+            shutil.rmtree(run_root, onerror=_retry_readonly_removal)
+        else:
+            shutil.rmtree(run_root)
 
     # These helpers keep the local target independent of GNU find/coreutils.
     # The WSL target intentionally continues to use its existing shell helpers.
