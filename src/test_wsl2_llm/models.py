@@ -438,6 +438,8 @@ class TemplateCell(BaseModel):
     model_selector: str
     repetition: int
     fingerprint: str
+    prompt_template: str | None = None
+    question_values: dict[str, Any] = Field(default_factory=dict)
 
 
 class ConversationTurn(BaseModel):

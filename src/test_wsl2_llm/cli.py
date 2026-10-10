@@ -741,7 +741,7 @@ def template_run(
         if config_only:
             return
 
-        jobs: list[tuple[int, str, int, object]] = []
+        jobs: list[tuple[int, str, int, object, dict[str, object]]] = []
         destinations: set[str] = set()
         for model_index, model_config in enumerate(resolved_models):
             for question_index, (identifier, prompt_text, question_values) in enumerate(
@@ -794,7 +794,13 @@ def template_run(
                     if destination_key in destinations:
                         raise ValueError(f"duplicate result destination: {paths[0]}")
                     destinations.add(destination_key)
-                    cell = template_cell_metadata(identifier, repetition, run_config)
+                    cell = template_cell_metadata(
+                        identifier,
+                        repetition,
+                        run_config,
+                        prompt_template=batch.prompt_template,
+                        question_values=question_values,
+                    )
                     check = inspect_template_result(paths[0], paths[1], cell)
                     label = f"{identifier} [{run_config.model_selector}] repeat {repetition}"
                     if not resolved_base.overwrite and check.state == "succeeded":
@@ -851,6 +857,7 @@ def template_run(
                             identifier,
                             repetition,
                             run_config,
+                            question_values,
                         )
                     )
 
@@ -868,6 +875,7 @@ def template_run(
             identifier: str,
             repetition: int,
             run_config: TestConfig,
+            question_values: dict[str, object],
             repeat_display: _RepeatDisplay | None,
         ) -> tuple[int, str, int, Path | None, Path | None, int, str | None]:
             job_id = f"template-{identifier}-{repetition}"
@@ -883,7 +891,13 @@ def template_run(
                 )
 
             def persist(collected: TestResult) -> None:
-                collected.template_cell = template_cell_metadata(identifier, repetition, run_config)
+                collected.template_cell = template_cell_metadata(
+                    identifier,
+                    repetition,
+                    run_config,
+                    prompt_template=batch.prompt_template,
+                    question_values=question_values,
+                )
                 write_reports(collected, run_config.output, resolved_base.overwrite)
 
             result = run_test(
@@ -897,7 +911,13 @@ def template_run(
                 cancellation=coordinator,
                 job_id=job_id,
             )
-            result.template_cell = template_cell_metadata(identifier, repetition, run_config)
+            result.template_cell = template_cell_metadata(
+                identifier,
+                repetition,
+                run_config,
+                prompt_template=batch.prompt_template,
+                question_values=question_values,
+            )
             markdown_path, yaml_path = write_reports(result, run_config.output, True)
             return (
                 question_index,
@@ -916,9 +936,15 @@ def template_run(
             executor = ThreadPoolExecutor(max_workers=min(effective_threads, len(jobs)))
             future_jobs = {
                 executor.submit(
-                    run_one, question_index, identifier, repetition, run_config, repeat_display
+                    run_one,
+                    question_index,
+                    identifier,
+                    repetition,
+                    run_config,
+                    question_values,
+                    repeat_display,
                 ): (question_index, identifier, repetition)
-                for question_index, identifier, repetition, run_config in jobs
+                for question_index, identifier, repetition, run_config, question_values in jobs
             }
             futures = list(future_jobs)
             seen: set[object] = set()

@@ -38,13 +38,22 @@ def template_cell_fingerprint(config: TestConfig) -> str:
     """Hash effective settings using the same canonical identity as run provenance."""
     return effective_configuration_hash(config)
 
-def template_cell_metadata(question_id: str, repetition: int, config: TestConfig) -> TemplateCell:
+def template_cell_metadata(
+    question_id: str,
+    repetition: int,
+    config: TestConfig,
+    *,
+    prompt_template: str | None = None,
+    question_values: dict[str, Any] | None = None,
+) -> TemplateCell:
     """Build the persisted identity for one expanded template cell."""
     return TemplateCell(
         question_id=question_id,
         model_selector=config.model_selector,
         repetition=repetition,
         fingerprint=template_cell_fingerprint(config),
+        prompt_template=prompt_template,
+        question_values=question_values or {},
     )
 
 
