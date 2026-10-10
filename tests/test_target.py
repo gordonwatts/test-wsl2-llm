@@ -121,7 +121,7 @@ def test_windows_local_target_uses_powershell_for_agent_commands() -> None:
 
 def test_windows_local_target_translates_git_clone_to_powershell() -> None:
     client = WindowsClient(source_environment={"Path": r"C:\\tools"})
-    command = client.login_bash(
+    command = client.shell_command(
         'git clone --depth 1 --branch "$2" -- "$1" "$3"',
         "https://example.test/marketplace.git",
         "main",
