@@ -344,6 +344,11 @@ printf '%s\\n' "$run_root"
         self._owned_workspace_tokens[run_root] = token
         return run_root
 
+    def storage_capacity(self, parent: str) -> list[dict[str, object]]:
+        from test_wsl2_llm.storage import remote_storage_capacity
+
+        return remote_storage_capacity(self, parent)
+
     def cleanup_workspace(self, run_root: str) -> None:
         token = self._owned_workspace_tokens.get(run_root)
         if token is None:
