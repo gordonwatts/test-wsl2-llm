@@ -8,7 +8,7 @@ body{max-width:1500px;margin:auto;padding:1.5rem}h1,h2{color:#173d64}h2{margin-t
 .card,section{background:white;border:1px solid #d6e0e8;border-radius:10px;padding:1rem;box-shadow:0 1px 3px #173d6410}
 .card strong{display:block;font-size:2rem;color:#153b63}.filters{display:flex;flex-wrap:wrap;gap:1rem;align-items:end}
 label{display:grid;gap:.3rem;font-weight:600}input{font:inherit;max-width:100%;padding:.5rem;border:1px solid #9aaebb;border-radius:5px}
-.filter{position:relative;min-width:185px;max-width:245px}.filter summary{cursor:pointer;border:1px solid #9aaebb;border-radius:5px;padding:.55rem;background:white;list-style:none}.filter summary::-webkit-details-marker{display:none}.filter summary:after{content:'▾';float:right;margin-left:.5rem}.filter[open] summary{border-color:#1676ae}.filter-menu{position:absolute;z-index:5;top:100%;left:0;min-width:100%;max-height:320px;overflow:auto;padding:.55rem;background:white;border:1px solid #9aaebb;border-radius:5px;box-shadow:0 6px 18px #173d6430}.filter-actions{display:flex;gap:.3rem;margin-bottom:.3rem}.filter-actions button{padding:.25rem .5rem}.filter-options label{display:flex;align-items:flex-start;gap:.45rem;padding:.25rem;font-weight:400;overflow-wrap:anywhere;cursor:pointer}.filter-options input{margin:.15rem 0 0;flex:none}.filter-options label:hover{background:#eaf1f7}
+.filter{position:relative;min-width:185px;max-width:245px}.filter summary{cursor:pointer;border:1px solid #9aaebb;border-radius:5px;padding:.55rem;background:white;list-style:none}.filter summary::-webkit-details-marker{display:none}.filter summary:after{content:'▾';float:right;margin-left:.5rem}.filter[open] summary{border-color:#1676ae}.filter-menu{position:absolute;z-index:5;top:100%;left:0;width:max-content;min-width:100%;max-width:min(32rem,calc(100vw - 5rem));max-height:320px;overflow:auto;padding:.55rem;background:white;border:1px solid #9aaebb;border-radius:5px;box-shadow:0 6px 18px #173d6430}.filter-actions{display:flex;gap:.3rem;margin-bottom:.3rem}.filter-actions button{padding:.25rem .5rem}.filter-options label{display:flex;align-items:flex-start;gap:.45rem;padding:.25rem;font-weight:400;overflow-wrap:anywhere;cursor:pointer}.filter-options input{margin:.15rem 0 0;flex:none}.filter-options label:hover{background:#eaf1f7}
 .scroll{overflow:auto}table{border-collapse:collapse;width:100%;font-size:.9rem}th,td{padding:.55rem .7rem;border-bottom:1px solid #dce5eb;text-align:left;vertical-align:top}
 th{background:#eaf1f7;position:sticky;top:0;white-space:nowrap}td.num{text-align:right;white-space:nowrap}.empty{color:#718293}
 .heat{font-weight:600;text-align:center;white-space:nowrap}.chart{min-height:260px;position:relative}.chart svg{width:100%;height:330px}
@@ -45,6 +45,23 @@ const avg=(rows,key)=>rows.length?rows.reduce((s,r)=>s+r[key],0)/rows.length:nul
 const sort=a=>[...a].sort((x,y)=>String(x).localeCompare(String(y),undefined,{numeric:true}));
 function questionText(r){const value=r.question_values?.question;return value==null?String(r.question):typeof value==='string'?value:JSON.stringify(value);}
 function insertedValues(r){return esc(questionText(r));}
+// Let menus size to their options, then shift them left when the viewport edge
+// would clip them. Recalculate after a resize or a changed summary width.
+if(typeof window!=='undefined'){
+ const filters=[...document.querySelectorAll('.filter')];
+ function positionMenu(filter){
+  if(!filter.open)return;
+  const menu=filter.querySelector('.filter-menu');menu.style.left='0px';
+  const overflow=menu.getBoundingClientRect().right-(document.documentElement.clientWidth-24);
+  if(overflow>0)menu.style.left=`${-overflow}px`;
+ }
+ for(const filter of filters){
+  filter.addEventListener('toggle',()=>positionMenu(filter));
+  filter.addEventListener('change',()=>positionMenu(filter));
+  filter.addEventListener('click',()=>requestAnimationFrame(()=>positionMenu(filter)));
+ }
+ window.addEventListener('resize',()=>filters.forEach(positionMenu));
+}
 const fields=['directory','model','question','agent','target','outcome'];
 const names={directory:'directories',model:'models',question:'questions',agent:'agents',target:'targets',outcome:'outcomes'};
 const choices=Object.fromEntries(fields.map(k=>[k,k==='outcome'?['pass','fail']:sort(new Set(all.map(r=>r[k])))]));
