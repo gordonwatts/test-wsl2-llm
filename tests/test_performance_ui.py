@@ -28,7 +28,35 @@ function element(id){
  }
  return elements.get(id);
 }
-vm.runInNewContext(code,{document:{getElementById:element},URLSearchParams});
+const filters=['directory','model','question','agent','target','outcome'].map(field=>({
+ field,open:false,contains(target){return target.field===field}
+}));
+const documentHandlers={};
+const document={getElementById:element,
+ addEventListener(name,fn){documentHandlers[name]=fn},
+ querySelectorAll(selector){
+  assert.equal(selector,'details.filter[open]');return filters.filter(f=>f.open)
+ }
+};
+vm.runInNewContext(code,{document,URLSearchParams});
+// Outside clicks dismiss every filter, but preserve trial explorer details.
+const trialDetails={open:true};
+for(const filter of filters){
+ filter.open=true;
+ for(const control of ['summary','checkbox','label','all','clear','menu']){
+  documentHandlers.click({target:{field:filter.field,control}});
+  assert.equal(filter.open,true,filter.field+': '+control);
+ }
+ documentHandlers.click({target:trialDetails});
+ assert.equal(filter.open,false,filter.field+': outside click');
+ assert.equal(trialDetails.open,true);
+}
+// Clicking another filter keeps that filter open and dismisses its siblings.
+for(const filter of filters)filter.open=true;
+documentHandlers.click({target:{field:'model',control:'summary'}});
+assert.deepEqual(filters.map(f=>f.open),[false,true,false,false,false,false]);
+documentHandlers.click({target:{id:'chart'}});
+assert.ok(filters.every(f=>!f.open));
 const count=()=>Number(element('cards').innerHTML.match(/Trials<strong>(\d+)<\/strong>/)[1]);
 function choose(field,values){
  element(field+'-clear').fire('click');
@@ -107,7 +135,8 @@ function element(id){
  return elements.get(id);
 }
 const context={
- document:{getElementById:element},location:state.location,
+ document:{getElementById:element,addEventListener(){},querySelectorAll(){return []}},
+ location:state.location,
  history:{replaceState(_state,_title,url){state.urls.push(url);}},URLSearchParams
 };
 vm.runInNewContext(code,context);

@@ -81,6 +81,12 @@ for(const key of fields){$(key+'-options').innerHTML=choices[key].map(v=>`<label
  $(key+'-all').addEventListener('click',()=>{selected[key]=new Set(choices[key]);updateFilter(key);updateUrl();page=0;render();});
  $(key+'-clear').addEventListener('click',()=>{selected[key].clear();updateFilter(key);updateUrl();page=0;render();});updateFilter(key);
 }
+// Keep multiselect controls open while interacting inside their own menu.
+document.addEventListener('click',event=>{
+ for(const filter of document.querySelectorAll('details.filter[open]')){
+  if(!filter.contains(event.target))filter.open=false;
+ }
+});
 const questionName=(record,singleDirectory)=>singleDirectory?record.question:record.question_label;
 const modelName=(record,singleDirectory)=>singleDirectory?record.model:`${record.directory} / ${record.model}`;
 function matrix(rows,models,questions,kind,singleDirectory){let html='<table><thead><tr><th>Question</th>'+models.map(m=>`<th>${esc(m)}</th>`).join('')+'</tr></thead><tbody>';
