@@ -14,6 +14,12 @@ from test_wsl2_llm.models import TestConfig as Config
 from test_wsl2_llm.report import render_markdown
 
 
+@pytest.fixture(autouse=True)
+def healthy_mock_storage(monkeypatch):
+    """Lifecycle tests replace the transport; storage has its own probe tests."""
+    monkeypatch.setattr(runner.WslClient, "storage_capacity", lambda self, parent: [])
+
+
 @pytest.mark.parametrize("cleanup_fails", [False, True])
 @pytest.mark.parametrize("exit_code", [0, 1, 124, 130])
 @pytest.mark.parametrize("keep", [False, True])
