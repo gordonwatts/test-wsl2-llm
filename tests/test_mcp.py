@@ -352,6 +352,7 @@ def test_runner_writes_selected_servers_to_isolated_config(
             raise RuntimeError("stop after writing isolated config")
 
     monkeypatch.setattr(module.WslClient, "bash", fake_bash)
+    monkeypatch.setattr(module.WslClient, "storage_capacity", lambda self, parent: [])
     monkeypatch.setattr(module.WslClient, "login_bash", fake_bash)
     monkeypatch.setattr(module, "_write_wsl_file", record_write)
     monkeypatch.setattr(module, "_inventory", lambda *_: [])
@@ -382,6 +383,7 @@ def test_runner_writes_selected_servers_to_isolated_config(
 
 def test_missing_server_fails_before_wsl(monkeypatch, tmp_path):
     local_config(monkeypatch, tmp_path, "")
+    monkeypatch.setattr("test_wsl2_llm.runner.WslClient.storage_capacity", lambda *a: [])
 
     def unexpected(*_args, **_kwargs):
         pytest.fail("WSL must not be invoked for an unknown server")

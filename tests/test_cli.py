@@ -443,6 +443,7 @@ def test_connect_rejects_resume_with_shell_access() -> None:
 
 
 def test_connect_applies_saved_environment_policy(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("test_wsl2_llm.runner.WslClient.storage_capacity", lambda *a: [])
     removed_path = r"C:\TEST_WSL2_LLM_REMOVE_FROM_PATH"
     result = sample_result()
     result.configuration["environment"] = {
@@ -473,6 +474,7 @@ def test_connect_applies_saved_environment_policy(monkeypatch, tmp_path: Path) -
 
 
 def test_connect_double_verbose_reports_no_removed_paths(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setattr("test_wsl2_llm.runner.WslClient.storage_capacity", lambda *a: [])
     result = sample_result()
     result.configuration["environment"] = {
         "unset": [],

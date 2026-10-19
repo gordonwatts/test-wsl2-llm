@@ -13,6 +13,7 @@ import shutil
 import signal
 import stat
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -56,6 +57,12 @@ from test_wsl2_llm.models import (
 )
 from test_wsl2_llm.pricing import load_and_calculate_costs
 from test_wsl2_llm.provenance import build_provenance
+from test_wsl2_llm.storage import (
+    StoragePreflightError,
+    check_storage,
+    inspect_storage,
+    remote_storage_capacity,
+)
 from test_wsl2_llm.target import ExecutionTarget, SshTarget
 from test_wsl2_llm.traces import (
     final_message_from_events,
@@ -343,6 +350,9 @@ class WslClient:
         )
         return run_root
 
+    def storage_capacity(self, parent: str) -> list[dict[str, Any]]:
+        return remote_storage_capacity(self, parent)
+
     def cleanup_workspace(self, run_root: str) -> None:
         """Remove a per-run workspace root from the target."""
         self.bash('rm -rf -- "$1"', run_root)
@@ -538,6 +548,12 @@ class LinuxClient:
         (run_root / "workspace").mkdir()
         (run_root / ".harness" / "inputs").mkdir(parents=True)
         return str(run_root)
+
+    def storage_capacity(self, parent: str) -> list[dict[str, Any]]:
+        # This class also backs macOS and Windows; the check is Linux-specific.
+        if sys.platform != "linux":
+            return []
+        return inspect_storage(parent)
 
     def cleanup_workspace(self, run_root: str) -> None:
         if os.name == "nt":
@@ -1155,6 +1171,15 @@ def run_test(
             ssh_connect_timeout_seconds=config.ssh_connect_timeout_seconds,
         )
     )
+    workspace_parent = (
+        config.remote_workspace_parent if config.target == "ssh" else config.wsl_parent
+    )
+    try:
+        check_storage(client, workspace_parent)
+    except StoragePreflightError:
+        if cancellation is not None:
+            cancellation.cancel()
+        raise
     state = RunState()
     codex_version: str | None = None
     workspace_path: str | None = None
@@ -1182,7 +1207,7 @@ def run_test(
     plugin_versions: dict[str, str] = {}
     mcp_server_plugins: dict[str, str] = {}
     mcp_server_checks: list[McpServerCheck] = []
-    resolved_parent = config.wsl_parent
+    resolved_parent = workspace_parent
     resolved_auth: str | None = config.auth_source
     model_information = ModelInformation(
         pricing_file=config.pricing_file or "bundled:model-pricing.yaml",
@@ -1204,7 +1229,7 @@ def run_test(
                 if config.agent == "codex" and before_codex_launch is not None
                 else adapter.preflight(client).version
             )
-            resolved_parent = _resolve_wsl_path(client, config.wsl_parent, require_directory=True)
+            resolved_parent = _resolve_wsl_path(client, resolved_parent, require_directory=True)
             if adapter.capabilities.requires_auth:
                 resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
 
@@ -1482,6 +1507,7 @@ def continue_test(
         )
     )
     run_root = workspace_path.rsplit("/", 1)[0]
+    check_storage(client, run_root.rsplit("/", 1)[0] or "/")
     codex_home = f"{run_root}/.harness/{adapter.home_name}"
     state = RunState()
     history = list(previous.conversation) or [

@@ -39,6 +39,7 @@ from test_wsl2_llm.runner import (
     _mcp_credentials_copy_script,
     create_execution_target,
 )
+from test_wsl2_llm.storage import StoragePreflightError, check_storage
 from test_wsl2_llm.target import ExecutionTarget
 from test_wsl2_llm.template import (
     ensure_template_schema,
@@ -303,20 +304,24 @@ def run(
             if not coordinator.claim(job_id):
                 return index, None, None, 130, "not started: cancellation requested"
             run_config = resolved.model_copy(update={"output": run_output})
-            result = run_test(
-                run_config,
-                verbosity=verbose,
-                console=console,
-                live_progress=repeat_display is None,
-                log_callback=repeat_display.log if repeat_display is not None else None,
-                invocation=sys.argv,
-                report_callback=lambda collected: write_reports(
-                    collected, run_output, resolved.overwrite
-                ),
-                cancellation=coordinator,
-                before_codex_launch=lambda: launch_gate.wait(coordinator),
-                job_id=job_id,
-            )
+            try:
+                result = run_test(
+                    run_config,
+                    verbosity=verbose,
+                    console=console,
+                    live_progress=repeat_display is None,
+                    log_callback=repeat_display.log if repeat_display is not None else None,
+                    invocation=sys.argv,
+                    report_callback=lambda collected: write_reports(
+                        collected, run_output, resolved.overwrite
+                    ),
+                    cancellation=coordinator,
+                    before_codex_launch=lambda: launch_gate.wait(coordinator),
+                    job_id=job_id,
+                )
+            except StoragePreflightError:
+                coordinator.cancel()
+                raise
             markdown_path, yaml_path = write_reports(result, run_output, True)
             return index, markdown_path, yaml_path, result.run.exit_code, None
 
@@ -340,6 +345,8 @@ def run(
                 try:
                     completed_runs.append(future.result())  # type: ignore[attr-defined]
                 except BaseException as exc:
+                    if isinstance(exc, StoragePreflightError):
+                        coordinator.cancel()
                     worker_errors.append(str(exc) or exc.__class__.__name__)
                 if repeat_display is not None:
                     repeat_display.advance()
@@ -903,18 +910,22 @@ def template_run(
                 )
                 write_reports(collected, run_config.output, resolved_base.overwrite)
 
-            result = run_test(
-                run_config,
-                verbosity=verbose,
-                console=console,
-                live_progress=repeat_display is None,
-                log_callback=repeat_display.log if repeat_display is not None else None,
-                invocation=sys.argv,
-                report_callback=persist,
-                cancellation=coordinator,
-                before_codex_launch=lambda: launch_gate.wait(coordinator),
-                job_id=job_id,
-            )
+            try:
+                result = run_test(
+                    run_config,
+                    verbosity=verbose,
+                    console=console,
+                    live_progress=repeat_display is None,
+                    log_callback=repeat_display.log if repeat_display is not None else None,
+                    invocation=sys.argv,
+                    report_callback=persist,
+                    cancellation=coordinator,
+                    before_codex_launch=lambda: launch_gate.wait(coordinator),
+                    job_id=job_id,
+                )
+            except StoragePreflightError:
+                coordinator.cancel()
+                raise
             result.template_cell = template_cell_metadata(
                 identifier,
                 repetition,
@@ -960,6 +971,8 @@ def template_run(
                 try:
                     completed_runs.append(future.result())  # type: ignore[attr-defined]
                 except BaseException as exc:
+                    if isinstance(exc, StoragePreflightError):
+                        coordinator.cancel()
                     worker_errors.append(str(exc) or exc.__class__.__name__)
                 if repeat_display is not None:
                     repeat_display.advance()
@@ -1147,6 +1160,9 @@ def connect(
         )
         if access == "shell" and resume:
             raise ValueError("--resume is only supported with --access codex")
+        if access == "codex":
+            run_root = posixpath.dirname(workspace)
+            check_storage(client, posixpath.dirname(run_root) or "/")
         command = _connect_command(result, resume=resume, access=access, client=client)
         description = "interactive shell" if access == "shell" else "interactive Codex"
         console.print(f"Connecting to {workspace} ({description}; press Ctrl-D to exit)")

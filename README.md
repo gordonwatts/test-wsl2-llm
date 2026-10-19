@@ -739,6 +739,25 @@ Cleanup failures are included in the report and leave the workspace marked retai
 
 If report writing fails, the workspace is preserved for recovery. Reports are then
 updated after cleanup to record whether removal succeeded.
+
+Before launching an agent on Linux (WSL, native Linux, or SSH), the harness
+checks `/tmp` and the selected testing parent directory. Each must have at least
+1 GB (1,000,000,000 bytes) available to the current user and at least one free
+inode. Canonical paths naming the same directory are checked once. For a missing
+testing parent, capacity is measured at its nearest existing ancestor without
+creating directories. SSH uses `remote_workspace_parent`; other Linux targets
+use `wsl_parent`.
+
+Insufficient capacity or a failed inspection raises `StoragePreflightError`
+before agent preflight, credential setup, plugin installation, or execution.
+The CLI exits with an error showing the directory and available/required values;
+repeat and template batches cancel active work and stop admitting queued runs.
+Continuations and interactive Codex connections check the retained testing
+location as well. Native Windows and macOS retain their existing behavior.
+Use `df -h /tmp` and `df -i /tmp` to diagnose host storage: free bytes alone
+do not rule out inode exhaustion. The harness leaves storage configuration and
+temporary-file locations to the host administrator.
+
 ## Claude plugins and MCP servers
 
 Claude runs use Claude-native configuration, not Codex TOML. Marketplace sources
