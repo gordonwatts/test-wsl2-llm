@@ -1,3 +1,5 @@
+import pytest
+
 from test_wsl2_llm.opencode_events import normalize_opencode_event
 from test_wsl2_llm.traces import final_message_from_events, usage_from_events
 
@@ -95,3 +97,25 @@ def test_unknown_event_is_preserved() -> None:
     event = {"type": "future_event", "part": {"value": 1}}
 
     assert normalize_opencode_event(event) == event
+
+
+
+def test_reported_step_cost_is_summed_once_and_missing_cost_stays_unknown() -> None:
+    def event(message_id, cost):
+        return normalize_opencode_event({
+            "type": "step_finish",
+            "part": {"messageID": message_id, "cost": cost,
+                     "tokens": {"input": 3, "output": 37, "cache": {"write": 8336}}},
+        })
+
+    first = event("first", 0.0010608)
+    second = event("second", 0.000096785)
+    usage = usage_from_events([first, first, second], "openai/gpt-6-luna")
+    assert usage[0].reported_cost == pytest.approx(0.001157585)
+    assert usage_from_events([first, event("missing", None)], "model")[0].reported_cost is None
+
+
+@pytest.mark.parametrize("invalid", [None, True, -1, float("nan"), float("inf"), "0.1"])
+def test_invalid_reported_cost_is_not_normalized(invalid) -> None:
+    event = normalize_opencode_event({"type": "step_finish", "part": {"cost": invalid}})
+    assert "usage_cost" not in event

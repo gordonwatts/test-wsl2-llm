@@ -610,7 +610,7 @@ class LinuxClient:
             matches = search.parent.glob(search.name) if search.parent != search else []
         else:
             matches = [search]
-        return sorted(str(match) for match in matches if match.is_file())
+        return sorted(match.as_posix() for match in matches if match.is_file())
 
     def inventory(self, workspace: str) -> list[WorkspaceFile]:
         root = Path(workspace)
@@ -2029,6 +2029,8 @@ def _copy_back_files(
     """Copy requested workspace files beside the result and collect safe previews."""
     if not sources:
         return []
+    if isinstance(client, WindowsClient):
+        workspace = workspace.replace("\\", "/")
     output_stub = _output_stub(output)
     output_stub.parent.mkdir(parents=True, exist_ok=True)
     copied: list[CopiedBackFile] = []
@@ -2036,6 +2038,8 @@ def _copy_back_files(
     seen_sources: set[str] = set()
     for pattern in sources:
         matches = _expand_copy_back_pattern(client, pattern, workspace)
+        if isinstance(client, WindowsClient):
+            matches = [match.replace("\\", "/") for match in matches]
         if not matches:
             LOGGER.warning("copy-back pattern did not match any files: %s", pattern)
             if missing is not None:

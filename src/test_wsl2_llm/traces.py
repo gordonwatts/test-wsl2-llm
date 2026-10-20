@@ -128,12 +128,14 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
         selected_events = completed_events
 
     model_totals: dict[str, dict[str, int]] = {}
+    model_costs: dict[str, list[float | None]] = {}
     for event in selected_events:
         if not isinstance(event.get("usage"), dict):
             continue
         usage = event["usage"]
         event_model = event.get("usage_model")
         usage_model = event_model if isinstance(event_model, str) else model
+        model_costs.setdefault(usage_model, []).append(event.get("usage_cost"))
         event_totals = model_totals.setdefault(
             usage_model, {key: 0 for key in totals}
         )
@@ -181,6 +183,11 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
         UsageRecord(
             model=usage_model,
             attribution="inferred - model not directly reported",
+            reported_cost=(
+                sum(model_costs[usage_model])
+                if all(cost is not None for cost in model_costs[usage_model])
+                else None
+            ),
             **usage_totals,
         )
         for usage_model, usage_totals in model_totals.items()

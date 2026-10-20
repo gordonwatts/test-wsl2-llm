@@ -93,6 +93,10 @@ def _calculate(
             and output_cost is not None
             else None
         )
+        total_cost_source = "catalog"
+        if total is None and record.reported_cost is not None:
+            total = record.reported_cost
+            total_cost_source = "agent_reported"
         costs.append(
             ModelCost(
                 model=record.model,
@@ -118,6 +122,8 @@ def _calculate(
                 cache_creation_1h_cost=create_1h_cost,
                 output_cost=output_cost,
                 total_cost=total,
+                reported_cost=record.reported_cost,
+                total_cost_source=total_cost_source,
                 source=_optional_string(raw.get("source")),
                 note=_optional_string(raw.get("note")),
             )

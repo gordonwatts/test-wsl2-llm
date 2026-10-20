@@ -294,6 +294,7 @@ class TraceEvent(BaseModel):
 class UsageRecord(BaseModel):
     model: str
     attribution: str
+    reported_cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     input_tokens: int = 0
     cached_input_tokens: int = 0
     cache_read_input_tokens: int = 0
@@ -329,6 +330,8 @@ class ModelCost(BaseModel):
     cache_creation_1h_cost: float | None = None
     output_cost: float | None = None
     total_cost: float | None = None
+    reported_cost: float | None = None
+    total_cost_source: Literal["catalog", "agent_reported"] = "catalog"
     source: str | None = None
     note: str | None = None
 

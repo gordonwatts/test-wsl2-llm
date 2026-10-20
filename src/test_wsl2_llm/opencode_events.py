@@ -1,5 +1,6 @@
 """Normalize OpenCode's newline-delimited JSON events for shared trace handling."""
 
+import math
 from typing import Any
 
 
@@ -72,6 +73,14 @@ def normalize_opencode_event(value: dict[str, object]) -> dict[str, object]:
             "usage": usage,
             "usage_source": "opencode_step_finish",
         }
+        cost = part.get("cost")
+        if (
+            isinstance(cost, (int, float))
+            and not isinstance(cost, bool)
+            and math.isfinite(cost)
+            and cost >= 0
+        ):
+            normalized["usage_cost"] = float(cost)
         if isinstance(message_id, str):
             normalized["usage_message_id"] = message_id
         return normalized

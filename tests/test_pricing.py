@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 from test_wsl2_llm.models import UsageRecord
@@ -115,3 +116,27 @@ def test_bundled_catalog_distinguishes_gpt_6_cached_rates() -> None:
 
     assert all(model.pricing_available for model in result.models)
     assert [model.total_cost for model in result.models] == [10.1, 10.2, 0.51, 51.0]
+
+
+
+def test_incomplete_cache_write_rates_use_explicit_agent_reported_total() -> None:
+    usage = UsageRecord(
+        model="openai/gpt-6-luna", attribution="inferred", input_tokens=16763,
+        cached_input_tokens=16757, cache_read_input_tokens=8336,
+        cache_creation_input_tokens=8421, output_tokens=42, reported_cost=0.001157585,
+    )
+    result = load_and_calculate_costs([usage], None)
+    assert result.total_cost == pytest.approx(0.001157585)
+    cost = result.models[0]
+    assert cost.total_cost_source == "agent_reported"
+    assert cost.cache_creation_5m_cost is None
+    assert cost.reported_cost == pytest.approx(0.001157585)
+    # Catalog calculations retain precedence whenever their rates are complete.
+    usage.cache_creation_input_tokens = 0
+    usage.cached_input_tokens = usage.cache_read_input_tokens
+    result = load_and_calculate_costs([usage], None)
+    assert result.models[0].total_cost_source == "catalog"
+    assert result.total_cost != usage.reported_cost
+    usage.cache_creation_input_tokens = 8421
+    usage.reported_cost = None
+    assert load_and_calculate_costs([usage], None).total_cost is None
