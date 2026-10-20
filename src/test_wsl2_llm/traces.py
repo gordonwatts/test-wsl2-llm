@@ -4,7 +4,7 @@ import json
 from collections.abc import Iterator
 from typing import Any
 
-from test_wsl2_llm.models import TimingField, TraceEvent, UsageRecord
+from test_wsl2_llm.models import SessionTrace, TimingField, TraceEvent, UsageRecord
 
 TIMING_WORDS = (
     "timestamp",
@@ -164,6 +164,106 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
             **usage_totals,
         )
         for usage_model, usage_totals in model_totals.items()
+    ]
+
+
+def codex_subagent_usage_from_traces(
+    events: list[dict[str, Any]],
+    session_traces: list[SessionTrace],
+    previous_session_traces: list[SessionTrace] | None = None,
+) -> list[UsageRecord]:
+    """Price child threads from Codex session traces, excluding parent stdout usage.
+
+    Session token counts are cumulative. A continuation keeps old trace files, so
+    only positive increments after the previous snapshot belong to this run.
+    """
+    root_id = next(
+        (
+            event.get("thread_id")
+            for event in events
+            if event.get("type") == "thread.started"
+            and isinstance(event.get("thread_id"), str)
+        ),
+        None,
+    )
+    if root_id is None:
+        return []
+
+    prior = {trace.path: trace.content for trace in previous_session_traces or []}
+    children: dict[str, tuple[str, list[tuple[int, dict[str, Any]]], int]] = {}
+    for trace in session_traces:
+        rows = [
+            (index, parsed)
+            for index, line in enumerate(trace.content.splitlines())
+            if (parsed := parse_json_line(line))
+        ]
+        metadata = next(
+            (row.get("payload") for _, row in rows if row.get("type") == "session_meta"), None
+        )
+        if not isinstance(metadata, dict) or not isinstance(metadata.get("id"), str):
+            continue
+        source = metadata.get("source")
+        subagent = source.get("subagent") if isinstance(source, dict) else None
+        spawn = subagent.get("thread_spawn") if isinstance(subagent, dict) else None
+        parent_id = spawn.get("parent_thread_id") if isinstance(spawn, dict) else None
+        if not isinstance(parent_id, str):
+            continue
+        old_content = prior.get(trace.path, "")
+        # A replaced or truncated file cannot be safely compared with the old
+        # snapshot; count it as a new trace rather than dropping its usage.
+        old_lines = len(old_content.splitlines()) if trace.content.startswith(old_content) else 0
+        children[metadata["id"]] = (parent_id, rows, old_lines)
+
+    descendants = {root_id}
+    pending = dict(children)
+    while pending:
+        found = {
+            thread_id for thread_id, (parent_id, _, _) in pending.items()
+            if parent_id in descendants
+        }
+        if not found:
+            break
+        descendants.update(found)
+        for thread_id in found:
+            pending.pop(thread_id)
+
+    totals: dict[str, dict[str, int]] = {}
+    fields = ("input_tokens", "cached_input_tokens", "output_tokens", "reasoning_output_tokens")
+    for thread_id in sorted(descendants - {root_id}):
+        _, rows, old_lines = children[thread_id]
+        previous_total = {field: 0 for field in fields}
+        active_model: str | None = None
+        for index, row in rows:
+            payload = row.get("payload")
+            if row.get("type") == "turn_context" and isinstance(payload, dict):
+                candidate = payload.get("model")
+                if isinstance(candidate, str) and candidate:
+                    active_model = candidate
+            if row.get("type") != "event_msg" or not isinstance(payload, dict):
+                continue
+            info = payload.get("info")
+            if payload.get("type") != "token_count" or not isinstance(info, dict):
+                continue
+            usage = info.get("total_token_usage")
+            if not isinstance(usage, dict):
+                continue
+            current = {}
+            for field in fields:
+                value = usage.get(field)
+                current[field] = (
+                    value if isinstance(value, int) and not isinstance(value, bool) else 0
+                )
+            if index >= old_lines and active_model:
+                model_totals = totals.setdefault(active_model, {field: 0 for field in fields})
+                for field in fields:
+                    delta = current[field] - previous_total[field]
+                    model_totals[field] += delta if delta >= 0 else current[field]
+            previous_total = current
+
+    return [
+        UsageRecord(model=model, attribution="reported in Codex subagent trace", **counts)
+        for model, counts in sorted(totals.items())
+        if any(counts.values())
     ]
 
 

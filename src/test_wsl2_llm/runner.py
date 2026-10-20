@@ -65,6 +65,7 @@ from test_wsl2_llm.storage import (
 )
 from test_wsl2_llm.target import ExecutionTarget, SshTarget
 from test_wsl2_llm.traces import (
+    codex_subagent_usage_from_traces,
     final_message_from_events,
     parse_json_line,
     trace_event_from_json,
@@ -1387,6 +1388,8 @@ def run_test(
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
+    if config.agent == "codex":
+        usage.extend(codex_subagent_usage_from_traces(parsed_events, session_traces))
     if pricing_valid:
         model_information = load_and_calculate_costs(usage, config.pricing_file)
     final_message = final_message_from_events(parsed_events)
@@ -1688,6 +1691,12 @@ def continue_test(
 
     finished_at = utc_now()
     usage = usage_from_events(parsed_events, config.model)
+    if config.agent == "codex":
+        usage.extend(
+            codex_subagent_usage_from_traces(
+                parsed_events, session_traces, previous.logs.session_traces
+            )
+        )
     if pricing_valid:
         model_information = load_and_calculate_costs(usage, config.pricing_file)
     final_message = final_message_from_events(parsed_events)
