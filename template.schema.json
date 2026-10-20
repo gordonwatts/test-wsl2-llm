@@ -168,6 +168,11 @@
       "type": "string",
       "description": "Optional host or target credential file. Codex defaults to ~/.codex/auth.json; Claude defaults to the invocation environment's Windows .claude\\.credentials.json."
     },
+    "opencode_api_key_name": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+      "description": "OpenCode API key variable to read from the invocation host's current-directory or home .env file. Only the name is saved."
+    },
     "pricing_file": {
       "type": ["string", "null"],
       "description": "Windows pricing YAML path. Omit to use the bundled model-pricing.yaml."

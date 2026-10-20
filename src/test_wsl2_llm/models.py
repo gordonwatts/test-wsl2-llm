@@ -1,5 +1,6 @@
 """Validated configuration and result schemas."""
 
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -98,6 +99,14 @@ class TestConfig(BaseModel):
     remote_workspace_parent: str = "/tmp"
     ssh_connect_timeout_seconds: float = 10.0
     auth_source: str | None = None
+    opencode_api_key_name: str | None = None
+
+    @field_validator("opencode_api_key_name")
+    @classmethod
+    def valid_opencode_key_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+            raise ValueError("opencode_api_key_name must be an environment variable name")
+        return value
     pricing_file: str | None = None
     progress_lines: int = 5
     timeout_seconds: float | None = 1800.0
@@ -285,6 +294,7 @@ class TraceEvent(BaseModel):
 class UsageRecord(BaseModel):
     model: str
     attribution: str
+    reported_cost: float | None = Field(default=None, ge=0, allow_inf_nan=False)
     input_tokens: int = 0
     cached_input_tokens: int = 0
     cache_read_input_tokens: int = 0
@@ -320,6 +330,8 @@ class ModelCost(BaseModel):
     cache_creation_1h_cost: float | None = None
     output_cost: float | None = None
     total_cost: float | None = None
+    reported_cost: float | None = None
+    total_cost_source: Literal["catalog", "agent_reported"] = "catalog"
     source: str | None = None
     note: str | None = None
 

@@ -203,3 +203,25 @@ def test_local_inventory_reports_unicode_spaces_and_symlinks(tmp_path) -> None:
 def test_local_target_aliases_are_native() -> None:
     assert isinstance(create_execution_target(execution_target="local"), LinuxClient)
     assert isinstance(create_execution_target(execution_target="macos"), LinuxClient)
+
+
+
+def test_windows_copy_back_normalizes_native_paths(monkeypatch, tmp_path) -> None:
+    from test_wsl2_llm import runner
+
+    workspace = r"C:\Users\tester\run\workspace"
+    source = workspace + r"\nested\ready.txt"
+    monkeypatch.setattr(WindowsClient, "expand_copy_back_pattern", lambda *_args: [source])
+    transfers = []
+
+    def copy(_client, target_source, destination):
+        transfers.append(target_source)
+        Path(destination).write_text("READY\n", encoding="utf-8")
+
+    monkeypatch.setattr(runner, "_copy_from_target", copy)
+    copied = runner._copy_back_files(WindowsClient(), ["nested/ready.txt"], workspace,
+                                     str(tmp_path / "report"))
+    assert transfers == ["C:/Users/tester/run/workspace/nested/ready.txt"]
+    assert copied[0].source == "nested/ready.txt"
+    assert Path(copied[0].destination).name == "report.ready.txt"
+    assert Path(copied[0].destination).read_text(encoding="utf-8") == "READY\n"

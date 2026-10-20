@@ -226,6 +226,11 @@ def render_markdown(
             "",
         ]
     )
+    if any(model.total_cost_source == "agent_reported" for model in model_information.models):
+        lines.append(
+            "- Incomplete catalog rates: the total uses the agent-reported USD estimate. "
+            "Unavailable component costs remain blank; this is not a billing statement."
+        )
     if result.usage:
         costs = {(model.model, model.attribution): model for model in model_information.models}
         lines.extend(

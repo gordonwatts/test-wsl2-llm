@@ -91,10 +91,30 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
             for value in event["usage"].values()
         )
     ]
-    # Claude's result event may omit usage altogether. Its assistant message
-    # events contain per-API-message usage, so use those as the complete source
-    # when present; otherwise retain aggregate turn usage (as in Codex).
-    if claude_messages:
+    opencode_messages = [
+        event
+        for event in events
+        if event.get("usage_source") == "opencode_step_finish"
+        and isinstance(event.get("usage"), dict)
+        and any(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in event["usage"].values()
+        )
+    ]
+    # Claude and OpenCode may emit repeated per-message usage events, so prefer
+    # those complete sources and count each message ID once. Otherwise retain
+    # aggregate turn usage (as in Codex).
+    if opencode_messages:
+        selected_events = []
+        seen_message_ids: set[str] = set()
+        for event in opencode_messages:
+            message_id = event.get("usage_message_id")
+            if isinstance(message_id, str):
+                if message_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(message_id)
+            selected_events.append(event)
+    elif claude_messages:
         selected_events = []
         seen_message_ids: set[str] = set()
         for event in claude_messages:
@@ -108,12 +128,14 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
         selected_events = completed_events
 
     model_totals: dict[str, dict[str, int]] = {}
+    model_costs: dict[str, list[float | None]] = {}
     for event in selected_events:
         if not isinstance(event.get("usage"), dict):
             continue
         usage = event["usage"]
         event_model = event.get("usage_model")
         usage_model = event_model if isinstance(event_model, str) else model
+        model_costs.setdefault(usage_model, []).append(event.get("usage_cost"))
         event_totals = model_totals.setdefault(
             usage_model, {key: 0 for key in totals}
         )
@@ -161,6 +183,11 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
         UsageRecord(
             model=usage_model,
             attribution="inferred - model not directly reported",
+            reported_cost=(
+                sum(model_costs[usage_model])
+                if all(cost is not None for cost in model_costs[usage_model])
+                else None
+            ),
             **usage_totals,
         )
         for usage_model, usage_totals in model_totals.items()
@@ -268,6 +295,21 @@ def codex_subagent_usage_from_traces(
 
 
 def final_message_from_events(events: list[dict[str, Any]]) -> str | None:
+    opencode_parts = [
+        event for event in events
+        if event.get("event_type") == "text"
+        and isinstance(event.get("part"), dict)
+        and isinstance(event["part"].get("text"), str)
+    ]
+    if opencode_parts:
+        last_part = opencode_parts[-1]["part"]
+        message_id = last_part.get("messageID")
+        if isinstance(message_id, str):
+            return "".join(
+                event["part"]["text"] for event in opencode_parts
+                if event["part"].get("messageID") == message_id
+            )
+        return last_part["text"]
     messages: list[str] = []
     for event in events:
         item = event.get("item")

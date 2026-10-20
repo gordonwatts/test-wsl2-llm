@@ -12,6 +12,7 @@ The support boundary is intentionally explicit:
 | Codex CLI (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Supported |
 | Claude Code (non-interactive `claude --print`) | Windows host with a WSL2 distribution | Supported for one prompt |
 | Claude Code (`connect`/`continue`) | Retained workspace in the same WSL2 distribution | Not supported; fails clearly |
+| OpenCode (`opencode run --format json`) | WSL2, native Windows/Linux/macOS, or passwordless SSH | Supported for one prompt |
 | Codex CLI (non-interactive `codex exec`) | Passwordless SSH to a Linux host | Supported; interactive access deferred |
 | Codex or Claude Code | Native Linux, macOS, or passwordless SSH | Not supported yet |
 
@@ -96,6 +97,39 @@ root. The runner never reuses the normal Claude configuration directory. A
 Claude model selector is passed directly to Claude; the Codex `MODEL[:EFFORT]`
 setting is not translated. Connect/continue remains unsupported and fails
 clearly.
+
+To run OpenCode, put an OpenAI-compatible API key in `.env` in the directory
+from which you invoke the harness, or in the invocation host's home directory.
+Specify its variable name without its value:
+
+```powershell
+# .env contains MY_OPENAI_KEY=...; keep this file private.
+test-wsl2-llm run --agent opencode --model openai/gpt-5:high `
+  --opencode-api-key-name MY_OPENAI_KEY `
+  --prompt "Create hello.txt containing READY" --output .\results\opencode
+```
+
+The same setting is `opencode_api_key_name: MY_OPENAI_KEY` in a run config or
+template. `--auth-source PATH` can select a different host `.env` file. The
+current directory takes precedence over the host home when both contain the
+key. The harness passes the value to OpenCode as `OPENAI_API_KEY`, keeps it in
+the isolated run home only while the run executes, and saves only the variable
+name in reports. OpenCode uses `provider/model` names; the selector's effort
+becomes its `--variant` value. OpenCode `connect` and `continue` are unsupported.
+
+If OpenCode is absent from the target's PATH, the harness downloads the
+official native release into its own persistent `test-wsl2-llm/opencode` cache
+and reuses that binary on later runs. Each run gets separate OpenCode config,
+data, and state directories. OpenCode loads `--plugin` npm packages from its
+isolated config at startup. Named `--mcp` servers are selected from the host's
+Codex MCP config and converted to OpenCode's local or remote format.
+MCP commands must be available on the selected target. Codex MCP entries that
+refer to host environment variables for remote headers are rejected because
+those values may not exist in WSL or over SSH.
+`--marketplace` is not an OpenCode feature and fails clearly. OpenCode's
+noninteractive `--auto` option approves tool requests that are not explicitly
+denied; OpenCode does not enforce the harness's Codex sandbox boundary. The
+harness rejects nondefault sandbox, network, or approval settings for OpenCode.
 
 ### One short validated run
 
