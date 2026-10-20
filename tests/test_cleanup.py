@@ -1,3 +1,4 @@
+import json
 import subprocess
 from pathlib import Path
 
@@ -9,7 +10,7 @@ from typer.testing import CliRunner
 from test_wsl2_llm import runner
 from test_wsl2_llm.cli import app
 from test_wsl2_llm.config import load_config_file
-from test_wsl2_llm.models import CopiedBackFile
+from test_wsl2_llm.models import CopiedBackFile, SessionTrace
 from test_wsl2_llm.models import TestConfig as Config
 from test_wsl2_llm.report import render_markdown
 
@@ -56,6 +57,80 @@ def test_cleanup_lifecycle(monkeypatch, tmp_path, exit_code, keep, cleanup_fails
         assert "workspace cleanup failed" in result.run.error
     if not keep and not cleanup_fails:
         assert "(removed)" in render_markdown(result)
+
+
+@pytest.mark.parametrize("continuation", [False, True])
+@pytest.mark.parametrize("child_model", ["gpt-6-luna", "gpt-6.1-sol"])
+def test_runner_prices_subagent_trace_without_recounting_history(
+    monkeypatch, tmp_path, continuation, child_model
+):
+    def bash(self, script, *args, **kwargs):
+        return subprocess.CompletedProcess([], 0, b"/tmp/test-wsl2-llm-abcdefgh", b"")
+
+    parent_events = [
+        {"type": "thread.started", "thread_id": "parent"},
+        {
+            "type": "turn.completed",
+            "usage": {"input_tokens": 100, "cached_input_tokens": 20, "output_tokens": 10},
+        },
+    ]
+    child_rows = [
+        {
+            "type": "session_meta",
+            "payload": {
+                "id": "child",
+                "source": {"subagent": {"thread_spawn": {"parent_thread_id": "parent"}}},
+            },
+        },
+        {"type": "turn_context", "payload": {"model": child_model}},
+    ]
+
+    def token_event(input_tokens, output_tokens):
+        return {
+            "type": "event_msg",
+            "payload": {
+                "type": "token_count",
+                "info": {
+                    "total_token_usage": {
+                        "input_tokens": input_tokens,
+                        "cached_input_tokens": 0,
+                        "output_tokens": output_tokens,
+                    }
+                },
+            },
+        }
+
+    old_content = "\n".join(json.dumps(row) for row in [*child_rows, token_event(30, 2)]) + "\n"
+    content = old_content + json.dumps(token_event(50, 5)) + "\n" if continuation else old_content
+    trace = SessionTrace(path="sessions/child.jsonl", content=content)
+    monkeypatch.setattr(runner.WslClient, "bash", bash)
+    monkeypatch.setattr(runner.WslClient, "login_bash", bash)
+    monkeypatch.setattr(
+        runner,
+        "_stream_codex",
+        lambda *a, **k: (
+            0, "\n".join(json.dumps(event) for event in parent_events), "", [], parent_events
+        ),
+    )
+    monkeypatch.setattr(runner, "_inventory", lambda *a: [])
+    monkeypatch.setattr(runner, "_copy_back_files", lambda *a, **k: [])
+    monkeypatch.setattr(runner, "_session_traces", lambda *a: ([trace], []))
+    config = Config(prompt="hello", model="gpt-6.1-sol", output=str(tmp_path / "out"))
+    previous = sample_result()
+    previous.logs.session_traces = [SessionTrace(path=trace.path, content=old_content)]
+    result = (
+        runner.continue_test(previous, config, "follow up")
+        if continuation
+        else runner.run_test(config)
+    )
+    assert [(item.model, item.input_tokens, item.output_tokens) for item in result.usage] == [
+        ("gpt-6.1-sol", 100, 10),
+        (child_model, 20 if continuation else 30, 3 if continuation else 2),
+    ]
+    assert len(result.model_information.models) == 2
+    assert result.model_information.total_cost == sum(
+        item.total_cost for item in result.model_information.models
+    )
 
 
 @pytest.mark.parametrize("failure", [RuntimeError("inventory broken"), KeyboardInterrupt()])

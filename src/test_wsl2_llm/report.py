@@ -210,10 +210,11 @@ def render_markdown(
         [
             f"- Pricing file: `{model_information.pricing_file}`",
             f"- Currency: `{model_information.currency}`",
-            "- Token counts come from captured agent stdout JSONL. Codex reports usage on "
-            "`turn.completed` events; Claude reports usage on assistant messages, which are "
-            "summed once per message ID when available. The configured model is used because "
-            "these events do not report a model name in the normalized report.",
+            "- Token counts come from captured agent stdout JSONL and Codex session traces. "
+            "Codex reports parent usage on `turn.completed` events and subagent usage in "
+            "separate session traces. Subagent traces report their model; the configured "
+            "model is inferred for parent events. Claude reports usage on assistant messages, "
+            "which are summed once per message ID when available.",
             "- `input_tokens` is total input across uncached tokens, cache reads, and cache "
             "writes; `cached_input_tokens` is the read-plus-write subset. Claude's raw "
             "`input_tokens` excludes cache reads and writes, so its trace normalization adds "
