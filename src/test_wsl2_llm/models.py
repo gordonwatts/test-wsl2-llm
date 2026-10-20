@@ -1,5 +1,6 @@
 """Validated configuration and result schemas."""
 
+import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -98,6 +99,14 @@ class TestConfig(BaseModel):
     remote_workspace_parent: str = "/tmp"
     ssh_connect_timeout_seconds: float = 10.0
     auth_source: str | None = None
+    opencode_api_key_name: str | None = None
+
+    @field_validator("opencode_api_key_name")
+    @classmethod
+    def valid_opencode_key_name(cls, value: str | None) -> str | None:
+        if value is not None and not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", value):
+            raise ValueError("opencode_api_key_name must be an environment variable name")
+        return value
     pricing_file: str | None = None
     progress_lines: int = 5
     timeout_seconds: float | None = 1800.0

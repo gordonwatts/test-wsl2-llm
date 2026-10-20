@@ -719,6 +719,57 @@ class WindowsClient(LinuxClient):
     def _powershell_script(script: str, arguments: tuple[str, ...]) -> str:
         """Translate the small, explicit shell surface used by agent adapters."""
         source = " ".join(script.split())
+        if source == "command -v opencode || true":
+            return (
+                "$found = Get-Command opencode -ErrorAction SilentlyContinue; "
+                "if ($found) { $found.Source }"
+            )
+        if source == "uname -sm":
+            return (
+                "'Windows ' + [System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture"
+            )
+        if source.startswith(
+            'printf "%s\\n" "${XDG_CACHE_HOME:-$HOME/.cache}/test-wsl2-llm/opencode"'
+        ):
+            return (
+                "$cache = if ($env:LOCALAPPDATA) { $env:LOCALAPPDATA } "
+                "else { Join-Path $env:USERPROFILE 'AppData\\Local' }; "
+                "Join-Path $cache 'test-wsl2-llm\\opencode'"
+            )
+        if source == 'test -x "$1"':
+            return (
+                "if (Test-Path -LiteralPath $values[0] -PathType Leaf) { exit 0 } else { exit 1 }"
+            )
+        if source.startswith('if test -x "$2"; then rm -f -- "$1"; else mv -f -- "$1" "$2"; fi'):
+            return (
+                "if (Test-Path -LiteralPath $values[1] -PathType Leaf) { "
+                "Remove-Item -LiteralPath $values[0] -Force } else { "
+                "try { Move-Item -LiteralPath $values[0] -Destination $values[1] "
+                "-ErrorAction Stop } catch { "
+                "if (Test-Path -LiteralPath $values[1] -PathType Leaf) { "
+                "Remove-Item -LiteralPath $values[0] -Force } else { throw } } }"
+            )
+        if source == '"$1" --version':
+            return "& $values[0] --version\nexit $LASTEXITCODE"
+        if source == 'chmod 600 -- "$1"':
+            return "if (-not (Test-Path -LiteralPath $values[0] -PathType Leaf)) { exit 2 }"
+        if 'OPENCODE_CONFIG="$1/opencode.json"' in source and "run --format json --auto" in source:
+            return (
+                "$opencodeHome = $values[0]\n"
+                "$env:XDG_CONFIG_HOME = Join-Path $opencodeHome 'config'\n"
+                "$env:XDG_DATA_HOME = Join-Path $opencodeHome 'data'\n"
+                "$env:XDG_CACHE_HOME = Join-Path $opencodeHome 'cache'\n"
+                "$env:XDG_STATE_HOME = Join-Path $opencodeHome 'state'\n"
+                "$env:OPENCODE_CONFIG = Join-Path $opencodeHome 'opencode.json'\n"
+                "$env:OPENAI_API_KEY = (Get-Content -Raw -LiteralPath "
+                "(Join-Path $opencodeHome 'api-key'))\n"
+                "Set-Location -LiteralPath $values[4]\n"
+                "$promptFile = Join-Path (Split-Path -Parent $opencodeHome) 'inputs\\prompt.md'\n"
+                "$promptText = Get-Content -Raw -LiteralPath $promptFile\n"
+                "& $values[1] run --format json --auto --model $values[2] "
+                "--variant $values[3] $promptText\n"
+                "exit $LASTEXITCODE"
+            )
         if source in {"codex --version", "claude --version", "codex plugin --help"}:
             return f"& {source}\nexit $LASTEXITCODE"
         if source.startswith('env CODEX_HOME="$1" codex plugin marketplace add "$2"'):
@@ -1174,6 +1225,8 @@ def run_test(
     workspace_parent = (
         config.remote_workspace_parent if config.target == "ssh" else config.wsl_parent
     )
+    if isinstance(client, WindowsClient) and workspace_parent == "/tmp":
+        workspace_parent = tempfile.gettempdir()
     try:
         check_storage(client, workspace_parent)
     except StoragePreflightError:
@@ -1224,13 +1277,15 @@ def run_test(
         model_information = load_and_calculate_costs([], config.pricing_file)
         pricing_valid = True
         with state.phase("preflight"):
+            if adapter.name == "opencode":
+                resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
             codex_version = (
                 adapter.preflight(client, before_launch=before_codex_launch).version
                 if config.agent == "codex" and before_codex_launch is not None
                 else adapter.preflight(client).version
             )
             resolved_parent = _resolve_wsl_path(client, resolved_parent, require_directory=True)
-            if adapter.capabilities.requires_auth:
+            if adapter.capabilities.requires_auth and adapter.name != "opencode":
                 resolved_auth = adapter.resolve_auth_source(client, config.auth_source)
 
         with state.phase("workspace_creation"):
@@ -1257,7 +1312,10 @@ def run_test(
             if config.agent == "codex" and config.mcp_servers:
                 _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
-                _write_wsl_file(client, f"{codex_home}/config.toml", codex_configuration)
+                configuration_name = (
+                    "opencode.json" if config.agent == "opencode" else "config.toml"
+                )
+                _write_wsl_file(client, f"{codex_home}/{configuration_name}", codex_configuration)
             if config.agent == "codex" and config.mcp_servers:
                 with state.phase("mcp_preflight"):
                     mcp_server_checks = _check_mcp_servers(
@@ -1319,7 +1377,7 @@ def run_test(
                 parsed_events,
             ) = _stream_codex(
                 command_argv,
-                config.prompt,
+                "" if adapter.name == "opencode" else config.prompt,
                 target=client,
                 adapter=adapter,
                 environment=client.environment,
@@ -1336,6 +1394,11 @@ def run_test(
             )
             failure_category = "agent"
             codex_seconds = time.perf_counter() - codex_started
+            if adapter.name == "opencode" and any(
+                event.get("type") == "error" for event in parsed_events
+            ):
+                exit_code = exit_code or 1
+                error = "OpenCode reported an error event"
             timed_out = _is_timeout(exit_code, stderr, adapter.name)
             if timed_out:
                 error = _timeout_error(stderr, adapter.name)

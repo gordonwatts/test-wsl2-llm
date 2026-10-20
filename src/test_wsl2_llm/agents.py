@@ -358,6 +358,128 @@ class ClaudeCodeAgentAdapter:
         return value
 
 
+class OpenCodeAgentAdapter:
+    """Run OpenCode with a cached executable and an isolated per-run state."""
+
+    name = "opencode"
+    home_name = "opencode-home"
+    auth_filename = "api-key"
+    capabilities = AgentCapabilities(
+        plugins=True,
+        mcp=True,
+        reasoning_efforts=frozenset({"minimal", "low", "medium", "high", "xhigh"}),
+        interactive_follow_up=False,
+        requires_auth=True,
+    )
+
+    def __init__(self) -> None:
+        self._key_name: str | None = None
+        self._binary = "opencode"
+
+    def configuration(self, config: TestConfig) -> str:
+        from test_wsl2_llm.opencode import opencode_configuration
+
+        self._key_name = config.opencode_api_key_name
+        if not self._key_name:
+            raise ValueError("OpenCode requires --opencode-api-key-name or opencode_api_key_name")
+        if config.marketplaces:
+            raise ValueError(
+                "OpenCode accepts npm plugin names via --plugin; --marketplace is not supported"
+            )
+        if (
+            config.sandbox != "workspace-write"
+            or not config.network
+            or config.approval_policy != "on-request"
+        ):
+            raise ValueError(
+                "OpenCode does not implement the requested sandbox, network, or approval policy"
+            )
+        return opencode_configuration(config)
+
+    def preflight(self, target: ExecutionTarget) -> AgentPreflight:
+        found = target.text(target.login_bash("command -v opencode || true", check=False)).strip()
+        if found and found.casefold().endswith(".ps1"):
+            found = ""
+        if found:
+            detected = target.login_bash('"$1" --version', found, check=False)
+            version = target.text(detected).strip()
+            if detected.returncode == 0 and version.startswith("1."):
+                self._binary = found
+                return AgentPreflight(version=version)
+        cache = target.text(
+            target.login_bash(
+                'printf "%s\\n" "${XDG_CACHE_HOME:-$HOME/.cache}/test-wsl2-llm/opencode"'
+            )
+        ).strip()
+        if not cache:
+            raise RuntimeError("Cannot determine the OpenCode install cache")
+        from test_wsl2_llm.opencode import install_opencode
+
+        self._binary = install_opencode(target, cache)
+        version = target.text(target.login_bash('"$1" --version', self._binary)).strip()
+        return AgentPreflight(version=version)
+
+    def resolve_auth_source(self, target: ExecutionTarget, source: str | None) -> str:
+        del target
+        from test_wsl2_llm.opencode import read_api_key
+
+        return read_api_key(self._key_name, source)
+
+    def setup_home(self, target: ExecutionTarget, home: str, auth_source: str) -> None:
+        from test_wsl2_llm.runner import _write_wsl_file
+
+        _write_wsl_file(target, f"{home}/{self.auth_filename}", auth_source)
+        target.bash('chmod 600 -- "$1"', f"{home}/{self.auth_filename}")
+
+    def mcp_config(self, config: TestConfig) -> dict[str, object] | None:
+        del config
+        return None
+
+    def install_plugins(
+        self, target: ExecutionTarget, home: str, marketplaces: list[str], plugins: list[str]
+    ) -> AgentPluginSetup:
+        del target, home, marketplaces, plugins
+        # Npm plugins are installed by OpenCode from the isolated config/cache
+        # when the process starts. No global package installation is needed.
+        return AgentPluginSetup()
+
+    def result_version(self, version: str | None) -> str | None:
+        return version
+
+    def command(
+        self,
+        target: ExecutionTarget,
+        *,
+        home: str,
+        model: str,
+        reasoning_effort: str,
+        workspace: str,
+        mcp_config: str | None = None,
+    ) -> list[str]:
+        del mcp_config
+        return target.command(
+            target.shell_command(
+                'export XDG_CONFIG_HOME="$1/config" XDG_DATA_HOME="$1/data" '
+                'XDG_CACHE_HOME="$1/cache" XDG_STATE_HOME="$1/state" '
+                'OPENCODE_CONFIG="$1/opencode.json"; '
+                'export OPENAI_API_KEY="$(cat -- "$1/api-key")"; '
+                'cd -- "$5" && exec "$2" run --format json --auto '
+                '--model "$3" --variant "$4" "$(cat -- "$1/../inputs/prompt.md")"',
+                home,
+                self._binary,
+                model,
+                reasoning_effort,
+                workspace,
+                interactive_login=True,
+            )
+        )
+
+    def normalize_event(self, value: dict[str, object]) -> dict[str, object]:
+        from test_wsl2_llm.opencode_events import normalize_opencode_event
+
+        return normalize_opencode_event(value)
+
+
 def _resolve_claude_auth_source(source: str | None, *, environment: Mapping[str, str]) -> str:
     """Resolve Claude credentials on the host that invoked the harness."""
     candidates: list[Path] = []
@@ -495,6 +617,7 @@ _ADAPTERS: dict[str, type[AgentAdapter]] = {
     "fake": FakeAgentAdapter,
     "claude": ClaudeCodeAgentAdapter,
     "claude-code": ClaudeCodeAgentAdapter,
+    "opencode": OpenCodeAgentAdapter,
 }
 
 
@@ -535,6 +658,7 @@ __all__ = [
     "AgentPreflight",
     "CodexAgentAdapter",
     "ClaudeCodeAgentAdapter",
+    "OpenCodeAgentAdapter",
     "FakeAgentAdapter",
     "get_agent_adapter",
     "validate_agent_capabilities",

@@ -91,10 +91,30 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
             for value in event["usage"].values()
         )
     ]
-    # Claude's result event may omit usage altogether. Its assistant message
-    # events contain per-API-message usage, so use those as the complete source
-    # when present; otherwise retain aggregate turn usage (as in Codex).
-    if claude_messages:
+    opencode_messages = [
+        event
+        for event in events
+        if event.get("usage_source") == "opencode_step_finish"
+        and isinstance(event.get("usage"), dict)
+        and any(
+            isinstance(value, int) and not isinstance(value, bool) and value > 0
+            for value in event["usage"].values()
+        )
+    ]
+    # Claude and OpenCode may emit repeated per-message usage events, so prefer
+    # those complete sources and count each message ID once. Otherwise retain
+    # aggregate turn usage (as in Codex).
+    if opencode_messages:
+        selected_events = []
+        seen_message_ids: set[str] = set()
+        for event in opencode_messages:
+            message_id = event.get("usage_message_id")
+            if isinstance(message_id, str):
+                if message_id in seen_message_ids:
+                    continue
+                seen_message_ids.add(message_id)
+            selected_events.append(event)
+    elif claude_messages:
         selected_events = []
         seen_message_ids: set[str] = set()
         for event in claude_messages:
@@ -168,6 +188,21 @@ def usage_from_events(events: list[dict[str, Any]], model: str) -> list[UsageRec
 
 
 def final_message_from_events(events: list[dict[str, Any]]) -> str | None:
+    opencode_parts = [
+        event for event in events
+        if event.get("event_type") == "text"
+        and isinstance(event.get("part"), dict)
+        and isinstance(event["part"].get("text"), str)
+    ]
+    if opencode_parts:
+        last_part = opencode_parts[-1]["part"]
+        message_id = last_part.get("messageID")
+        if isinstance(message_id, str):
+            return "".join(
+                event["part"]["text"] for event in opencode_parts
+                if event["part"].get("messageID") == message_id
+            )
+        return last_part["text"]
     messages: list[str] = []
     for event in events:
         item = event.get("item")

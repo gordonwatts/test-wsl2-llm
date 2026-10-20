@@ -190,6 +190,10 @@ def run(
         str | None,
         typer.Option(help="Host or target credential file copied into the agent's isolated home."),
     ] = None,
+    opencode_api_key_name: Annotated[
+        str | None,
+        typer.Option("--opencode-api-key-name", help="Key variable in host .env for OpenCode."),
+    ] = None,
     pricing_file: Annotated[
         Path | None,
         typer.Option(help="Model token pricing YAML; defaults to the bundled model-pricing.yaml."),
@@ -261,6 +265,7 @@ def run(
             "approval_policy": approval_policy,
             "approvals_reviewer": approvals_reviewer,
             "auth_source": auth_source,
+            "opencode_api_key_name": opencode_api_key_name,
             "pricing_file": str(pricing_file) if pricing_file else None,
             "progress_lines": progress_lines,
             "timeout_seconds": timeout,
@@ -617,6 +622,10 @@ def template_run(
         str | None,
         typer.Option(help="Host or target credential file copied into the agent's isolated home."),
     ] = None,
+    opencode_api_key_name: Annotated[
+        str | None,
+        typer.Option("--opencode-api-key-name", help="Key variable in host .env for OpenCode."),
+    ] = None,
     pricing_file: Annotated[Path | None, typer.Option(help="Model token pricing YAML.")] = None,
     progress_lines: Annotated[
         int | None, typer.Option(help="Number of recent progress lines displayed while Codex runs.")
@@ -710,6 +719,7 @@ def template_run(
             "approval_policy": approval_policy,
             "approvals_reviewer": approvals_reviewer,
             "auth_source": auth_source,
+            "opencode_api_key_name": opencode_api_key_name,
             "pricing_file": str(pricing_file) if pricing_file else None,
             "progress_lines": progress_lines,
             "timeout_seconds": timeout,

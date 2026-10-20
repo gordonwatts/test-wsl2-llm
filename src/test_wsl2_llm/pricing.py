@@ -36,7 +36,13 @@ def _calculate(
     configured_models = catalog["models"]
     costs: list[ModelCost] = []
     for record in usage:
-        raw = configured_models.get(record.model, {})
+        raw = configured_models.get(record.model)
+        if raw is None and record.model.startswith("openai/"):
+            # OpenCode qualifies OpenAI model IDs with the provider. Reuse only
+            # OpenAI's bare-ID catalog entry when no exact qualified rate exists.
+            raw = configured_models.get(record.model.removeprefix("openai/"))
+        if raw is None:
+            raw = {}
         if not isinstance(raw, dict):
             raw = {}
         input_rate = _rate(raw, "input_cost_per_million_tokens")
