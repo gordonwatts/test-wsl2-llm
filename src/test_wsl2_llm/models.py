@@ -85,7 +85,7 @@ class TestConfig(BaseModel):
     validators: list[ValidatorConfig] = Field(default_factory=list)
     environment: EnvironmentPolicy = Field(default_factory=EnvironmentPolicy)
     distro: str | None = None
-    wsl_parent: str = "/tmp"
+    wsl_parent: str = "~/"
     output: str
     overwrite: bool = False
     sandbox: Literal["read-only", "workspace-write", "danger-full-access"] = "workspace-write"
@@ -96,7 +96,7 @@ class TestConfig(BaseModel):
     ssh_host: str | None = None
     ssh_user: str | None = None
     ssh_port: int | None = None
-    remote_workspace_parent: str = "/tmp"
+    remote_workspace_parent: str = "~/"
     ssh_connect_timeout_seconds: float = 10.0
     auth_source: str | None = None
     opencode_api_key_name: str | None = None
