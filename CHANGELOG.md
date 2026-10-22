@@ -6,6 +6,8 @@ until the release-candidate support matrix is accepted.
 
 ## Unreleased
 
+- Default run roots to the target account's home so Codex can create its sandbox
+  helpers; detect helper initialization failures before plugin or model execution.
 - Define versioned configuration/result loading with legacy input migration and future-version diagnostics.
 - Document clean installation, supported agent/target combinations,
   authentication, retained workspaces, and template resume workflows.

@@ -114,7 +114,7 @@
     },
     "remote_workspace_parent": {
       "type": "string",
-      "default": "/tmp",
+      "default": "~/",
       "description": "Existing remote directory under which SSH run roots are created."
     },
     "ssh_connect_timeout_seconds": {
@@ -129,7 +129,7 @@
     },
     "wsl_parent": {
       "type": "string",
-      "default": "/tmp",
+      "default": "~/",
       "description": "Existing directory in WSL under which temporary run roots are created."
     },
     "output": {
