@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Run reproducible coding-agent CLI tests in isolated workspaces"
 readme = "README.md"
 requires-python = ">=3.11"
-license = "MIT"
+license = "BSD-3-Clause"
 license-files = ["LICENSE"]
 authors = [{ name = "Gordon Watts" }]
 keywords = ["coding-agents", "testing", "Codex", "WSL2"]

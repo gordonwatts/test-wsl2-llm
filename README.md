@@ -2,6 +2,17 @@
 
 `test-wsl2-llm` runs a supported coding-agent CLI from Windows inside a fresh WSL2 workspace. It copies Windows-side prompts and local plugin marketplaces into WSL, isolates agent configuration, and writes matching Markdown and YAML results.
 
+## License
+
+Project-owned original software is licensed under the
+[BSD 3-Clause License](LICENSE), copyright 2026 Gordon Watts.
+Third-party code and dependencies retain their respective copyright notices and
+license terms and are outside this project's BSD 3-Clause grant.
+
+This change does not withdraw MIT permissions already granted for earlier
+revisions. Independently owned contributions retain their existing permissions;
+this notice does not relicense them without their rights holders' authorization.
+
 ## Supported environments
 
 The support boundary is intentionally explicit:
