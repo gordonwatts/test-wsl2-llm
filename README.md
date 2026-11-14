@@ -782,6 +782,15 @@ testing parent, capacity is measured at its nearest existing ancestor without
 creating directories. SSH uses `remote_workspace_parent`; other Linux targets
 use `wsl_parent`.
 
+Both workspace-parent settings default to `~/`, resolved in the target account.
+Each run still gets a private, uniquely named directory containing its workspace
+and isolated agent home, and normal cleanup removes that entire directory.
+Codex refuses to create its sandbox and patch helpers when `CODEX_HOME` is under
+the system temporary directory (typically `/tmp`). For a custom parent, use an
+existing directory outside that location, such as `~/llms-test`. The harness
+checks helper initialization in the isolated home before installing plugins or
+starting a model run and reports an actionable error if it fails.
+
 Insufficient capacity or a failed inspection raises `StoragePreflightError`
 before agent preflight, credential setup, plugin installation, or execution.
 The CLI exits with an error showing the directory and available/required values;

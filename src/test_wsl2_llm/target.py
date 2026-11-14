@@ -75,7 +75,7 @@ class SshTarget:
     host: str
     user: str | None = None
     port: int | None = None
-    remote_workspace_parent: str = "/tmp"
+    remote_workspace_parent: str = "~/"
     connect_timeout_seconds: float = 10.0
     identity_file: str | None = None
     known_hosts_file: str | None = None

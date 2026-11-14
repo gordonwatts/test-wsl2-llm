@@ -773,6 +773,11 @@ class WindowsClient(LinuxClient):
             )
         if source in {"codex --version", "claude --version", "codex plugin --help"}:
             return f"& {source}\nexit $LASTEXITCODE"
+        if source == 'env CODEX_HOME="$1" codex --version':
+            return (
+                "$env:CODEX_HOME = $values[0]\n"
+                "& codex --version\nexit $LASTEXITCODE"
+            )
         if source.startswith('env CODEX_HOME="$1" codex plugin marketplace add "$2"'):
             return (
                 "$env:CODEX_HOME = $values[0]\n"
@@ -1020,7 +1025,7 @@ def create_execution_target(
     ssh_host: str | None = None,
     ssh_user: str | None = None,
     ssh_port: int | None = None,
-    remote_workspace_parent: str = "/tmp",
+    remote_workspace_parent: str = "~/",
     ssh_connect_timeout_seconds: float = 10.0,
 ) -> ExecutionTarget:
     """Select WSL, a native host, or SSH while keeping one runner lifecycle."""
@@ -1310,6 +1315,8 @@ def run_test(
                 _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
+            if config.agent == "codex":
+                _check_codex_home(client, codex_home, before_launch=before_codex_launch)
             if config.agent == "codex" and config.mcp_servers:
                 _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
@@ -1648,6 +1655,8 @@ def continue_test(
                 _write_wsl_file(client, mcp_config_path, json.dumps(mcp_payload, sort_keys=True))
         with state.phase(f"{adapter.name}_home_setup"):
             adapter.setup_home(client, codex_home, resolved_auth or "")
+            if config.agent == "codex":
+                _check_codex_home(client, codex_home)
             if config.agent == "codex" and config.mcp_servers:
                 _copy_mcp_credentials(client, codex_home, config.mcp_servers)
             if codex_configuration:
@@ -2812,6 +2821,23 @@ def _write_wsl_file(client: ExecutionTarget, path: str, content: str) -> None:
         writer(path, content.encode())
     else:
         client.bash('mkdir -p "$(dirname "$1")" && cat > "$1"', path, input_bytes=content.encode())
+
+
+def _check_codex_home(
+    client: ExecutionTarget, home: str, *, before_launch: Callable[[], None] | None = None
+) -> None:
+    """Verify helper initialization in the isolated home without calling a model."""
+    if before_launch is not None:
+        before_launch()
+    completed = client.login_bash('env CODEX_HOME="$1" codex --version', home)
+    stderr = (completed.stderr or b"").decode("utf-8", errors="replace")
+    if "could not create PATH aliases" in stderr:
+        raise RuntimeError(
+            f"Codex could not initialize helper binaries in isolated home {home!r}. "
+            "Choose wsl_parent (or remote_workspace_parent for SSH) outside the target's "
+            "system temporary directory, for example '~/' or '~/llms-test'. "
+            + stderr.strip()
+        )
 
 
 def _resolve_wsl_path(
