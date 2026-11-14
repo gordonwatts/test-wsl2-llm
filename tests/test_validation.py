@@ -70,6 +70,70 @@ def test_no_checks_preserves_result():
     assert apply_validators(result, []).model_dump() == before
 
 
+@pytest.mark.parametrize("by_destination", [False, True])
+@pytest.mark.parametrize(
+    "size,minimum,passed",
+    [(0, None, False), (1, None, True), (8, 8, True), (7, 8, False), (0, 0, True)],
+)
+def test_file_size_uses_actual_returned_file(tmp_path, by_destination, size, minimum, passed):
+    from test_wsl2_llm.models import CopiedBackFile
+
+    path = tmp_path / "figure.png"
+    path.write_bytes(b"x" * size)
+    result = sample_result()
+    result.copied_back = [CopiedBackFile(
+        source="figure.png", destination=str(path), type="file", size=999,
+    )]
+    arguments = {"file": str(path) if by_destination else "figure.png"}
+    if minimum is not None:
+        arguments["min_bytes"] = minimum
+    apply_validators(result, [ValidatorConfig(name="file_size", arguments=arguments)])
+    assert result.validation[0].passed is passed
+    assert f"{size} bytes" in result.validation[0].message
+    if not passed:
+        assert result.run.status == "failed"
+        assert result.run.exit_code != 0
+
+
+@pytest.mark.parametrize(
+    "problem", ["uncollected", "ambiguous", "copy_error", "missing", "directory"],
+)
+def test_file_size_requires_one_available_copied_back_file(tmp_path, problem):
+    from test_wsl2_llm.models import CopiedBackFile
+
+    path = tmp_path / "figure.png"
+    path.write_bytes(b"image")
+    result = sample_result()
+    item = CopiedBackFile(source="figure.png", destination=str(path), type="file", size=5)
+    result.copied_back = [item]
+    if problem == "uncollected":
+        result.copied_back = []
+    elif problem == "ambiguous":
+        result.copied_back.append(item)
+    elif problem == "copy_error":
+        item.error = "copy failed"
+    elif problem == "missing":
+        path.unlink()
+    else:
+        path.unlink()
+        path.mkdir()
+    check = apply_validators(result, [ValidatorConfig(
+        name="file_size", arguments={"file": "figure.png"},
+    )]).validation[0]
+    assert not check.passed
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [{}, {"file": ""}, {"file": 1}, {"file": "a", "min_bytes": -1},
+     {"file": "a", "min_bytes": True}, {"file": "a", "min_bytes": 1.5},
+     {"file": "a", "min_bytes": "1"}, {"file": "a", "minimum": 1}],
+)
+def test_file_size_rejects_invalid_configuration(arguments):
+    with pytest.raises(ValueError):
+        validate_configuration([ValidatorConfig(name="file_size", arguments=arguments)])
+
+
 def test_stdout_stderr_and_case_sensitive_search():
     result = sample_result()
     result.logs.stdout_jsonl = "stdout marker"

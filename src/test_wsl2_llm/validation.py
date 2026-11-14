@@ -1,6 +1,7 @@
 """Named, extensible validators operating on the complete collected result."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,6 +14,12 @@ from .validation_root import RootTreeArguments, root_tree
 class RequireStringArguments(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     string: str = Field(min_length=1)
+
+
+class FileSizeArguments(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    file: str = Field(min_length=1)
+    min_bytes: int = Field(default=1, ge=0)
 
 
 def output_text(result: TestResult) -> str:
@@ -31,10 +38,23 @@ def require_string(result: TestResult, *, string: str) -> tuple[bool, str]:
     return passed, f"Required string {string!r} {'found' if passed else 'not found'} in output."
 
 
+def file_size(result: TestResult, *, file: str, min_bytes: int) -> tuple[bool, str]:
+    matches = [item for item in result.copied_back if file in (item.source, item.destination)]
+    if len(matches) != 1:
+        return False, f"File {file!r} must identify exactly one copied-back file."
+    item = matches[0]
+    path = Path(item.destination)
+    if item.error or not path.is_file():
+        return False, f"Copied-back file unavailable: {item.error or item.destination}"
+    size = path.stat().st_size
+    return size >= min_bytes, f"File {file!r}: {size} bytes; minimum {min_bytes} bytes."
+
+
 REGISTRY: dict[str, tuple[type[BaseModel], Callable[..., tuple[bool, str]]]] = {
     "require_string": (RequireStringArguments, require_string),
     "root_tree": (RootTreeArguments, root_tree),
     "num_compare": (NumCompareArguments, num_compare),
+    "file_size": (FileSizeArguments, file_size),
 
 }
 
