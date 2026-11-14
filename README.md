@@ -900,6 +900,22 @@ keyword arguments and returns `(passed, message)`. This includes all logs, works
 metadata, and `copied_back` local destinations for reading full returned files. Exceptions
 become failed checks, and remaining validators still run.
 
+Check that a returned file is nonempty with:
+
+```yaml
+copy_back: ["figure.png"]
+validators:
+  - name: file_size
+    arguments:
+      file: figure.png
+      min_bytes: 1
+```
+
+`file` must identify exactly one copied-back source or local destination. The
+validator checks the actual local file's byte count, not reported metadata.
+`min_bytes` is an inclusive nonnegative integer and defaults to 1. Missing,
+unreadable or undersized files fail; this check does not validate file contents.
+
 Validate a locally returned ROOT tree with:
 
 ```yaml
